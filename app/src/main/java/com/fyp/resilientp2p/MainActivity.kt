@@ -1,30 +1,35 @@
-package com.fyp.resilientp2p // CORRECTED package name
+package com.fyp.resilientp2p // Your correct package name
 
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
+import android.view.View
 import android.widget.Button
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
-import com.fyp.resilientp2p.R // CORRECTED import for the R class
+import com.fyp.resilientp2p.R
 import com.google.android.gms.nearby.Nearby
 import com.google.android.gms.nearby.connection.*
 
 class MainActivity : AppCompatActivity() {
 
-    private val serviceId = "com.fyp.resilientp2p.p2p" // CORRECTED service ID
+    private val serviceId = "com.fyp.resilientp2p.p2p"
     private val strategy = Strategy.P2P_CLUSTER
-    private val localUsername = "P2P-Node-${(100..999).random()}" // CORRECTED username
+    private val localUsername = "P2P-Node-${(100..999).random()}"
 
     private lateinit var connectionsClient: ConnectionsClient
     private lateinit var deviceNameText: TextView
     private lateinit var advertiseButton: Button
     private lateinit var discoverButton: Button
+    private lateinit var stopButton: Button // New UI element
     private lateinit var statusLogText: TextView
+
+    // A set to keep track of our connected endpoints
+    private val connectedEndpoints = mutableSetOf<String>()
 
     private val requiredPermissions =
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -63,12 +68,14 @@ class MainActivity : AppCompatActivity() {
         deviceNameText = findViewById(R.id.deviceName)
         advertiseButton = findViewById(R.id.advertiseButton)
         discoverButton = findViewById(R.id.discoverButton)
+        stopButton = findViewById(R.id.stopButton) // Find the new button
         statusLogText = findViewById(R.id.statusLog)
 
         deviceNameText.text = localUsername
 
         advertiseButton.setOnClickListener { startAdvertising() }
         discoverButton.setOnClickListener { startDiscovery() }
+        stopButton.setOnClickListener { resetState() } // Set its click listener
 
         log("App started. Device name: $localUsername")
     }
@@ -82,33 +89,57 @@ class MainActivity : AppCompatActivity() {
 
     override fun onStop() {
         super.onStop()
+        // Ensure we reset state and disconnect when the app is stopped.
+        resetState()
+    }
+
+    /**
+     * The new central cleanup function. This is the key to fixing the reset bug.
+     * It stops all Nearby Connections activities and resets the UI to its initial state.
+     */
+    private fun resetState() {
+        log("Resetting state and stopping all connections.")
         connectionsClient.stopAllEndpoints()
-        log("Stopped all endpoints.")
+        connectedEndpoints.clear()
+        updateUiState(isConnecting = false)
+    }
+
+    /** A new helper function to manage the visibility and state of our buttons. */
+    private fun updateUiState(isConnecting: Boolean) {
+        if (isConnecting) {
+            advertiseButton.visibility = View.GONE
+            discoverButton.visibility = View.GONE
+            stopButton.visibility = View.VISIBLE
+        } else {
+            advertiseButton.visibility = View.VISIBLE
+            discoverButton.visibility = View.VISIBLE
+            stopButton.visibility = View.GONE
+        }
     }
 
     private fun startAdvertising() {
+        updateUiState(isConnecting = true)
         val advertisingOptions = AdvertisingOptions.Builder().setStrategy(strategy).build()
         connectionsClient.startAdvertising(
             localUsername, serviceId, connectionLifecycleCallback, advertisingOptions
         ).addOnSuccessListener {
             log("Advertising started successfully.")
-            advertiseButton.isEnabled = false
-            discoverButton.isEnabled = false
         }.addOnFailureListener { e ->
             log("ERROR: Advertising failed: $e")
+            resetState() // If advertising fails, reset to the initial state
         }
     }
 
     private fun startDiscovery() {
+        updateUiState(isConnecting = true)
         val discoveryOptions = DiscoveryOptions.Builder().setStrategy(strategy).build()
         connectionsClient.startDiscovery(
             serviceId, endpointDiscoveryCallback, discoveryOptions
         ).addOnSuccessListener {
             log("Discovery started successfully.")
-            discoverButton.isEnabled = false
-            advertiseButton.isEnabled = false
         }.addOnFailureListener { e ->
             log("ERROR: Discovery failed: $e")
+            resetState() // If discovery fails, reset to the initial state
         }
     }
 
@@ -133,18 +164,32 @@ class MainActivity : AppCompatActivity() {
             when (result.status.statusCode) {
                 ConnectionsStatusCodes.STATUS_OK -> {
                     log("✅ CONNECTION ESTABLISHED with $endpointId!")
-                    advertiseButton.isEnabled = false
-                    discoverButton.isEnabled = false
+                    connectedEndpoints.add(endpointId) // Track the new connection
+                    // The UI is already in the "connecting" state (Stop button visible), which is correct.
                 }
-                ConnectionsStatusCodes.STATUS_CONNECTION_REJECTED -> log("Connection rejected by $endpointId.")
-                ConnectionsStatusCodes.STATUS_ERROR -> log("ERROR: Connection error with $endpointId.")
+                ConnectionsStatusCodes.STATUS_CONNECTION_REJECTED -> {
+                    log("Connection rejected by $endpointId.")
+                    // If we were trying to connect and got rejected, we should go back to idle.
+                    if (connectedEndpoints.isEmpty()) {
+                        resetState()
+                    }
+                }
+                ConnectionsStatusCodes.STATUS_ERROR -> {
+                    log("ERROR: Connection error with $endpointId.")
+                    if (connectedEndpoints.isEmpty()) {
+                        resetState()
+                    }
+                }
                 else -> log("Unknown connection status: ${result.status.statusCode}")
             }
         }
         override fun onDisconnected(endpointId: String) {
-            log("Disconnected from $endpointId. You can advertise/discover again.")
-            advertiseButton.isEnabled = true
-            discoverButton.isEnabled = true
+            log("Disconnected from $endpointId.")
+            connectedEndpoints.remove(endpointId) // Stop tracking the connection
+            // If this was our last connection, reset the state completely.
+            if (connectedEndpoints.isEmpty()) {
+                resetState()
+            }
         }
     }
 

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- use an AppCompat parent -->
-    <style name="Theme.ResilientP2PTestbed" parent="Theme.AppCompat.Light.DarkActionBar">
+    <!-- use a MaterialComponents parent -->
+    <style name="Theme.ResilientP2PTestbed" parent="Theme.MaterialComponents.DayNight.DarkActionBar">
         <!-- optional colors — replace with your app colors -->
         <item name="colorPrimary">@color/purple_500</item>
         <item name="colorPrimaryDark">@color/purple_700</item>

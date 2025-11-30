@@ -2,6 +2,7 @@
 <androidx.coordinatorlayout.widget.CoordinatorLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     android:id="@+id/root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
@@ -9,96 +10,219 @@
     android:background="?android:windowBackground"
     tools:context=".MainActivity">
 
-    <!-- main content column -->
+    <!-- Main content container -->
     <LinearLayout
-        android:id="@+id/contentColumn"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:orientation="vertical"
-        android:padding="16dp">
+        android:padding="16dp"
+        android:clipToPadding="false">
 
-        <!-- Device name -->
-        <TextView
-            android:id="@+id/deviceLabel"
-            android:layout_width="wrap_content"
+        <!-- Device Info Card -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Device Name"
-            android:textSize="18sp"
-            android:textStyle="bold"
-            android:importantForAccessibility="yes" />
+            android:layout_marginBottom="16dp"
+            app:cardElevation="2dp"
+            app:cardCornerRadius="12dp"
+            app:cardBackgroundColor="?attr/colorSurface">
 
-        <TextView
-            android:id="@+id/deviceName"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            tools:text="Device-123"
-            android:textSize="16sp" />
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
 
-        <!-- Buttons row -->
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Device Name"
+                    android:textAppearance="?attr/textAppearanceCaption"
+                    android:textColor="?attr/colorPrimary"/>
+
+                <TextView
+                    android:id="@+id/deviceName"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    tools:text="P2P-Node-123"
+                    android:textAppearance="?attr/textAppearanceHeadline6"
+                    android:textStyle="bold"/>
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- Action Buttons -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginTop="16dp"
+            android:layout_marginBottom="16dp"
             android:orientation="horizontal">
 
             <Button
                 android:id="@+id/advertiseButton"
+                style="@style/Widget.MaterialComponents.Button"
                 android:layout_width="0dp"
-                android:layout_height="wrap_content"
+                android:layout_height="60dp"
                 android:layout_weight="1"
                 android:layout_marginEnd="8dp"
-                android:text="Advertise" />
+                android:text="Advertise"
+                app:icon="@android:drawable/ic_menu_share"
+                app:iconGravity="textStart"/>
 
             <Button
                 android:id="@+id/discoverButton"
+                style="@style/Widget.MaterialComponents.Button"
                 android:layout_width="0dp"
-                android:layout_height="wrap_content"
+                android:layout_height="60dp"
                 android:layout_weight="1"
                 android:layout_marginStart="8dp"
-                android:text="Discover" />
+                android:text="Discover"
+                app:icon="@android:drawable/ic_menu_search"
+                app:iconGravity="textStart"/>
 
-            <!-- The new Stop button, hidden by default -->
-            <Button
-                android:id="@+id/stopButton"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="2"
-                android:text="Stop"
-                android:visibility="gone"
-                android:backgroundTint="?attr/colorError" />
         </LinearLayout>
 
-        <!-- Status header -->
+        <!-- Stop All Button (Full Width) -->
+        <Button
+            android:id="@+id/stopButton"
+            style="@style/Widget.MaterialComponents.Button"
+            android:layout_width="match_parent"
+            android:layout_height="60dp"
+            android:layout_marginBottom="16dp"
+            android:text="Stop All Connections"
+            android:visibility="gone"
+            android:backgroundTint="?attr/colorError"
+            app:icon="@android:drawable/ic_menu_close_clear_cancel"
+            app:iconGravity="textStart"/>
+
+        <!-- Heartbeat & Settings Card -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="16dp"
+            app:cardElevation="2dp"
+            app:cardCornerRadius="12dp"
+            app:strokeColor="#CCCCCC"
+            app:strokeWidth="1dp"
+            app:cardBackgroundColor="?attr/colorSurface">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_marginBottom="8dp">
+
+                    <ImageView
+                        android:layout_width="24dp"
+                        android:layout_height="24dp"
+                        android:src="@android:drawable/stat_sys_data_bluetooth"
+                        app:tint="?attr/colorPrimary"
+                        android:layout_marginEnd="8dp"/>
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Heartbeat Engine"
+                        android:textAppearance="?attr/textAppearanceSubtitle1"
+                        android:textStyle="bold"/>
+                </LinearLayout>
+
+                <com.google.android.material.checkbox.MaterialCheckBox
+                    android:id="@+id/heartbeatCheckBox"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Enable Ping (Latency Check)" />
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_marginTop="4dp">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Interval"
+                        android:textAppearance="?attr/textAppearanceBody2"
+                        android:layout_marginEnd="8dp"/>
+
+                    <com.google.android.material.slider.Slider
+                        android:id="@+id/intervalSlider"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:valueFrom="100"
+                        android:valueTo="5000"
+                        android:stepSize="100"
+                        android:value="1000" />
+
+                    <TextView
+                        android:id="@+id/intervalValue"
+                        android:layout_width="60dp"
+                        android:layout_height="wrap_content"
+                        android:text="1000ms"
+                        android:gravity="end"
+                        android:textAppearance="?attr/textAppearanceBody2"
+                        android:textStyle="bold"/>
+                </LinearLayout>
+                
+                <Button
+                    android:id="@+id/exportLogsButton"
+                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:text="Export Logs to CSV"
+                    app:icon="@android:drawable/ic_menu_save" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- Logs Section -->
         <TextView
             android:id="@+id/statusHeader"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="20dp"
-            android:text="Status Log"
-            android:textSize="18sp"
-            android:textStyle="bold" />
+            android:layout_marginBottom="8dp"
+            android:text="Live Logs"
+            android:textAppearance="?attr/textAppearanceSubtitle2"
+            android:textColor="?android:attr/textColorSecondary"/>
 
-        <!-- Scrollable log area, fills remaining space -->
-        <ScrollView
-            android:id="@+id/statusScroll"
+        <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="0dp"
-            android:layout_marginTop="8dp"
             android:layout_weight="1"
-            android:fillViewport="true"
-            android:overScrollMode="ifContentScrolls"
-            android:background="#ECECEC">
+            app:cardElevation="0dp"
+            app:cardCornerRadius="8dp"
+            app:strokeColor="#CCCCCC"
+            app:strokeWidth="1dp"
+            app:cardBackgroundColor="?android:attr/colorBackground">
 
-            <TextView
-                android:id="@+id/statusLog"
+            <ScrollView
+                android:id="@+id/statusScroll"
                 android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:padding="8dp"
-                android:textIsSelectable="true"
-                android:scrollbars="vertical"
-                android:lineSpacingExtra="4dp"
-                tools:text="> Log will appear here..." />
-        </ScrollView>
+                android:layout_height="match_parent"
+                android:fillViewport="true"
+                android:scrollbars="vertical">
+
+                <TextView
+                    android:id="@+id/statusLog"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:padding="12dp"
+                    android:fontFamily="monospace"
+                    android:textSize="12sp"
+                    android:textIsSelectable="true"
+                    tools:text="> System initialized...\n> Ready to connect." />
+            </ScrollView>
+        </com.google.android.material.card.MaterialCardView>
+
     </LinearLayout>
 </androidx.coordinatorlayout.widget.CoordinatorLayout>

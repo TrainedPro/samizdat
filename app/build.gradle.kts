@@ -13,7 +13,7 @@ android {
 
     defaultConfig {
         applicationId = "com.fyp.resilientp2p"
-        minSdk = 26
+        minSdk = 24
         targetSdk = 36
         versionCode = 1
         versionName = "1.0"
@@ -78,4 +78,7 @@ dependencies {
     implementation(libs.androidx.room.runtime)
     implementation(libs.androidx.room.ktx)
     ksp(libs.androidx.room.compiler)
+
+    // UWB
+    implementation("androidx.core.uwb:uwb:1.0.0-alpha08")
 }

@@ -1,7 +1,5 @@
 package com.fyp.resilientp2p.managers
 
-import com.google.android.gms.nearby.connection.Payload
-import java.nio.charset.StandardCharsets
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -15,7 +13,7 @@ class HeartbeatManager(private val p2pManager: P2PManager) {
 
     companion object {
         private const val TAG = "HeartbeatManager"
-        private const val DEFAULT_INTERVAL_MS = 1000L
+        private const val DEFAULT_INTERVAL_MS = 5000L
         private const val DEFAULT_PAYLOAD_SIZE = 64
     }
 
@@ -26,9 +24,37 @@ class HeartbeatManager(private val p2pManager: P2PManager) {
         // Listen for incoming payloads (PING/PONG)
         scope.launch {
             p2pManager.payloadEvents.collect { event ->
-                handlePayload(event.endpointId, event.payload)
+                handlePayload(event.endpointId, event.packet)
             }
         }
+
+        // Listen for bandwidth changes for Adaptive Heartbeat
+        scope.launch {
+            p2pManager.bandwidthEvents.collect { info ->
+                val currentInterval = _config.value.intervalMs
+                val newInterval =
+                        when (info.quality) {
+                            com.google.android.gms.nearby.connection.BandwidthInfo.Quality.LOW ->
+                                    5000L // Slow down
+                            com.google.android.gms.nearby.connection.BandwidthInfo.Quality.HIGH ->
+                                    1000L // Speed up
+                            else -> currentInterval
+                        }
+
+                if (newInterval != currentInterval) {
+                    log("Adapting heartbeat interval to ${newInterval}ms due to bandwidth change.")
+                    updateConfig(intervalMs = newInterval)
+                }
+            }
+        }
+
+        // Zombie Cleanup Job Removed
+        // scope.launch {
+        //     while (true) {
+        //         delay(10000) // Check every 10 seconds
+        //         cleanupZombies()
+        //     }
+        // }
     }
 
     data class HeartbeatConfig(
@@ -63,6 +89,14 @@ class HeartbeatManager(private val p2pManager: P2PManager) {
         }
     }
 
+    fun setHeartbeatEnabled(enabled: Boolean) {
+        updateConfig(enabled = enabled)
+    }
+
+    fun setHeartbeatInterval(intervalMs: Long) {
+        updateConfig(intervalMs = intervalMs)
+    }
+
     private fun startHeartbeat(config: HeartbeatConfig) {
         log("Starting heartbeat: ${config.intervalMs}ms, ${config.payloadSizeBytes}B")
         heartbeatJob =
@@ -81,53 +115,40 @@ class HeartbeatManager(private val p2pManager: P2PManager) {
     }
 
     private fun sendPing(size: Int) {
+        // Use getNeighbors() from P2PManager if available, or state.connectedEndpoints
+        // Ideally P2PManager should expose neighbors map or list of Neighbor objects
+        // For now, we use connectedEndpoints but we need lastSeen for Zombie check
+        // We can't access neighbors map directly as it is private in P2PManager
+        // But we can iterate connectedEndpoints and send pings
+
         val peers = p2pManager.state.value.connectedEndpoints
         if (peers.isEmpty()) return
 
         val timestamp = System.currentTimeMillis()
-        // Protocol: "PING:<timestamp>:<padding>"
-        val header = "PING:$timestamp:".toByteArray(StandardCharsets.UTF_8)
-        val payloadData = ByteArray(size.coerceAtLeast(header.size))
-        System.arraycopy(header, 0, payloadData, 0, header.size)
+        val buffer = java.nio.ByteBuffer.allocate(size.coerceAtLeast(8))
+        buffer.putLong(timestamp)
+        // Remaining bytes are 0-padding by default
 
-        peers.forEach { peerId -> p2pManager.sendPayload(peerId, payloadData) }
+        peers.forEach { peerId -> p2pManager.sendPing(peerId, buffer.array()) }
         log("Sent PING to ${peers.size} peers")
     }
 
-    private fun handlePayload(endpointId: String, payload: Payload) {
-        if (payload.type != Payload.Type.BYTES) return
-        val bytes = payload.asBytes() ?: return
-        val content = String(bytes, StandardCharsets.UTF_8)
+    // Zombie Cleanup Removed - Trusting API onDisconnected
+    // private fun cleanupZombies() { ... }
 
-        if (content.startsWith("PING:")) {
-            // Format: PING:<timestamp>:<padding>
-            val parts = content.split(":")
-            if (parts.size >= 2) {
-                val originTimestamp = parts[1]
-                // Send PONG with same timestamp
-                sendPong(endpointId, originTimestamp, bytes.size)
-            }
-        } else if (content.startsWith("PONG:")) {
-            // Format: PONG:<timestamp>:<padding>
-            val parts = content.split(":")
-            if (parts.size >= 2) {
-                val originTimestamp = parts[1].toLongOrNull()
-                if (originTimestamp != null) {
+    private fun handlePayload(endpointId: String, packet: com.fyp.resilientp2p.transport.Packet) {
+        if (packet.type == com.fyp.resilientp2p.transport.PacketType.PONG) {
+            try {
+                val buffer = java.nio.ByteBuffer.wrap(packet.payload)
+                if (buffer.remaining() >= 8) {
+                    val originTimestamp = buffer.long
                     val rtt = System.currentTimeMillis() - originTimestamp
                     log("RTT to $endpointId: ${rtt}ms", "METRIC")
                 }
+            } catch (e: Exception) {
+                log("Error parsing PONG payload: ${e.message}", "ERROR")
             }
         }
-    }
-
-    private fun sendPong(endpointId: String, timestamp: String, size: Int) {
-        // Protocol: "PONG:<timestamp>:<padding>"
-        val header = "PONG:$timestamp:".toByteArray(StandardCharsets.UTF_8)
-        val payloadData = ByteArray(size.coerceAtLeast(header.size))
-        System.arraycopy(header, 0, payloadData, 0, header.size)
-
-        p2pManager.sendPayload(endpointId, payloadData)
-        log("Sent PONG to $endpointId")
     }
 
     private fun log(msg: String, type: String = "INFO") {

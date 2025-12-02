@@ -48,6 +48,31 @@
                     tools:text="P2P-Node-123"
                     android:textAppearance="?attr/textAppearanceHeadline6"
                     android:textStyle="bold"/>
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:gravity="center_vertical"
+                    android:layout_marginTop="12dp">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Signal Quality"
+                        android:textAppearance="?attr/textAppearanceCaption"
+                        android:layout_marginEnd="8dp"/>
+
+                    <ProgressBar
+                        android:id="@+id/signalStrengthMeter"
+                        style="?android:attr/progressBarStyleHorizontal"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:max="100"
+                        android:progress="0"
+                        android:progressTint="@android:color/holo_red_dark"/>
+                </LinearLayout>
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
@@ -113,11 +138,15 @@
                 android:padding="16dp">
 
                 <LinearLayout
+                    android:id="@+id/heartbeatHeader"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="horizontal"
                     android:gravity="center_vertical"
-                    android:layout_marginBottom="8dp">
+                    android:paddingBottom="8dp"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:background="?attr/selectableItemBackground">
 
                     <ImageView
                         android:layout_width="24dp"
@@ -127,63 +156,104 @@
                         android:layout_marginEnd="8dp"/>
 
                     <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Heartbeat Engine"
-                        android:textAppearance="?attr/textAppearanceSubtitle1"
-                        android:textStyle="bold"/>
-                </LinearLayout>
-
-                <com.google.android.material.checkbox.MaterialCheckBox
-                    android:id="@+id/heartbeatCheckBox"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Enable Ping (Latency Check)" />
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:gravity="center_vertical"
-                    android:layout_marginTop="4dp">
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Interval"
-                        android:textAppearance="?attr/textAppearanceBody2"
-                        android:layout_marginEnd="8dp"/>
-
-                    <com.google.android.material.slider.Slider
-                        android:id="@+id/intervalSlider"
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_weight="1"
-                        android:valueFrom="100"
-                        android:valueTo="5000"
-                        android:stepSize="100"
-                        android:value="1000" />
-
-                    <TextView
-                        android:id="@+id/intervalValue"
-                        android:layout_width="60dp"
-                        android:layout_height="wrap_content"
-                        android:text="1000ms"
-                        android:gravity="end"
-                        android:textAppearance="?attr/textAppearanceBody2"
+                        android:text="Heartbeat &amp; Settings"
+                        android:textAppearance="?attr/textAppearanceSubtitle1"
                         android:textStyle="bold"/>
+                        
+                    <ImageView
+                        android:id="@+id/heartbeatExpandIcon"
+                        android:layout_width="24dp"
+                        android:layout_height="24dp"
+                        android:src="@android:drawable/arrow_down_float"
+                        app:tint="?android:attr/textColorSecondary"/>
                 </LinearLayout>
-                
-                <Button
-                    android:id="@+id/exportLogsButton"
-                    style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+
+                <LinearLayout
+                    android:id="@+id/heartbeatContent"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:text="Export Logs to CSV"
-                    app:icon="@android:drawable/ic_menu_save" />
+                    android:orientation="vertical"
+                    android:visibility="gone">
+
+                    <com.google.android.material.checkbox.MaterialCheckBox
+                        android:id="@+id/heartbeatCheckBox"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Enable Heartbeat" />
+
+                    <com.google.android.material.checkbox.MaterialCheckBox
+                        android:id="@+id/lowPowerCheckBox"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Low Power Mode" />
+
+                    <com.google.android.material.checkbox.MaterialCheckBox
+                        android:id="@+id/dutyCycleCheckBox"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Resilient Mode (Duty Cycle)" />
+
+                    <com.google.android.material.checkbox.MaterialCheckBox
+                        android:id="@+id/hybridModeCheckBox"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="Hybrid Mode (LAN/BLE)" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:layout_marginTop="4dp">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Interval"
+                            android:textAppearance="?attr/textAppearanceBody2"
+                            android:layout_marginEnd="8dp"/>
+
+                        <com.google.android.material.slider.Slider
+                            android:id="@+id/intervalSlider"
+                            android:layout_width="0dp"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:valueFrom="100"
+                            android:valueTo="5000"
+                            android:stepSize="100"
+                            android:value="1000" />
+
+                        <TextView
+                            android:id="@+id/intervalValue"
+                            android:layout_width="60dp"
+                            android:layout_height="wrap_content"
+                            android:text="1000ms"
+                            android:gravity="end"
+                            android:textAppearance="?attr/textAppearanceBody2"
+                            android:textStyle="bold"/>
+                    </LinearLayout>
+                    
+                    <Button
+                        android:id="@+id/exportLogsButton"
+                        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:text="Export Logs to CSV"
+                        app:icon="@android:drawable/ic_menu_save" />
+                </LinearLayout>
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
+
+        <!-- Compose Container for New UI Features (Radar, Trace, Progress) -->
+        <androidx.compose.ui.platform.ComposeView
+            android:id="@+id/composeView"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="16dp"/>
 
         <!-- Logs Section -->
         <TextView

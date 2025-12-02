@@ -12,10 +12,18 @@ class P2PApplication : Application() {
         private set
     lateinit var heartbeatManager: HeartbeatManager
         private set
+    lateinit var uwbManager: com.fyp.resilientp2p.managers.UwbManager
+        private set
 
     override fun onCreate() {
         super.onCreate()
-        p2pManager = P2PManager(this, database.logDao())
+        uwbManager = com.fyp.resilientp2p.managers.UwbManager(this)
+        p2pManager = P2PManager(this, database.logDao(), database.packetDao())
+
+        // Wire up circular dependency
+        p2pManager.uwbManager = uwbManager
+        uwbManager.p2pManager = p2pManager
+
         heartbeatManager = HeartbeatManager(p2pManager)
     }
 }

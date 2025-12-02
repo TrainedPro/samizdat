@@ -4,6 +4,8 @@ import android.content.Context
 import android.util.Log
 import com.fyp.resilientp2p.data.LogDao
 import com.fyp.resilientp2p.data.LogEntry
+import com.fyp.resilientp2p.transport.Packet
+import com.fyp.resilientp2p.transport.PacketType
 import com.google.android.gms.nearby.Nearby
 import com.google.android.gms.nearby.connection.*
 import kotlinx.coroutines.CoroutineScope
@@ -21,7 +23,11 @@ import kotlinx.coroutines.launch
  * Manages all interactions with the Nearby Connections API. Follows the Singleton pattern to ensure
  * a single point of truth for network state.
  */
-class P2PManager(private val context: Context, private val logDao: LogDao) {
+class P2PManager(
+        private val context: Context,
+        private val logDao: com.fyp.resilientp2p.data.LogDao,
+        private val packetDao: com.fyp.resilientp2p.data.PacketDao
+) {
 
     companion object {
         private const val TAG = "P2PManager"
@@ -38,40 +44,167 @@ class P2PManager(private val context: Context, private val logDao: LogDao) {
             val isAdvertising: Boolean = false,
             val isDiscovering: Boolean = false,
             val connectedEndpoints: Set<String> = emptySet(),
-            val logs: List<String> = emptyList()
+            val logs: List<String> = emptyList(),
+            val isLowPower: Boolean = false,
+            val isLoading: Boolean = false,
+            val authenticationDigits: String? = null,
+            val authenticatingEndpointId: String? = null,
+            val isHybridMode: Boolean = false
     )
 
     private val _state = MutableStateFlow(P2PState())
     val state: StateFlow<P2PState> = _state.asStateFlow()
 
     // Payload Event Stream
-    data class PayloadEvent(val endpointId: String, val payload: Payload)
+    data class PayloadEvent(val endpointId: String, val packet: Packet)
     private val _payloadEvents = MutableSharedFlow<PayloadEvent>()
     val payloadEvents: SharedFlow<PayloadEvent> = _payloadEvents.asSharedFlow()
 
+    // Payload Progress Stream
+    data class PayloadProgressEvent(
+            val endpointId: String,
+            val progress: Int,
+            val totalBytes: Long
+    )
+    private val _payloadProgressEvents = MutableSharedFlow<PayloadProgressEvent>()
+    val payloadProgressEvents: SharedFlow<PayloadProgressEvent> =
+            _payloadProgressEvents.asSharedFlow()
+
+    // Bandwidth Event Stream
+    private val _bandwidthEvents = MutableSharedFlow<BandwidthInfo>()
+    val bandwidthEvents: SharedFlow<BandwidthInfo> = _bandwidthEvents.asSharedFlow()
+
     fun getLocalDeviceName(): String = localUsername
 
+    init {
+        // Ensure clean state on startup
+        connectionsClient.stopAllEndpoints()
+    }
+
+    fun setLowPower(enabled: Boolean) {
+        _state.update { it.copy(isLowPower = enabled) }
+        log("Low Power Mode set to $enabled. Restart advertising/discovery to apply.")
+    }
+
+    fun setHybridMode(enabled: Boolean) {
+        _state.update { it.copy(isHybridMode = enabled) }
+        log("Hybrid Mode set to $enabled. Restart advertising/discovery to apply.")
+    }
+
     fun startAdvertising() {
-        val options = AdvertisingOptions.Builder().setStrategy(STRATEGY).build()
+        if (_state.value.isLoading || _state.value.isAdvertising) return
+        _state.update { it.copy(isLoading = true) }
+
+        val lowPower = _state.value.isLowPower
+        val optionsBuilder =
+                AdvertisingOptions.Builder().setStrategy(STRATEGY).setLowPower(lowPower)
+
+        // Resilience Mode: If Low Power is OFF (meaning high performance/emergency), use DISRUPTIVE
+        // Hybrid Mode: Prioritize LAN/BLE (NON_DISRUPTIVE)
+        if (_state.value.isHybridMode) {
+            optionsBuilder.setConnectionType(ConnectionType.NON_DISRUPTIVE)
+        } else if (!lowPower) {
+            optionsBuilder.setConnectionType(ConnectionType.DISRUPTIVE)
+        } else {
+            optionsBuilder.setConnectionType(ConnectionType.BALANCED)
+        }
+
+        val options = optionsBuilder.build()
+
+        // Metadata: Flags|Battery|Name
+        // Flags: Bit 0=Internet, Bit 1=Charging
+        // For now, hardcode flags=1 (Has Internet mock) and battery=100
+        val metadata = "1|100|$localUsername"
+
         connectionsClient
-                .startAdvertising(localUsername, SERVICE_ID, connectionLifecycleCallback, options)
+                .startAdvertising(metadata, SERVICE_ID, connectionLifecycleCallback, options)
                 .addOnSuccessListener {
-                    log("Advertising started.")
-                    _state.update { it.copy(isAdvertising = true) }
+                    log("Advertising started (LowPower=$lowPower). Metadata: $metadata")
+                    _state.update { it.copy(isAdvertising = true, isLoading = false) }
                 }
-                .addOnFailureListener { e -> log("Advertising failed: ${e.message}") }
+                .addOnFailureListener { e ->
+                    handleApiError(e, "Advertising")
+                    _state.update { it.copy(isLoading = false) }
+                }
     }
 
     fun startDiscovery() {
-        val options = DiscoveryOptions.Builder().setStrategy(STRATEGY).build()
+        if (_state.value.isLoading || _state.value.isDiscovering) return
+        _state.update { it.copy(isLoading = true) }
+
+        val lowPower = _state.value.isLowPower
+        val options = DiscoveryOptions.Builder().setStrategy(STRATEGY).setLowPower(lowPower).build()
+
         connectionsClient
                 .startDiscovery(SERVICE_ID, endpointDiscoveryCallback, options)
                 .addOnSuccessListener {
-                    log("Discovery started.")
-                    _state.update { it.copy(isDiscovering = true) }
+                    log("Discovery started (LowPower=$lowPower).")
+                    _state.update { it.copy(isDiscovering = true, isLoading = false) }
                 }
-                .addOnFailureListener { e -> log("Discovery failed: ${e.message}") }
+                .addOnFailureListener { e ->
+                    handleApiError(e, "Discovery")
+                    _state.update { it.copy(isLoading = false) }
+                }
     }
+
+    // Duty Cycling
+    private var dutyCycleJob: kotlinx.coroutines.Job? = null
+
+    fun setDutyCycle(enabled: Boolean) {
+        if (enabled) {
+            if (dutyCycleJob != null) return
+            log("Starting Duty Cycle (Resilient Mode)...")
+            dutyCycleJob =
+                    scope.launch {
+                        while (true) {
+                            // Phase 1: Discovery (Listen)
+                            if (!_state.value.isDiscovering) startDiscovery()
+                            if (_state.value.isAdvertising) stopAdvertising()
+                            kotlinx.coroutines.delay(10000) // 10s Listen
+
+                            // Phase 2: Advertising (Announce)
+                            if (_state.value.isDiscovering) stopDiscovery()
+                            if (!_state.value.isAdvertising) startAdvertising()
+                            kotlinx.coroutines.delay(10000) // 10s Announce
+                        }
+                    }
+        } else {
+            log("Stopping Duty Cycle.")
+            dutyCycleJob?.cancel()
+            dutyCycleJob = null
+            stopAdvertising()
+            stopDiscovery()
+        }
+    }
+
+    private fun handleApiError(e: Exception, context: String) {
+        if (e is com.google.android.gms.common.api.ApiException) {
+            when (e.statusCode) {
+                ConnectionsStatusCodes.STATUS_ALREADY_ADVERTISING -> {
+                    _state.update { it.copy(isAdvertising = true) }
+                    log("$context: Already running.")
+                }
+                ConnectionsStatusCodes.STATUS_ALREADY_DISCOVERING -> {
+                    _state.update { it.copy(isDiscovering = true) }
+                    log("$context: Already running.")
+                }
+                ConnectionsStatusCodes.MISSING_PERMISSION_NEARBY_WIFI_DEVICES -> {
+                    log("$context: Missing NEARBY_WIFI_DEVICES permission.", "ERROR")
+                }
+                ConnectionsStatusCodes.STATUS_RADIO_ERROR -> {
+                    log("$context: Radio Error. Try restarting Bluetooth/WiFi.", "ERROR")
+                }
+                else ->
+                        log(
+                                "$context failed: ${ConnectionsStatusCodes.getStatusCodeString(e.statusCode)}",
+                                "ERROR"
+                        )
+            }
+        } else {
+            log("$context failed: ${e.message}", "ERROR")
+        }
+    }
+
     fun stopAdvertising() {
         connectionsClient.stopAdvertising()
         _state.update { it.copy(isAdvertising = false) }
@@ -86,23 +219,259 @@ class P2PManager(private val context: Context, private val logDao: LogDao) {
 
     fun stopAll() {
         connectionsClient.stopAllEndpoints()
+        connectionsClient.stopAdvertising()
+        connectionsClient.stopDiscovery()
         _state.update {
-            it.copy(isAdvertising = false, isDiscovering = false, connectedEndpoints = emptySet())
+            it.copy(
+                    isAdvertising = false,
+                    isDiscovering = false,
+                    connectedEndpoints = emptySet(),
+                    isLoading = false
+            )
         }
-        log("Stopped all connections.")
+        log("Stopped all connections and reset state.")
     }
 
-    fun sendPayload(endpointId: String, bytes: ByteArray) {
-        connectionsClient.sendPayload(endpointId, Payload.fromBytes(bytes)).addOnFailureListener { e
-            ->
-            log("Failed to send payload to $endpointId: ${e.message}", "ERROR")
+    // Reliability & Mesh
+    private val pendingAcks = java.util.concurrent.ConcurrentHashMap<String, Packet>()
+    private val RETRY_LIMIT = 3
+    private val TIMEOUT_MS = 5000L
+
+    private val neighbors =
+            java.util.concurrent.ConcurrentHashMap<String, com.fyp.resilientp2p.data.Neighbor>()
+    private val messageCache = com.fyp.resilientp2p.transport.MessageCache()
+
+    // Track active file payloads (ID -> LastUpdateTime) to detect stalls
+    private val activeFilePayloads = java.util.concurrent.ConcurrentHashMap<Long, Long>()
+    private var stallCheckJob: kotlinx.coroutines.Job? = null
+    private val STALL_TIMEOUT_MS = 15000L
+    private val MAX_BYTES_DATA_SIZE = 32 * 1024 // 32KB limit for reliable BYTES
+
+    var uwbManager: UwbManager? = null
+
+    fun sendData(endpointId: String, bytes: ByteArray) {
+        if (bytes.size > MAX_BYTES_DATA_SIZE) {
+            log(
+                    "Packet too large (${bytes.size} bytes). Limit is $MAX_BYTES_DATA_SIZE. Dropping.",
+                    "ERROR"
+            )
+            return
+        }
+        val packet =
+                Packet(
+                        type = PacketType.DATA,
+                        sourceId = localUsername,
+                        destId = endpointId,
+                        payload = bytes
+                )
+        sendPacketReliably(packet)
+    }
+
+    fun sendUwbAddress(endpointId: String, address: ByteArray) {
+        val packet =
+                Packet(
+                        type = PacketType.UWB_ADDRESS,
+                        sourceId = localUsername,
+                        destId = endpointId,
+                        payload = address
+                )
+        sendPacketReliably(packet)
+    }
+
+    fun sendFile(file: java.io.File) {
+        if (neighbors.isEmpty()) {
+            log("No neighbors to send file to.", "WARN")
+            return
+        }
+
+        // For resilience, send to the first connected neighbor (or dominant)
+        // In a real mesh, we might want to broadcast, but file broadcast is heavy.
+        val targetEndpoint = neighbors.keys.first()
+
+        val payload = Payload.fromFile(file)
+        activeFilePayloads[payload.id] = System.currentTimeMillis() // Track start time
+        startStallDetector()
+
+        connectionsClient
+                .sendPayload(targetEndpoint, payload)
+                .addOnSuccessListener { log("Sending file ${file.name} to $targetEndpoint...") }
+                .addOnFailureListener { e ->
+                    log("Failed to send file: ${e.message}", "ERROR")
+                    activeFilePayloads.remove(payload.id)
+                }
+    }
+
+    private fun startStallDetector() {
+        if (stallCheckJob != null) return
+        stallCheckJob =
+                scope.launch {
+                    while (true) {
+                        kotlinx.coroutines.delay(5000) // Check every 5s
+                        if (activeFilePayloads.isEmpty()) {
+                            stallCheckJob = null
+                            return@launch
+                        }
+
+                        val now = System.currentTimeMillis()
+                        val stalled =
+                                activeFilePayloads.filter { (_, lastUpdate) ->
+                                    now - lastUpdate > STALL_TIMEOUT_MS
+                                }
+
+                        stalled.forEach { (id, _) ->
+                            log("Payload $id stalled (>15s). Cancelling.", "WARN")
+                            connectionsClient.cancelPayload(id)
+                            activeFilePayloads.remove(id)
+                        }
+                    }
+                }
+    }
+
+    private fun cancelAllFileTransfers() {
+        if (activeFilePayloads.isNotEmpty()) {
+            log(
+                    "Cancelling ${activeFilePayloads.size} active file transfers for high-priority traffic.",
+                    "WARN"
+            )
+            activeFilePayloads.keys.forEach { id -> connectionsClient.cancelPayload(id) }
+            activeFilePayloads.clear()
+        }
+    }
+    fun sendPing(endpointId: String, bytes: ByteArray) {
+        // High Priority: Cancel bulk transfers
+        cancelAllFileTransfers()
+
+        val packet =
+                Packet(
+                        type = PacketType.PING,
+                        sourceId = localUsername,
+                        destId = endpointId,
+                        payload = bytes
+                )
+        // Heartbeats should be direct if possible to avoid flooding
+        if (neighbors.containsKey(endpointId)) {
+            sendUnicastPacket(endpointId, packet)
+        } else {
+            broadcastPacket(packet)
+        }
+    }
+
+    private fun sendAck(endpointId: String, packetId: String) {
+        // High Priority: Cancel bulk transfers
+        cancelAllFileTransfers()
+
+        val packet =
+                Packet(
+                        type = PacketType.ACK,
+                        sourceId = localUsername,
+                        destId = endpointId,
+                        payload = packetId.toByteArray()
+                )
+        // ACKs should go directly back if possible
+        if (neighbors.containsKey(endpointId)) {
+            sendUnicastPacket(endpointId, packet)
+        } else {
+            broadcastPacket(packet)
+        }
+    }
+
+    private fun sendPong(endpointId: String, originalPayload: ByteArray) {
+        val packet =
+                Packet(
+                        type = PacketType.PONG,
+                        sourceId = localUsername,
+                        destId = endpointId,
+                        payload = originalPayload
+                )
+        if (neighbors.containsKey(endpointId)) {
+            sendUnicastPacket(endpointId, packet)
+        } else {
+            broadcastPacket(packet)
+        }
+    }
+
+    // Direct Unicast (No Flooding)
+    private fun sendUnicastPacket(endpointId: String, packet: Packet) {
+        connectionsClient.sendPayload(endpointId, Payload.fromBytes(packet.toBytes()))
+                .addOnFailureListener { e ->
+                    log("Failed to send unicast packet to $endpointId: ${e.message}", "WARN")
+                }
+    }
+
+    // Flooding / Broadcasting
+    private fun broadcastPacket(packet: Packet, excludeEndpointId: String? = null) {
+        // 1. Mark as seen so we don't re-process our own packets if they loop back
+        messageCache.markSeen(packet.id)
+
+        // 2. Optimization: If dest is a direct neighbor, just send to them
+        if (neighbors.containsKey(packet.destId) && packet.destId != excludeEndpointId) {
+            sendUnicastPacket(packet.destId, packet)
+            return
+        }
+
+        // 3. Send to all neighbors except the excluded one using optimized list API
+        // Smart Routing: For DATA packets, avoid LOW quality links if possible
+        val targetEndpoints =
+                neighbors.entries
+                        .filter { (id, neighbor) ->
+                            id != excludeEndpointId &&
+                                    (packet.type != PacketType.DATA ||
+                                            neighbor.quality > 1) // Skip LOW (1) for DATA
+                        }
+                        .map { it.key }
+
+        if (targetEndpoints.isEmpty()) return
+
+        connectionsClient.sendPayload(targetEndpoints, Payload.fromBytes(packet.toBytes()))
+                .addOnFailureListener { e -> log("Broadcast failed: ${e.message}", "WARN") }
+    }
+
+    private fun sendPacketReliably(packet: Packet, attempt: Int = 1) {
+        pendingAcks[packet.id] = packet
+
+        // Use smart routing
+        if (neighbors.containsKey(packet.destId)) {
+            sendUnicastPacket(packet.destId, packet)
+        } else {
+            broadcastPacket(packet)
+        }
+
+        scope.launch {
+            kotlinx.coroutines.delay(TIMEOUT_MS)
+            if (pendingAcks.containsKey(packet.id)) {
+                if (attempt < RETRY_LIMIT) {
+                    log(
+                            "ACK not received for ${packet.id}. Retrying ($attempt/$RETRY_LIMIT)...",
+                            "WARN"
+                    )
+                    sendPacketReliably(packet, attempt + 1)
+                } else {
+                    log(
+                            "Failed to deliver packet ${packet.id} after $RETRY_LIMIT attempts.",
+                            "ERROR"
+                    )
+                    pendingAcks.remove(packet.id)
+                }
+            }
         }
     }
 
     private val connectionLifecycleCallback =
             object : ConnectionLifecycleCallback() {
                 override fun onConnectionInitiated(endpointId: String, info: ConnectionInfo) {
-                    log("Connection initiated by ${info.endpointName}. Accepting.")
+                    log(
+                            "Connection initiated by ${info.endpointName}. Auth Token: ${info.authenticationDigits}"
+                    )
+                    // Store Auth Token in State for UI
+                    _state.update {
+                        it.copy(
+                                authenticationDigits = info.authenticationDigits,
+                                authenticatingEndpointId = endpointId
+                        )
+                    }
+
+                    // Auto-accept for now, but UI will show the token.
+                    // Ideally, we wait for user confirmation here.
                     connectionsClient.acceptConnection(endpointId, payloadCallback)
                 }
 
@@ -110,8 +479,45 @@ class P2PManager(private val context: Context, private val logDao: LogDao) {
                     when (result.status.statusCode) {
                         ConnectionsStatusCodes.STATUS_OK -> {
                             log("Connected to $endpointId")
+                            neighbors[endpointId] = com.fyp.resilientp2p.data.Neighbor(endpointId)
                             _state.update {
-                                it.copy(connectedEndpoints = it.connectedEndpoints + endpointId)
+                                it.copy(
+                                        connectedEndpoints = it.connectedEndpoints + endpointId,
+                                        authenticationDigits = null, // Clear auth token on success
+                                        authenticatingEndpointId = null
+                                )
+                            }
+
+                            // Trigger UWB Ranging
+                            uwbManager?.startRanging(endpointId)
+
+                            // DTN: Check for stored packets for this peer
+                            scope.launch {
+                                val pendingPackets = packetDao.getPacketsForPeer(endpointId)
+                                if (pendingPackets.isNotEmpty()) {
+                                    log(
+                                            "Found ${pendingPackets.size} stored packets for $endpointId. Sending..."
+                                    )
+                                    pendingPackets.forEach { entity ->
+                                        val packet =
+                                                Packet(
+                                                        id = entity.id,
+                                                        type = PacketType.valueOf(entity.type),
+                                                        timestamp = entity.timestamp,
+                                                        sourceId = entity.sourceId,
+                                                        destId = entity.destId,
+                                                        payload = entity.payload,
+                                                        ttl = 5, // Reset TTL for final hop
+                                                        trace = ArrayList(), // Reset trace or keep?
+                                                        // Keep is better but
+                                                        // complex to store.
+                                                        // Resetting for now.
+                                                        sequenceNumber = 0
+                                                )
+                                        sendPacketReliably(packet)
+                                        packetDao.deletePacket(entity.id)
+                                    }
+                                }
                             }
                         }
                         else -> {
@@ -122,24 +528,68 @@ class P2PManager(private val context: Context, private val logDao: LogDao) {
 
                 override fun onDisconnected(endpointId: String) {
                     log("Disconnected from $endpointId")
+                    neighbors.remove(endpointId)
                     _state.update {
                         it.copy(connectedEndpoints = it.connectedEndpoints - endpointId)
                     }
+                }
+
+                override fun onBandwidthChanged(endpointId: String, bandwidthInfo: BandwidthInfo) {
+                    val qualityStr =
+                            when (bandwidthInfo.quality) {
+                                BandwidthInfo.Quality.HIGH -> "HIGH"
+                                BandwidthInfo.Quality.MEDIUM -> "MEDIUM"
+                                BandwidthInfo.Quality.LOW -> "LOW"
+                                else -> "UNKNOWN"
+                            }
+                    log("Bandwidth changed for $endpointId: $qualityStr")
+
+                    scope.launch { _bandwidthEvents.emit(bandwidthInfo) }
+
+                    // Update Neighbor Quality
+                    val qualityScore =
+                            when (bandwidthInfo.quality) {
+                                BandwidthInfo.Quality.HIGH -> 3
+                                BandwidthInfo.Quality.MEDIUM -> 2
+                                BandwidthInfo.Quality.LOW -> 1
+                                else -> 0
+                            }
+                    neighbors[endpointId]?.let { it.quality = qualityScore }
                 }
             }
 
     private val endpointDiscoveryCallback =
             object : EndpointDiscoveryCallback() {
                 override fun onEndpointFound(endpointId: String, info: DiscoveredEndpointInfo) {
-                    log("Found endpoint: ${info.endpointName}. Requesting connection.")
-                    connectionsClient.requestConnection(
-                                    localUsername,
-                                    endpointId,
-                                    connectionLifecycleCallback
-                            )
-                            .addOnFailureListener { e ->
-                                log("Request connection failed: ${e.message}")
-                            }
+                    // Parse Metadata: Flags|Battery|Name
+                    val parts = info.endpointName.split("|")
+                    val peerName = if (parts.size >= 3) parts[2] else info.endpointName
+                    val flags = if (parts.size >= 3) parts[0] else "0"
+                    val battery = if (parts.size >= 3) parts[1] else "0"
+
+                    log("Found $peerName ($endpointId). Flags=$flags, Bat=$battery%")
+
+                    // Lexicographical Connection Priority
+                    if (endpointId > localUsername) {
+                        log("Requesting connection to $peerName (I am dominant).")
+                        // Pause Discovery before requesting connection to improve stability
+                        connectionsClient.stopDiscovery()
+
+                        connectionsClient.requestConnection(
+                                        "1|100|$localUsername", // Send metadata as name
+                                        endpointId,
+                                        connectionLifecycleCallback
+                                )
+                                .addOnFailureListener { e ->
+                                    log("Request connection failed: ${e.message}")
+                                    // Resume discovery if failed?
+                                    // If duty cycle is on, it will handle it.
+                                }
+                    } else {
+                        log(
+                                "Found $peerName ($endpointId). Waiting for them to request (I am recessive)."
+                        )
+                    }
                 }
 
                 override fun onEndpointLost(endpointId: String) {
@@ -150,16 +600,186 @@ class P2PManager(private val context: Context, private val logDao: LogDao) {
     private val payloadCallback =
             object : PayloadCallback() {
                 override fun onPayloadReceived(endpointId: String, payload: Payload) {
-                    scope.launch { _payloadEvents.emit(PayloadEvent(endpointId, payload)) }
+                    when (payload.type) {
+                        Payload.Type.BYTES -> {
+                            val bytes = payload.asBytes() ?: return
+                            try {
+                                val packet = Packet.fromBytes(bytes)
+                                handlePacket(packet, endpointId)
+                            } catch (e: Exception) {
+                                log(
+                                        "Failed to parse packet from $endpointId: ${e.message}",
+                                        "ERROR"
+                                )
+                            }
+                        }
+                        Payload.Type.FILE -> {
+                            log("Received file payload from $endpointId. ID: ${payload.id}")
+                            // The file is automatically saved to the Downloads directory or app
+                            // cache
+                            val file = payload.asFile()?.asUri()?.path?.let { java.io.File(it) }
+                            if (file != null) {
+                                log("File received at: ${file.absolutePath}")
+                            }
+                        }
+                        else -> {
+                            // Close unsupported payloads to prevent memory leaks
+                            payload.close()
+                            log(
+                                    "Received unsupported payload type from $endpointId. Closed.",
+                                    "WARN"
+                            )
+                        }
+                    }
                 }
 
                 override fun onPayloadTransferUpdate(
                         endpointId: String,
                         update: PayloadTransferUpdate
                 ) {
-                    // TODO: Track transfer progress if needed
+                    // Update LastSeen
+                    neighbors[endpointId]?.lastSeen = System.currentTimeMillis()
+
+                    if (update.status == PayloadTransferUpdate.Status.SUCCESS ||
+                                    update.status == PayloadTransferUpdate.Status.FAILURE ||
+                                    update.status == PayloadTransferUpdate.Status.CANCELED
+                    ) {
+                        // Remove from active tracking if it was a file we sent
+                        // Note: We don't have the payload ID here easily mapped to "ours" vs
+                        // "theirs"
+                        // unless we track everything. But activeFilePayloads only stores OURs.
+                        // We can't check if 'update.payloadId' is in our set because we don't have
+                        // access to the set inside this callback easily?
+                        // Wait, 'activeFilePayloads' is a member of P2PManager, so we DO have
+                        // access.
+                        // access.
+                        activeFilePayloads.remove(update.payloadId)
+                    } else if (update.status == PayloadTransferUpdate.Status.IN_PROGRESS) {
+                        // Update timestamp for stall detector
+                        if (activeFilePayloads.containsKey(update.payloadId)) {
+                            activeFilePayloads[update.payloadId] = System.currentTimeMillis()
+                        }
+                    }
+
+                    if (update.totalBytes > 0) {
+                        val progress = (update.bytesTransferred * 100 / update.totalBytes).toInt()
+                        scope.launch {
+                            _payloadProgressEvents.emit(
+                                    PayloadProgressEvent(endpointId, progress, update.totalBytes)
+                            )
+                        }
+                    }
+
+                    if (update.status == PayloadTransferUpdate.Status.FAILURE) {
+                        log("Payload transfer to $endpointId failed.", "WARN")
+                    }
                 }
             }
+
+    private fun handlePacket(packet: Packet, fromEndpointId: String) {
+        // 1. De-duplication
+        if (messageCache.hasSeen(packet.id)) {
+            return
+        }
+        messageCache.markSeen(packet.id)
+
+        // 2. Update Neighbor Info
+        neighbors[fromEndpointId]?.lastSeen = System.currentTimeMillis()
+
+        // 3. Check Destination
+        if (packet.destId == localUsername) {
+            // Process Packet (It's for me!)
+            processPacket(packet)
+        } else {
+            // Forward Packet (It's not for me!)
+            forwardPacket(packet, fromEndpointId)
+        }
+    }
+
+    private fun processPacket(packet: Packet) {
+        when (packet.type) {
+            PacketType.DATA -> {
+                sendAck(packet.sourceId, packet.id)
+                scope.launch { _payloadEvents.emit(PayloadEvent(packet.sourceId, packet)) }
+            }
+            PacketType.ACK -> {
+                val ackedId = String(packet.payload)
+                if (pendingAcks.remove(ackedId) != null) {
+                    log("ACK received for $ackedId")
+                }
+            }
+            PacketType.PING -> {
+                sendPong(packet.sourceId, packet.payload)
+            }
+            PacketType.PONG -> {
+                scope.launch { _payloadEvents.emit(PayloadEvent(packet.sourceId, packet)) }
+            }
+            PacketType.UWB_ADDRESS -> {
+                uwbManager?.onPeerAddressReceived(packet.sourceId, packet.payload)
+            }
+        }
+    }
+
+    private fun forwardPacket(packet: Packet, fromEndpointId: String) {
+        // 1. Check TTL
+        if (packet.ttl <= 0) {
+            log("Packet ${packet.id} dropped (TTL expired).", "WARN")
+            return
+        }
+
+        // 2. Decrement TTL and Add Hop
+        val newTrace = packet.trace + com.fyp.resilientp2p.transport.Hop(localUsername, 0)
+        val forwardedPacket = packet.copy(ttl = packet.ttl - 1, trace = newTrace)
+
+        // 3. Check if we know the destination directly
+        if (neighbors.containsKey(forwardedPacket.destId)) {
+            sendUnicastPacket(forwardedPacket.destId, forwardedPacket)
+        } else {
+            // 4. Flood to all neighbors except sender
+            val targetEndpoints = neighbors.keys.filter { it != fromEndpointId }
+            if (targetEndpoints.isNotEmpty()) {
+                broadcastPacket(forwardedPacket, excludeEndpointId = fromEndpointId)
+            } else {
+                // DTN: Store and Forward
+                // No neighbors to forward to? Store it!
+                log("No route for packet ${packet.id}. Storing for later delivery.", "WARN")
+                storePacket(forwardedPacket)
+            }
+        }
+    }
+
+    private fun storePacket(packet: Packet) {
+        scope.launch {
+            try {
+                val entity =
+                        com.fyp.resilientp2p.data.PacketEntity(
+                                id = packet.id,
+                                destId = packet.destId,
+                                type = packet.type.name,
+                                payload = packet.payload,
+                                timestamp = packet.timestamp,
+                                expiration =
+                                        System.currentTimeMillis() +
+                                                (packet.ttl * 10000), // Rough expiry
+                                sourceId = packet.sourceId
+                        )
+                packetDao.insertPacket(entity)
+            } catch (e: Exception) {
+                log("Failed to store packet: ${e.message}", "ERROR")
+            }
+        }
+    }
+
+    fun getNeighborsSnapshot(): Map<String, com.fyp.resilientp2p.data.Neighbor> {
+        return HashMap(neighbors)
+    }
+
+    fun disconnectFromEndpoint(endpointId: String) {
+        connectionsClient.disconnectFromEndpoint(endpointId)
+        neighbors.remove(endpointId)
+        _state.update { it.copy(connectedEndpoints = it.connectedEndpoints - endpointId) }
+        log("Disconnected from $endpointId (Requested)")
+    }
 
     fun log(msg: String, type: String = "INFO") {
         Log.d(TAG, msg)

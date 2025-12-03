@@ -411,16 +411,18 @@ class P2PManager(
         }
     }
 
-    private fun sendPong(endpointId: String, originalPayload: ByteArray) {
+    private fun sendPong(sourceId: String, originalPayload: ByteArray) {
         val packet =
                 Packet(
                         type = PacketType.PONG,
                         sourceId = localUsername,
-                        destId = endpointId,
+                        destId = sourceId,
                         payload = originalPayload
                 )
-        if (neighbors.containsKey(endpointId)) {
-            sendUnicastPacket(endpointId, packet)
+        // Try to find direct route to source, otherwise broadcast
+        val directEndpoint = neighbors.entries.find { it.value.peerName == sourceId }?.key
+        if (directEndpoint != null) {
+            sendUnicastPacket(directEndpoint, packet)
         } else {
             broadcastPacket(packet)
         }
@@ -710,7 +712,11 @@ class P2PManager(
 
         neighbors[fromEndpointId]?.lastSeen = System.currentTimeMillis()
 
-        if (packet.destId == localUsername) {
+        // Special handling for PING: always process AND forward for mesh-wide testing
+        if (packet.type == PacketType.PING) {
+            processPacket(packet)
+            forwardPacket(packet, fromEndpointId)
+        } else if (packet.destId == localUsername) {
             processPacket(packet)
         } else {
             forwardPacket(packet, fromEndpointId)
@@ -731,6 +737,7 @@ class P2PManager(
             }
             PacketType.PING -> {
                 sendPong(packet.sourceId, packet.payload)
+                log("Received PING from ${packet.sourceId}. Sent PONG.")
             }
             PacketType.PONG -> {
                 scope.launch { _payloadEvents.emit(PayloadEvent(packet.sourceId, packet)) }

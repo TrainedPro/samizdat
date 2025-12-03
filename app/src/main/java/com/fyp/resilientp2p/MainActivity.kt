@@ -152,7 +152,7 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch {
             p2pManager.state.collect { state ->
                 if (state.authenticationDigits != null && state.authenticatingEndpointId != null) {
-                    showAuthTokenDialog(state.authenticationDigits!!)
+                    showAuthTokenDialog(state.authenticationDigits)
                 }
             }
         }
@@ -163,13 +163,23 @@ class MainActivity : AppCompatActivity() {
                 .setShowAsAction(
                         MenuItem.SHOW_AS_ACTION_IF_ROOM or MenuItem.SHOW_AS_ACTION_WITH_TEXT
                 )
+        menu.add(0, 2, 0, "Exit")
+                .setShowAsAction(
+                        MenuItem.SHOW_AS_ACTION_IF_ROOM or MenuItem.SHOW_AS_ACTION_WITH_TEXT
+                )
         return true
     }
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
-        if (item.itemId == 1) {
-            showAdvancedOptionsDialog()
-            return true
+        when (item.itemId) {
+            1 -> {
+                showAdvancedOptionsDialog()
+                return true
+            }
+            2 -> {
+                showExitConfirmationDialog()
+                return true
+            }
         }
         return super.onOptionsItemSelected(item)
     }
@@ -276,20 +286,86 @@ class MainActivity : AppCompatActivity() {
                 }
         dialogView.addView(slider)
 
-        AlertDialog.Builder(this)
-                .setTitle("Advanced Options")
-                .setView(dialogView)
-                .setPositiveButton("Done", null)
-                .show()
+        val advancedDialog =
+                AlertDialog.Builder(this)
+                        .setTitle("Advanced Options")
+                        .setView(dialogView)
+                        .setPositiveButton("Done", null)
+                        .create()
+        advancedDialog.show()
+        // Set button color explicitly to make it visible
+        advancedDialog
+                .getButton(AlertDialog.BUTTON_POSITIVE)
+                ?.setTextColor(android.graphics.Color.parseColor("#0091EA"))
     }
 
     private fun showAuthTokenDialog(token: String) {
-        AlertDialog.Builder(this)
-                .setTitle("Security Check")
-                .setMessage("Verify this code with the other device:\n\n$token")
-                .setPositiveButton("Confirmed") { dialog, _ -> dialog.dismiss() }
-                .setCancelable(false)
-                .show()
+        val authDialog =
+                AlertDialog.Builder(this)
+                        .setTitle("Security Check")
+                        .setMessage("Verify this code with the other device:\n\n$token")
+                        .setPositiveButton("OK") { dialog, _ -> dialog.dismiss() }
+                        .setCancelable(false)
+                        .create()
+        authDialog.show()
+        // Set button color explicitly to make it visible
+        authDialog
+                .getButton(AlertDialog.BUTTON_POSITIVE)
+                ?.setTextColor(android.graphics.Color.parseColor("#0091EA"))
+    }
+
+    private fun showExitConfirmationDialog() {
+        val exitDialog =
+                AlertDialog.Builder(this)
+                        .setTitle("Exit Application")
+                        .setMessage(
+                                "Are you sure you want to exit? All connections will be closed."
+                        )
+                        .setPositiveButton("Exit") { _, _ -> gracefulShutdown() }
+                        .setNegativeButton("Cancel", null)
+                        .create()
+        exitDialog.show()
+        // Set button colors explicitly to make them visible
+        exitDialog
+                .getButton(AlertDialog.BUTTON_POSITIVE)
+                ?.setTextColor(
+                        android.graphics.Color.parseColor("#D32F2F") // Red for exit
+                )
+        exitDialog
+                .getButton(AlertDialog.BUTTON_NEGATIVE)
+                ?.setTextColor(
+                        android.graphics.Color.parseColor("#0091EA") // Blue for cancel
+                )
+    }
+
+    private fun gracefulShutdown() {
+        p2pManager.log("Initiating graceful shutdown...", "INFO")
+
+        // Stop heartbeat
+        heartbeatManager.setHeartbeatEnabled(false)
+
+        // Stop all P2P connections and advertising/discovery
+        p2pManager.stopAll()
+
+        // Stop UWB ranging if active
+        uwbManager.stopRanging()
+
+        // Unbind and stop service
+        if (isBound) {
+            unbindService(connection)
+            isBound = false
+        }
+        stopService(Intent(this, P2PService::class.java))
+
+        p2pManager.log("Shutdown complete. Exiting app.", "INFO")
+
+        // Give a moment for logs to be written
+        lifecycleScope.launch {
+            kotlinx.coroutines.delay(500)
+            finish()
+            // Force kill the process to ensure clean exit
+            android.os.Process.killProcess(android.os.Process.myPid())
+        }
     }
 
     private fun hasPermissions(permissions: Array<String>): Boolean {

@@ -24,6 +24,7 @@
     
     <!-- Android 13+ (API 33+) -->
     <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES" />
+    <uses-permission android:name="android.permission.UWB_RANGING" />
 
     <!-- Service & Resilience -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />

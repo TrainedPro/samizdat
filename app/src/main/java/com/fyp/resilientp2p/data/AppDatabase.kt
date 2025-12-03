@@ -22,6 +22,7 @@ abstract class AppDatabase : RoomDatabase() {
                                                 AppDatabase::class.java,
                                                 "p2p_testbed_db"
                                         )
+                                        .fallbackToDestructiveMigration() // FIX: Handles version
                                         .build()
                         INSTANCE = instance
                         instance

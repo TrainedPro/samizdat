@@ -49,7 +49,10 @@ class P2PManager(
             val isLoading: Boolean = false,
             val authenticationDigits: String? = null,
             val authenticatingEndpointId: String? = null,
-            val isHybridMode: Boolean = false
+            val isHybridMode: Boolean = false,
+            val isDutyCycleActive: Boolean = false, // Added for UI sync
+            val isUwbSupported: Boolean = false, // Added for hardware check
+            val isUwbPermissionGranted: Boolean = false // Added for permission check
     )
 
     private val _state = MutableStateFlow(P2PState())
@@ -77,6 +80,10 @@ class P2PManager(
     fun getLocalDeviceName(): String = localUsername
 
     init {
+        // Check for UWB Hardware Support on init
+        val hasUwb = context.packageManager.hasSystemFeature("android.hardware.uwb")
+        _state.update { it.copy(isUwbSupported = hasUwb) }
+
         // Ensure clean state on startup
         connectionsClient.stopAllEndpoints()
     }
@@ -89,6 +96,34 @@ class P2PManager(
     fun setHybridMode(enabled: Boolean) {
         _state.update { it.copy(isHybridMode = enabled) }
         log("Hybrid Mode set to $enabled. Restart advertising/discovery to apply.")
+    }
+
+    fun updateUwbPermission(granted: Boolean) {
+        _state.update { it.copy(isUwbPermissionGranted = granted) }
+        if (!granted) {
+            log("UWB Permission revoked. Radar disabled.", "WARN")
+        } else {
+            log("UWB Permission granted.")
+        }
+    }
+
+    fun clearLogs() {
+        _state.update { it.copy(logs = emptyList()) }
+        scope.launch {
+            // Optional: Clear database logs if needed, or just clear UI logs
+            // logDao.deleteAll() // Uncomment if we want to clear DB too
+        }
+        log("Logs cleared from UI.")
+    }
+
+    private fun getBatteryLevel(): Int {
+        return try {
+            val bm = context.getSystemService(Context.BATTERY_SERVICE) as android.os.BatteryManager
+            bm.getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY)
+        } catch (e: Exception) {
+            log("Failed to get battery level: ${e.message}", "WARN")
+            100 // Default to 100 if we can't get it
+        }
     }
 
     fun startAdvertising() {
@@ -113,13 +148,13 @@ class P2PManager(
 
         // Metadata: Flags|Battery|Name
         // Flags: Bit 0=Internet, Bit 1=Charging
-        // For now, hardcode flags=1 (Has Internet mock) and battery=100
-        val metadata = "1|100|$localUsername"
+        val battery = getBatteryLevel()
+        val metadata = "1|$battery|$localUsername"
 
         connectionsClient
                 .startAdvertising(metadata, SERVICE_ID, connectionLifecycleCallback, options)
                 .addOnSuccessListener {
-                    log("Advertising started (LowPower=$lowPower). Metadata: $metadata")
+                    log("Advertising started (LowPower=$lowPower). Battery: $battery%")
                     _state.update { it.copy(isAdvertising = true, isLoading = false) }
                 }
                 .addOnFailureListener { e ->
@@ -151,6 +186,8 @@ class P2PManager(
     private var dutyCycleJob: kotlinx.coroutines.Job? = null
 
     fun setDutyCycle(enabled: Boolean) {
+        _state.update { it.copy(isDutyCycleActive = enabled) }
+
         if (enabled) {
             if (dutyCycleJob != null) return
             log("Starting Duty Cycle (Resilient Mode)...")
@@ -221,6 +258,9 @@ class P2PManager(
         connectionsClient.stopAllEndpoints()
         connectionsClient.stopAdvertising()
         connectionsClient.stopDiscovery()
+        // Reset advanced states
+        setDutyCycle(false)
+
         _state.update {
             it.copy(
                     isAdvertising = false,
@@ -241,11 +281,10 @@ class P2PManager(
             java.util.concurrent.ConcurrentHashMap<String, com.fyp.resilientp2p.data.Neighbor>()
     private val messageCache = com.fyp.resilientp2p.transport.MessageCache()
 
-    // Track active file payloads (ID -> LastUpdateTime) to detect stalls
     private val activeFilePayloads = java.util.concurrent.ConcurrentHashMap<Long, Long>()
     private var stallCheckJob: kotlinx.coroutines.Job? = null
     private val STALL_TIMEOUT_MS = 15000L
-    private val MAX_BYTES_DATA_SIZE = 32 * 1024 // 32KB limit for reliable BYTES
+    private val MAX_BYTES_DATA_SIZE = 32 * 1024
 
     var uwbManager: UwbManager? = null
 
@@ -284,12 +323,10 @@ class P2PManager(
             return
         }
 
-        // For resilience, send to the first connected neighbor (or dominant)
-        // In a real mesh, we might want to broadcast, but file broadcast is heavy.
         val targetEndpoint = neighbors.keys.first()
 
         val payload = Payload.fromFile(file)
-        activeFilePayloads[payload.id] = System.currentTimeMillis() // Track start time
+        activeFilePayloads[payload.id] = System.currentTimeMillis()
         startStallDetector()
 
         connectionsClient
@@ -306,7 +343,7 @@ class P2PManager(
         stallCheckJob =
                 scope.launch {
                     while (true) {
-                        kotlinx.coroutines.delay(5000) // Check every 5s
+                        kotlinx.coroutines.delay(5000)
                         if (activeFilePayloads.isEmpty()) {
                             stallCheckJob = null
                             return@launch
@@ -338,17 +375,18 @@ class P2PManager(
         }
     }
     fun sendPing(endpointId: String, bytes: ByteArray) {
-        // High Priority: Cancel bulk transfers
         cancelAllFileTransfers()
+
+        // Get peer's username from neighbors map
+        val peerName = neighbors[endpointId]?.peerName ?: endpointId
 
         val packet =
                 Packet(
                         type = PacketType.PING,
                         sourceId = localUsername,
-                        destId = endpointId,
+                        destId = peerName,
                         payload = bytes
                 )
-        // Heartbeats should be direct if possible to avoid flooding
         if (neighbors.containsKey(endpointId)) {
             sendUnicastPacket(endpointId, packet)
         } else {
@@ -357,7 +395,6 @@ class P2PManager(
     }
 
     private fun sendAck(endpointId: String, packetId: String) {
-        // High Priority: Cancel bulk transfers
         cancelAllFileTransfers()
 
         val packet =
@@ -367,7 +404,6 @@ class P2PManager(
                         destId = endpointId,
                         payload = packetId.toByteArray()
                 )
-        // ACKs should go directly back if possible
         if (neighbors.containsKey(endpointId)) {
             sendUnicastPacket(endpointId, packet)
         } else {
@@ -390,7 +426,6 @@ class P2PManager(
         }
     }
 
-    // Direct Unicast (No Flooding)
     private fun sendUnicastPacket(endpointId: String, packet: Packet) {
         connectionsClient.sendPayload(endpointId, Payload.fromBytes(packet.toBytes()))
                 .addOnFailureListener { e ->
@@ -398,25 +433,19 @@ class P2PManager(
                 }
     }
 
-    // Flooding / Broadcasting
     private fun broadcastPacket(packet: Packet, excludeEndpointId: String? = null) {
-        // 1. Mark as seen so we don't re-process our own packets if they loop back
         messageCache.markSeen(packet.id)
 
-        // 2. Optimization: If dest is a direct neighbor, just send to them
         if (neighbors.containsKey(packet.destId) && packet.destId != excludeEndpointId) {
             sendUnicastPacket(packet.destId, packet)
             return
         }
 
-        // 3. Send to all neighbors except the excluded one using optimized list API
-        // Smart Routing: For DATA packets, avoid LOW quality links if possible
         val targetEndpoints =
                 neighbors.entries
                         .filter { (id, neighbor) ->
                             id != excludeEndpointId &&
-                                    (packet.type != PacketType.DATA ||
-                                            neighbor.quality > 1) // Skip LOW (1) for DATA
+                                    (packet.type != PacketType.DATA || neighbor.quality > 1)
                         }
                         .map { it.key }
 
@@ -429,7 +458,6 @@ class P2PManager(
     private fun sendPacketReliably(packet: Packet, attempt: Int = 1) {
         pendingAcks[packet.id] = packet
 
-        // Use smart routing
         if (neighbors.containsKey(packet.destId)) {
             sendUnicastPacket(packet.destId, packet)
         } else {
@@ -459,10 +487,13 @@ class P2PManager(
     private val connectionLifecycleCallback =
             object : ConnectionLifecycleCallback() {
                 override fun onConnectionInitiated(endpointId: String, info: ConnectionInfo) {
+                    // Extract peer name from metadata
+                    val parts = info.endpointName.split("|")
+                    val peerName = if (parts.size >= 3) parts[2] else info.endpointName
+
                     log(
-                            "Connection initiated by ${info.endpointName}. Auth Token: ${info.authenticationDigits}"
+                            "Connection initiated by $peerName. Auth Token: ${info.authenticationDigits}"
                     )
-                    // Store Auth Token in State for UI
                     _state.update {
                         it.copy(
                                 authenticationDigits = info.authenticationDigits,
@@ -470,8 +501,9 @@ class P2PManager(
                         )
                     }
 
-                    // Auto-accept for now, but UI will show the token.
-                    // Ideally, we wait for user confirmation here.
+                    // Store peer name
+                    neighbors[endpointId] =
+                            com.fyp.resilientp2p.data.Neighbor(endpointId, peerName = peerName)
                     connectionsClient.acceptConnection(endpointId, payloadCallback)
                 }
 
@@ -479,19 +511,25 @@ class P2PManager(
                     when (result.status.statusCode) {
                         ConnectionsStatusCodes.STATUS_OK -> {
                             log("Connected to $endpointId")
-                            neighbors[endpointId] = com.fyp.resilientp2p.data.Neighbor(endpointId)
+                            // Extract peer name from endpoint metadata if available (will be
+                            // updated later)
+                            neighbors[endpointId] =
+                                    com.fyp.resilientp2p.data.Neighbor(endpointId, peerName = "")
                             _state.update {
                                 it.copy(
                                         connectedEndpoints = it.connectedEndpoints + endpointId,
-                                        authenticationDigits = null, // Clear auth token on success
+                                        authenticationDigits = null,
                                         authenticatingEndpointId = null
                                 )
                             }
 
-                            // Trigger UWB Ranging
-                            uwbManager?.startRanging(endpointId)
+                            // CHECK UWB SUPPORT BEFORE RANGING
+                            if (_state.value.isUwbSupported) {
+                                uwbManager?.startRanging(endpointId)
+                            } else {
+                                log("Skipping UWB ranging (HW Not Supported).")
+                            }
 
-                            // DTN: Check for stored packets for this peer
                             scope.launch {
                                 val pendingPackets = packetDao.getPacketsForPeer(endpointId)
                                 if (pendingPackets.isNotEmpty()) {
@@ -507,11 +545,8 @@ class P2PManager(
                                                         sourceId = entity.sourceId,
                                                         destId = entity.destId,
                                                         payload = entity.payload,
-                                                        ttl = 5, // Reset TTL for final hop
-                                                        trace = ArrayList(), // Reset trace or keep?
-                                                        // Keep is better but
-                                                        // complex to store.
-                                                        // Resetting for now.
+                                                        ttl = 5,
+                                                        trace = ArrayList(),
                                                         sequenceNumber = 0
                                                 )
                                         sendPacketReliably(packet)
@@ -546,7 +581,6 @@ class P2PManager(
 
                     scope.launch { _bandwidthEvents.emit(bandwidthInfo) }
 
-                    // Update Neighbor Quality
                     val qualityScore =
                             when (bandwidthInfo.quality) {
                                 BandwidthInfo.Quality.HIGH -> 3
@@ -561,7 +595,6 @@ class P2PManager(
     private val endpointDiscoveryCallback =
             object : EndpointDiscoveryCallback() {
                 override fun onEndpointFound(endpointId: String, info: DiscoveredEndpointInfo) {
-                    // Parse Metadata: Flags|Battery|Name
                     val parts = info.endpointName.split("|")
                     val peerName = if (parts.size >= 3) parts[2] else info.endpointName
                     val flags = if (parts.size >= 3) parts[0] else "0"
@@ -569,21 +602,28 @@ class P2PManager(
 
                     log("Found $peerName ($endpointId). Flags=$flags, Bat=$battery%")
 
-                    // Lexicographical Connection Priority
-                    if (endpointId > localUsername) {
+                    // FIX: Compare usernames instead of endpointId vs username to avoid race
+                    // condition
+                    if (peerName > localUsername) {
                         log("Requesting connection to $peerName (I am dominant).")
-                        // Pause Discovery before requesting connection to improve stability
                         connectionsClient.stopDiscovery()
 
-                        connectionsClient.requestConnection(
-                                        "1|100|$localUsername", // Send metadata as name
+                        connectionsClient
+                                .requestConnection(
+                                        "1|${getBatteryLevel()}|$localUsername",
                                         endpointId,
                                         connectionLifecycleCallback
                                 )
+                                .addOnSuccessListener {
+                                    // Store peer name for later use
+                                    neighbors[endpointId] =
+                                            com.fyp.resilientp2p.data.Neighbor(
+                                                    endpointId,
+                                                    peerName = peerName
+                                            )
+                                }
                                 .addOnFailureListener { e ->
                                     log("Request connection failed: ${e.message}")
-                                    // Resume discovery if failed?
-                                    // If duty cycle is on, it will handle it.
                                 }
                     } else {
                         log(
@@ -615,15 +655,12 @@ class P2PManager(
                         }
                         Payload.Type.FILE -> {
                             log("Received file payload from $endpointId. ID: ${payload.id}")
-                            // The file is automatically saved to the Downloads directory or app
-                            // cache
                             val file = payload.asFile()?.asUri()?.path?.let { java.io.File(it) }
                             if (file != null) {
                                 log("File received at: ${file.absolutePath}")
                             }
                         }
                         else -> {
-                            // Close unsupported payloads to prevent memory leaks
                             payload.close()
                             log(
                                     "Received unsupported payload type from $endpointId. Closed.",
@@ -637,25 +674,14 @@ class P2PManager(
                         endpointId: String,
                         update: PayloadTransferUpdate
                 ) {
-                    // Update LastSeen
                     neighbors[endpointId]?.lastSeen = System.currentTimeMillis()
 
                     if (update.status == PayloadTransferUpdate.Status.SUCCESS ||
                                     update.status == PayloadTransferUpdate.Status.FAILURE ||
                                     update.status == PayloadTransferUpdate.Status.CANCELED
                     ) {
-                        // Remove from active tracking if it was a file we sent
-                        // Note: We don't have the payload ID here easily mapped to "ours" vs
-                        // "theirs"
-                        // unless we track everything. But activeFilePayloads only stores OURs.
-                        // We can't check if 'update.payloadId' is in our set because we don't have
-                        // access to the set inside this callback easily?
-                        // Wait, 'activeFilePayloads' is a member of P2PManager, so we DO have
-                        // access.
-                        // access.
                         activeFilePayloads.remove(update.payloadId)
                     } else if (update.status == PayloadTransferUpdate.Status.IN_PROGRESS) {
-                        // Update timestamp for stall detector
                         if (activeFilePayloads.containsKey(update.payloadId)) {
                             activeFilePayloads[update.payloadId] = System.currentTimeMillis()
                         }
@@ -677,21 +703,16 @@ class P2PManager(
             }
 
     private fun handlePacket(packet: Packet, fromEndpointId: String) {
-        // 1. De-duplication
         if (messageCache.hasSeen(packet.id)) {
             return
         }
         messageCache.markSeen(packet.id)
 
-        // 2. Update Neighbor Info
         neighbors[fromEndpointId]?.lastSeen = System.currentTimeMillis()
 
-        // 3. Check Destination
         if (packet.destId == localUsername) {
-            // Process Packet (It's for me!)
             processPacket(packet)
         } else {
-            // Forward Packet (It's not for me!)
             forwardPacket(packet, fromEndpointId)
         }
     }
@@ -721,27 +742,21 @@ class P2PManager(
     }
 
     private fun forwardPacket(packet: Packet, fromEndpointId: String) {
-        // 1. Check TTL
         if (packet.ttl <= 0) {
             log("Packet ${packet.id} dropped (TTL expired).", "WARN")
             return
         }
 
-        // 2. Decrement TTL and Add Hop
         val newTrace = packet.trace + com.fyp.resilientp2p.transport.Hop(localUsername, 0)
         val forwardedPacket = packet.copy(ttl = packet.ttl - 1, trace = newTrace)
 
-        // 3. Check if we know the destination directly
         if (neighbors.containsKey(forwardedPacket.destId)) {
             sendUnicastPacket(forwardedPacket.destId, forwardedPacket)
         } else {
-            // 4. Flood to all neighbors except sender
             val targetEndpoints = neighbors.keys.filter { it != fromEndpointId }
             if (targetEndpoints.isNotEmpty()) {
                 broadcastPacket(forwardedPacket, excludeEndpointId = fromEndpointId)
             } else {
-                // DTN: Store and Forward
-                // No neighbors to forward to? Store it!
                 log("No route for packet ${packet.id}. Storing for later delivery.", "WARN")
                 storePacket(forwardedPacket)
             }
@@ -758,9 +773,7 @@ class P2PManager(
                                 type = packet.type.name,
                                 payload = packet.payload,
                                 timestamp = packet.timestamp,
-                                expiration =
-                                        System.currentTimeMillis() +
-                                                (packet.ttl * 10000), // Rough expiry
+                                expiration = System.currentTimeMillis() + (packet.ttl * 10000),
                                 sourceId = packet.sourceId
                         )
                 packetDao.insertPacket(entity)

@@ -11,7 +11,8 @@ enum class PacketType {
     PONG,
     ACK,
     DATA,
-    UWB_ADDRESS
+    UWB_ADDRESS,
+    GOSSIP
 }
 
 data class Hop(val peerId: String, val rssi: Int)

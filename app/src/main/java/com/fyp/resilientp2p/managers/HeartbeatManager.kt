@@ -102,7 +102,8 @@ class HeartbeatManager(private val p2pManager: P2PManager) {
         heartbeatJob =
                 scope.launch {
                     while (true) {
-                        sendPing(config.payloadSizeBytes)
+                        // sendPing(config.payloadSizeBytes) // Old Heartbeat
+                        p2pManager.sendGossip() // New Mesh Heartbeat
                         delay(config.intervalMs)
                     }
                 }

@@ -52,6 +52,10 @@ fun ResilientP2PApp(p2pManager: P2PManager, uwbManager: UwbManager, onExportLogs
                 }
         }
 
+        // Chat State
+        var showChatDialog by remember { mutableStateOf(false) }
+        var chatTargetId by remember { mutableStateOf<String?>(null) }
+
         val isConnected = state.connectedEndpoints.isNotEmpty()
         val scrollState = rememberScrollState()
 
@@ -79,49 +83,34 @@ fun ResilientP2PApp(p2pManager: P2PManager, uwbManager: UwbManager, onExportLogs
                 // --- Controls Section ---
                 Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        horizontalArrangement = Arrangement.Center
                 ) {
-                        // Advertise Button
+                        // Master Mesh Button
                         Button(
                                 onClick = {
-                                        if (state.isAdvertising) p2pManager.stopAdvertising()
-                                        else p2pManager.startAdvertising()
+                                        if (state.isDutyCycleActive) {
+                                                p2pManager.setDutyCycle(false)
+                                        } else {
+                                                p2pManager.setDutyCycle(true)
+                                        }
                                 },
-                                modifier = Modifier.weight(1f).height(50.dp),
+                                modifier = Modifier.fillMaxWidth().height(56.dp),
                                 colors =
                                         ButtonDefaults.buttonColors(
                                                 containerColor =
-                                                        if (state.isAdvertising)
-                                                                colorScheme.tertiary
+                                                        if (state.isDutyCycleActive)
+                                                                colorScheme.error
                                                         else colorScheme.primary
                                         ),
-                                shape = RoundedCornerShape(8.dp)
+                                shape = RoundedCornerShape(12.dp),
+                                elevation = ButtonDefaults.buttonElevation(8.dp)
                         ) {
                                 Text(
-                                        text = if (state.isAdvertising) "STOP ADV" else "ADVERTISE",
-                                        fontWeight = FontWeight.Bold
-                                )
-                        }
-
-                        // Discover Button
-                        Button(
-                                onClick = {
-                                        if (state.isDiscovering) p2pManager.stopDiscovery()
-                                        else p2pManager.startDiscovery()
-                                },
-                                modifier = Modifier.weight(1f).height(50.dp),
-                                colors =
-                                        ButtonDefaults.buttonColors(
-                                                containerColor =
-                                                        if (state.isDiscovering)
-                                                                colorScheme.tertiary
-                                                        else colorScheme.primary
-                                        ),
-                                shape = RoundedCornerShape(8.dp)
-                        ) {
-                                Text(
-                                        text = if (state.isDiscovering) "STOP DISC" else "DISCOVER",
-                                        fontWeight = FontWeight.Bold
+                                        text =
+                                                if (state.isDutyCycleActive) "STOP MESH NETWORK"
+                                                else "START MESH NETWORK",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 16.sp
                                 )
                         }
                 }
@@ -150,7 +139,7 @@ fun ResilientP2PApp(p2pManager: P2PManager, uwbManager: UwbManager, onExportLogs
                         }
                 }
 
-                Spacer(modifier = Modifier.height(24.dp))
+                Spacer(modifier = Modifier.height(16.dp))
 
                 // --- Dashboard & Logs ---
                 DashboardContent(
@@ -163,7 +152,27 @@ fun ResilientP2PApp(p2pManager: P2PManager, uwbManager: UwbManager, onExportLogs
                         onClearLogs = { p2pManager.clearLogs() },
                         isUwbSupported = state.isUwbSupported, // Pass UWB support flag
                         isUwbPermissionGranted =
-                                state.isUwbPermissionGranted // Pass UWB permission flag
+                                state.isUwbPermissionGranted, // Pass UWB permission flag
+                        knownPeers = state.knownPeers,
+                        connectedEndpoints = state.connectedEndpoints,
+                        onPeerClick = { peerId ->
+                                chatTargetId = peerId
+                                showChatDialog = true
+                        }
+                )
+        }
+
+        if (showChatDialog && chatTargetId != null) {
+                ChatDialog(
+                        peerId = chatTargetId!!,
+                        onDismiss = { showChatDialog = false },
+                        onSend = { msg -> p2pManager.sendData(chatTargetId!!, msg.toByteArray()) },
+                        onPing = {
+                                val timestamp = System.currentTimeMillis()
+                                val buffer = java.nio.ByteBuffer.allocate(8)
+                                buffer.putLong(timestamp)
+                                p2pManager.sendPing(chatTargetId!!, buffer.array())
+                        }
                 )
         }
 }
@@ -237,7 +246,10 @@ fun DashboardContent(
         onExportLogs: () -> Unit,
         onClearLogs: () -> Unit,
         isUwbSupported: Boolean,
-        isUwbPermissionGranted: Boolean
+        isUwbPermissionGranted: Boolean,
+        knownPeers: Map<String, P2PManager.RouteInfo>,
+        connectedEndpoints: Set<String>,
+        onPeerClick: (String) -> Unit
 ) {
         Column(modifier = Modifier.fillMaxWidth()) {
                 // --- Radar Section ---
@@ -252,12 +264,158 @@ fun DashboardContent(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
+                // --- Mesh Contacts Section ---
+                MeshContactsSection(
+                        knownPeers = knownPeers,
+                        connectedEndpoints = connectedEndpoints,
+                        onPeerClick = onPeerClick
+                )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
                 // --- Logs Section ---
                 LogsSection(logs, onExportLogs, onClearLogs)
 
                 // Extra space at bottom to ensure easy scrolling
                 Spacer(modifier = Modifier.height(32.dp))
         }
+}
+
+@Composable
+fun MeshContactsSection(
+        knownPeers: Map<String, P2PManager.RouteInfo>,
+        connectedEndpoints: Set<String>,
+        onPeerClick: (String) -> Unit
+) {
+        Card(
+                colors = CardDefaults.cardColors(containerColor = colorScheme.surfaceVariant),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth()
+        ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                                text = "Mesh Contacts",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = colorScheme.onSurface,
+                                fontWeight = FontWeight.Bold
+                        )
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        if (knownPeers.isEmpty() && connectedEndpoints.isEmpty()) {
+                                Text(
+                                        text = "No peers found yet. Waiting for mesh...",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = colorScheme.onSurfaceVariant,
+                                        fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
+                                )
+                        } else {
+                                // Combine direct and routed peers
+                                val allPeers = (connectedEndpoints + knownPeers.keys).toSet()
+
+                                allPeers.forEach { peerId ->
+                                        val isDirect = connectedEndpoints.contains(peerId)
+                                        val route = knownPeers[peerId]
+
+                                        Row(
+                                                modifier =
+                                                        Modifier.fillMaxWidth()
+                                                                .clickable { onPeerClick(peerId) }
+                                                                .padding(vertical = 8.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                                // Status Dot
+                                                Box(
+                                                        modifier =
+                                                                Modifier.size(10.dp)
+                                                                        .clip(
+                                                                                androidx.compose
+                                                                                        .foundation
+                                                                                        .shape
+                                                                                        .CircleShape
+                                                                        )
+                                                                        .background(
+                                                                                if (isDirect)
+                                                                                        Color.Green
+                                                                                else Color.Cyan
+                                                                        )
+                                                )
+                                                Spacer(modifier = Modifier.width(12.dp))
+
+                                                Column {
+                                                        Text(
+                                                                text = peerId,
+                                                                fontWeight = FontWeight.Bold,
+                                                                color = colorScheme.onSurface
+                                                        )
+                                                        val status =
+                                                                if (isDirect) "Direct Connection"
+                                                                else
+                                                                        "Via ${route?.nextHop} (${route?.hopCount} hops)"
+                                                        Text(
+                                                                text = status,
+                                                                style =
+                                                                        MaterialTheme.typography
+                                                                                .bodySmall,
+                                                                color = colorScheme.onSurfaceVariant
+                                                        )
+                                                }
+                                                Spacer(modifier = Modifier.weight(1f))
+                                                Text(
+                                                        "Chat",
+                                                        color = colorScheme.primary,
+                                                        fontWeight = FontWeight.Bold
+                                                )
+                                        }
+                                        Divider(
+                                                color =
+                                                        colorScheme.outlineVariant.copy(
+                                                                alpha = 0.5f
+                                                        )
+                                        )
+                                }
+                        }
+                }
+        }
+}
+
+@Composable
+fun ChatDialog(
+        peerId: String,
+        onDismiss: () -> Unit,
+        onSend: (String) -> Unit,
+        onPing: () -> Unit
+) {
+        var message by remember { mutableStateOf("") }
+
+        AlertDialog(
+                onDismissRequest = onDismiss,
+                title = { Text(text = "Chat with $peerId") },
+                text = {
+                        Column {
+                                OutlinedTextField(
+                                        value = message,
+                                        onValueChange = { message = it },
+                                        label = { Text("Message") },
+                                        modifier = Modifier.fillMaxWidth()
+                                )
+                        }
+                },
+                confirmButton = {
+                        Row {
+                                TextButton(onClick = onPing) { Text("Ping") }
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Button(
+                                        onClick = {
+                                                if (message.isNotBlank()) {
+                                                        onSend(message)
+                                                        onDismiss()
+                                                }
+                                        }
+                                ) { Text("Send") }
+                        }
+                },
+                dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+        )
 }
 
 @Composable

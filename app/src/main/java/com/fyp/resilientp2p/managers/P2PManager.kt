@@ -52,7 +52,8 @@ class P2PManager(
             val isHybridMode: Boolean = false,
             val isDutyCycleActive: Boolean = false, // Added for UI sync
             val isUwbSupported: Boolean = false, // Added for hardware check
-            val isUwbPermissionGranted: Boolean = false // Added for permission check
+            val isUwbPermissionGranted: Boolean = false, // Added for permission check
+            val knownPeers: Map<String, RouteInfo> = emptyMap() // Added for Mesh Contacts
     )
 
     private val _state = MutableStateFlow(P2PState())
@@ -195,14 +196,20 @@ class P2PManager(
                     scope.launch {
                         while (true) {
                             // Phase 1: Discovery (Listen)
+                            // Randomize duration (10s - 15s) to avoid phase synchronization
+                            val discoveryDuration = (10000..15000).random().toLong()
+
                             if (!_state.value.isDiscovering) startDiscovery()
                             if (_state.value.isAdvertising) stopAdvertising()
-                            kotlinx.coroutines.delay(10000) // 10s Listen
+                            kotlinx.coroutines.delay(discoveryDuration)
 
                             // Phase 2: Advertising (Announce)
+                            // Randomize duration (10s - 15s)
+                            val advertisingDuration = (10000..15000).random().toLong()
+
                             if (_state.value.isDiscovering) stopDiscovery()
                             if (!_state.value.isAdvertising) startAdvertising()
-                            kotlinx.coroutines.delay(10000) // 10s Announce
+                            kotlinx.coroutines.delay(advertisingDuration)
                         }
                     }
         } else {
@@ -279,6 +286,11 @@ class P2PManager(
 
     private val neighbors =
             java.util.concurrent.ConcurrentHashMap<String, com.fyp.resilientp2p.data.Neighbor>()
+
+    // Routing Table: TargetID -> RouteInfo
+    data class RouteInfo(val nextHop: String, val hopCount: Int, val lastSeen: Long)
+    private val routingTable = java.util.concurrent.ConcurrentHashMap<String, RouteInfo>()
+
     private val messageCache = com.fyp.resilientp2p.transport.MessageCache()
 
     private val activeFilePayloads = java.util.concurrent.ConcurrentHashMap<Long, Long>()
@@ -315,6 +327,42 @@ class P2PManager(
                         payload = address
                 )
         sendPacketReliably(packet)
+    }
+
+    fun sendGossip() {
+        // Create Gossip Payload: My ID + List of all nodes I can reach
+        // Format: [Count:Int] [ID:String, Hops:Int]...
+        val baos = java.io.ByteArrayOutputStream()
+        val dos = java.io.DataOutputStream(baos)
+
+        // Include direct neighbors (Hops=1)
+        val allNodes = HashMap<String, Int>()
+        neighbors.values.forEach { allNodes[it.peerName] = 1 }
+
+        // Include routing table nodes (Hops=Route.Hops + 1)
+        routingTable.forEach { (id, route) ->
+            if (!allNodes.containsKey(id)) {
+                allNodes[id] = route.hopCount + 1
+            }
+        }
+
+        dos.writeInt(allNodes.size)
+        allNodes.forEach { (id, hops) ->
+            dos.writeUTF(id)
+            dos.writeInt(hops)
+        }
+
+        val payload = baos.toByteArray()
+
+        val packet =
+                Packet(
+                        type = PacketType.GOSSIP,
+                        sourceId = localUsername,
+                        destId = "BROADCAST",
+                        payload = payload,
+                        ttl = 1 // Gossip only goes to immediate neighbors
+                )
+        broadcastPacket(packet)
     }
 
     fun sendFile(file: java.io.File) {
@@ -460,10 +508,25 @@ class P2PManager(
     private fun sendPacketReliably(packet: Packet, attempt: Int = 1) {
         pendingAcks[packet.id] = packet
 
-        if (neighbors.containsKey(packet.destId)) {
-            sendUnicastPacket(packet.destId, packet)
+        // SMART ROUTING
+        val directEndpoint = neighbors.entries.find { it.value.peerName == packet.destId }?.key
+        if (directEndpoint != null) {
+            sendUnicastPacket(directEndpoint, packet)
         } else {
-            broadcastPacket(packet)
+            val route = routingTable[packet.destId]
+            if (route != null) {
+                val nextHopEndpoint =
+                        neighbors.entries.find { it.value.peerName == route.nextHop }?.key
+                if (nextHopEndpoint != null) {
+                    log("Routing packet for ${packet.destId} via ${route.nextHop}")
+                    sendUnicastPacket(nextHopEndpoint, packet)
+                } else {
+                    log("Route broken for ${packet.destId}. Broadcasting.", "WARN")
+                    broadcastPacket(packet)
+                }
+            } else {
+                broadcastPacket(packet)
+            }
         }
 
         scope.launch {
@@ -604,34 +667,30 @@ class P2PManager(
 
                     log("Found $peerName ($endpointId). Flags=$flags, Bat=$battery%")
 
-                    // FIX: Compare usernames instead of endpointId vs username to avoid race
-                    // condition
-                    if (peerName > localUsername) {
-                        log("Requesting connection to $peerName (I am dominant).")
-                        connectionsClient.stopDiscovery()
+                    // FIX: Always request connection. The API handles race conditions.
+                    // We no longer wait for the "Dominant" peer to initiate.
+                    log("Requesting connection to $peerName...")
+                    connectionsClient.stopDiscovery()
 
-                        connectionsClient
-                                .requestConnection(
-                                        "1|${getBatteryLevel()}|$localUsername",
-                                        endpointId,
-                                        connectionLifecycleCallback
-                                )
-                                .addOnSuccessListener {
-                                    // Store peer name for later use
-                                    neighbors[endpointId] =
-                                            com.fyp.resilientp2p.data.Neighbor(
-                                                    endpointId,
-                                                    peerName = peerName
-                                            )
-                                }
-                                .addOnFailureListener { e ->
-                                    log("Request connection failed: ${e.message}")
-                                }
-                    } else {
-                        log(
-                                "Found $peerName ($endpointId). Waiting for them to request (I am recessive)."
-                        )
-                    }
+                    connectionsClient
+                            .requestConnection(
+                                    "1|${getBatteryLevel()}|$localUsername",
+                                    endpointId,
+                                    connectionLifecycleCallback
+                            )
+                            .addOnSuccessListener {
+                                // Store peer name for later use
+                                neighbors[endpointId] =
+                                        com.fyp.resilientp2p.data.Neighbor(
+                                                endpointId,
+                                                peerName = peerName
+                                        )
+                            }
+                            .addOnFailureListener { e ->
+                                log("Request connection failed: ${e.message}")
+                                // If request fails, restart discovery to try again or find others
+                                startDiscovery()
+                            }
                 }
 
                 override fun onEndpointLost(endpointId: String) {
@@ -716,7 +775,7 @@ class P2PManager(
         if (packet.type == PacketType.PING) {
             processPacket(packet)
             forwardPacket(packet, fromEndpointId)
-        } else if (packet.destId == localUsername) {
+        } else if (packet.destId == localUsername || packet.destId == "BROADCAST") {
             processPacket(packet)
         } else {
             forwardPacket(packet, fromEndpointId)
@@ -745,6 +804,32 @@ class P2PManager(
             PacketType.UWB_ADDRESS -> {
                 uwbManager?.onPeerAddressReceived(packet.sourceId, packet.payload)
             }
+            PacketType.GOSSIP -> {
+                try {
+                    val bais = java.io.ByteArrayInputStream(packet.payload)
+                    val dis = java.io.DataInputStream(bais)
+                    val count = dis.readInt()
+                    val senderName = packet.sourceId
+
+                    for (i in 0 until count) {
+                        val nodeId = dis.readUTF()
+                        val hops = dis.readInt()
+                        // Don't add self or direct neighbors (unless better route?)
+                        if (nodeId != localUsername) {
+                            val currentRoute = routingTable[nodeId]
+                            if (currentRoute == null || currentRoute.hopCount > hops) {
+                                routingTable[nodeId] =
+                                        RouteInfo(senderName, hops, System.currentTimeMillis())
+                                log("Updated route to $nodeId via $senderName ($hops hops)")
+                            }
+                        }
+                    }
+                    // Update UI State with new routes
+                    _state.update { it.copy(knownPeers = HashMap(routingTable)) }
+                } catch (e: Exception) {
+                    log("Failed to parse GOSSIP: ${e.message}", "ERROR")
+                }
+            }
         }
     }
 
@@ -757,15 +842,25 @@ class P2PManager(
         val newTrace = packet.trace + com.fyp.resilientp2p.transport.Hop(localUsername, 0)
         val forwardedPacket = packet.copy(ttl = packet.ttl - 1, trace = newTrace)
 
-        if (neighbors.containsKey(forwardedPacket.destId)) {
-            sendUnicastPacket(forwardedPacket.destId, forwardedPacket)
+        // SMART ROUTING
+        val directEndpoint =
+                neighbors.entries.find { it.value.peerName == forwardedPacket.destId }?.key
+        if (directEndpoint != null) {
+            sendUnicastPacket(directEndpoint, forwardedPacket)
         } else {
-            val targetEndpoints = neighbors.keys.filter { it != fromEndpointId }
-            if (targetEndpoints.isNotEmpty()) {
-                broadcastPacket(forwardedPacket, excludeEndpointId = fromEndpointId)
+            val route = routingTable[forwardedPacket.destId]
+            if (route != null) {
+                val nextHopEndpoint =
+                        neighbors.entries.find { it.value.peerName == route.nextHop }?.key
+                if (nextHopEndpoint != null) {
+                    log("Forwarding packet for ${forwardedPacket.destId} to ${route.nextHop}")
+                    sendUnicastPacket(nextHopEndpoint, forwardedPacket)
+                } else {
+                    log("Route broken for ${forwardedPacket.destId}. Broadcasting.", "WARN")
+                    broadcastPacket(forwardedPacket, excludeEndpointId = fromEndpointId)
+                }
             } else {
-                log("No route for packet ${packet.id}. Storing for later delivery.", "WARN")
-                storePacket(forwardedPacket)
+                broadcastPacket(forwardedPacket, excludeEndpointId = fromEndpointId)
             }
         }
     }

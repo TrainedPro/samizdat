@@ -64,7 +64,18 @@ fun ResilientP2PTestbedTheme(
         if (!view.isInEditMode) {
                 SideEffect {
                         val window = (view.context as Activity).window
-                        window.statusBarColor = colorScheme.background.toArgb()
+                        if (Build.VERSION.SDK_INT < 35) {
+                                try {
+                                        val method =
+                                                window.javaClass.getMethod(
+                                                        "setStatusBarColor",
+                                                        Int::class.javaPrimitiveType
+                                                )
+                                        method.invoke(window, colorScheme.background.toArgb())
+                                } catch (e: Exception) {
+                                        // Ignore reflection errors
+                                }
+                        }
                         WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars =
                                 !darkTheme
                 }

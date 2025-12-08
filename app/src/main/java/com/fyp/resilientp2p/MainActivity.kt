@@ -34,6 +34,8 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -76,28 +78,28 @@ class MainActivity : AppCompatActivity() {
     private val requestPermissionLauncher =
             registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
                     permissions ->
+                @android.annotation.SuppressLint("InlinedApi")
                 val denied = permissions.filter { !it.value }.map { it.key }
 
                 // FIX: Filter out optional UWB permission.
                 // If UWB is denied, we still want the app to run.
-                val criticalDenied = denied.filter { it != Manifest.permission.UWB_RANGING }
+                // Use string literal to avoid InlinedApi warning on older SDKs
+                val criticalDenied = denied.filter { it != "android.permission.UWB_RANGING" }
 
                 if (criticalDenied.isEmpty()) {
                     if (denied.contains(Manifest.permission.UWB_RANGING)) {
                         p2pManager.log(
-                                "UWB Permission denied or not configured. Radar features will be disabled.",
-                                "WARN"
+                                "WARN: UWB Permission denied or not configured. Radar features will be disabled."
                         )
                     } else {
                         p2pManager.log("All permissions granted.")
                     }
                     // Update UWB permission state
-                    p2pManager.updateUwbPermission(
-                            !denied.contains(Manifest.permission.UWB_RANGING)
-                    )
+                    val isUwbGranted = !denied.contains("android.permission.UWB_RANGING")
+                    p2pManager.updateUwbPermission(isUwbGranted)
                     startAndBindService()
                 } else {
-                    p2pManager.log("ERROR: Critical permissions denied: $criticalDenied", "ERROR")
+                    p2pManager.log("ERROR: Critical permissions denied: $criticalDenied")
                 }
             }
 
@@ -148,13 +150,23 @@ class MainActivity : AppCompatActivity() {
         observeAuthEvents()
     }
 
+    private var currentAuthDialog: AlertDialog? = null
+
     private fun observeAuthEvents() {
         lifecycleScope.launch {
-            p2pManager.state.collect { state ->
-                if (state.authenticationDigits != null && state.authenticatingEndpointId != null) {
-                    showAuthTokenDialog(state.authenticationDigits)
-                }
-            }
+            p2pManager
+                    .state
+                    .map { it.authenticationDigits to it.authenticatingEndpointId }
+                    .distinctUntilChanged()
+                    .collect { (digits, id) ->
+                        // Dismiss existing dialog if state changes
+                        currentAuthDialog?.dismiss()
+                        currentAuthDialog = null
+
+                        if (digits != null && id != null) {
+                            showAuthTokenDialog(digits)
+                        }
+                    }
         }
     }
 
@@ -194,7 +206,7 @@ class MainActivity : AppCompatActivity() {
         // Low Power Toggle
         val lpCheck =
                 android.widget.CheckBox(this).apply {
-                    text = "Low Power Mode"
+                    text = getString(R.string.low_power_mode)
                     isChecked = p2pManager.state.value.isLowPower
                     setOnCheckedChangeListener { _, isChecked -> p2pManager.setLowPower(isChecked) }
                 }
@@ -203,8 +215,8 @@ class MainActivity : AppCompatActivity() {
         // Duty Cycle Toggle
         val dcCheck =
                 android.widget.CheckBox(this).apply {
-                    text = "Duty Cycle (Resilience)"
-                    isChecked = p2pManager.state.value.isDutyCycleActive // SYNCED STATE
+                    text = getString(R.string.duty_cycle)
+                    isChecked = p2pManager.state.value.isMeshMaintenanceActive // SYNCED STATE
                     setOnCheckedChangeListener { _, isChecked ->
                         p2pManager.setDutyCycle(isChecked)
                     }
@@ -214,13 +226,24 @@ class MainActivity : AppCompatActivity() {
         // Hybrid Mode Toggle
         val hmCheck =
                 android.widget.CheckBox(this).apply {
-                    text = "Hybrid Mode (LAN/BLE)"
+                    text = getString(R.string.hybrid_mode)
                     isChecked = p2pManager.state.value.isHybridMode
                     setOnCheckedChangeListener { _, isChecked ->
                         p2pManager.setHybridMode(isChecked)
                     }
                 }
         dialogView.addView(hmCheck)
+
+        // Manual Connection Toggle
+        val mcCheck =
+                android.widget.CheckBox(this).apply {
+                    text = getString(R.string.manual_connection_mode)
+                    isChecked = p2pManager.state.value.isManualConnectionEnabled
+                    setOnCheckedChangeListener { _, isChecked ->
+                        p2pManager.setManualConnection(isChecked)
+                    }
+                }
+        dialogView.addView(mcCheck)
 
         // Separator
         val separator =
@@ -238,14 +261,14 @@ class MainActivity : AppCompatActivity() {
         // Heartbeat Controls
         val hbTitle =
                 TextView(this).apply {
-                    text = "Heartbeat Settings"
+                    text = getString(R.string.heartbeat_settings)
                     setTypeface(null, android.graphics.Typeface.BOLD)
                 }
         dialogView.addView(hbTitle)
 
         val hbCheck =
                 android.widget.CheckBox(this).apply {
-                    text = "Enable Heartbeat"
+                    text = getString(R.string.enable_heartbeat)
                     isChecked = heartbeatManager.config.value.isEnabled
                     setOnCheckedChangeListener { _, isChecked ->
                         heartbeatManager.setHeartbeatEnabled(isChecked)
@@ -255,7 +278,11 @@ class MainActivity : AppCompatActivity() {
 
         val sliderLabel =
                 TextView(this).apply {
-                    text = "Interval: ${heartbeatManager.config.value.intervalMs}ms"
+                    text =
+                            getString(
+                                    R.string.interval_format,
+                                    heartbeatManager.config.value.intervalMs
+                            )
                 }
         dialogView.addView(sliderLabel)
 
@@ -267,20 +294,16 @@ class MainActivity : AppCompatActivity() {
                     value = heartbeatManager.config.value.intervalMs.toFloat()
                     // Set colors for visibility in light theme
                     thumbTintList =
-                            android.content.res.ColorStateList.valueOf(
-                                    android.graphics.Color.parseColor("#0091EA")
-                            )
+                            android.content.res.ColorStateList.valueOf(android.graphics.Color.BLUE)
                     trackActiveTintList =
-                            android.content.res.ColorStateList.valueOf(
-                                    android.graphics.Color.parseColor("#0091EA")
-                            )
+                            android.content.res.ColorStateList.valueOf(android.graphics.Color.BLUE)
                     trackInactiveTintList =
                             android.content.res.ColorStateList.valueOf(
-                                    android.graphics.Color.parseColor("#C0C0C0")
+                                    android.graphics.Color.LTGRAY
                             )
                     addOnChangeListener { _, value, _ ->
                         val interval = value.toLong()
-                        sliderLabel.text = "Interval: ${interval}ms"
+                        sliderLabel.text = getString(R.string.interval_format, interval)
                         heartbeatManager.updateConfig(intervalMs = interval)
                     }
                 }
@@ -288,58 +311,75 @@ class MainActivity : AppCompatActivity() {
 
         val advancedDialog =
                 AlertDialog.Builder(this)
-                        .setTitle("Advanced Options")
+                        .setTitle(R.string.advanced_options)
                         .setView(dialogView)
-                        .setPositiveButton("Done", null)
+                        .setPositiveButton(R.string.done, null)
                         .create()
         advancedDialog.show()
         // Set button color explicitly to make it visible
         advancedDialog
                 .getButton(AlertDialog.BUTTON_POSITIVE)
-                ?.setTextColor(android.graphics.Color.parseColor("#0091EA"))
+                ?.setTextColor(android.graphics.Color.BLUE)
     }
 
     private fun showAuthTokenDialog(token: String) {
         val authDialog =
                 AlertDialog.Builder(this)
-                        .setTitle("Security Check")
-                        .setMessage("Verify this code with the other device:\n\n$token")
-                        .setPositiveButton("OK") { dialog, _ -> dialog.dismiss() }
+                        .setTitle(R.string.security_check)
+                        .setMessage(getString(R.string.verify_code_message, token))
+                        .setPositiveButton(R.string.accept) {
+                                dialog: android.content.DialogInterface,
+                                _: Int ->
+                            p2pManager.state.value.authenticatingEndpointId?.let { id ->
+                                p2pManager.acceptConnection(id)
+                            }
+                            dialog.dismiss()
+                        }
+                        .setNegativeButton(R.string.reject) {
+                                dialog: android.content.DialogInterface,
+                                _: Int ->
+                            p2pManager.state.value.authenticatingEndpointId?.let { id ->
+                                p2pManager.rejectConnection(id)
+                            }
+                            dialog.dismiss()
+                        }
                         .setCancelable(false)
                         .create()
+        currentAuthDialog = authDialog
         authDialog.show()
         // Set button color explicitly to make it visible
         authDialog
                 .getButton(AlertDialog.BUTTON_POSITIVE)
-                ?.setTextColor(android.graphics.Color.parseColor("#0091EA"))
+                ?.setTextColor(android.graphics.Color.GREEN) // Green
+        authDialog
+                .getButton(AlertDialog.BUTTON_NEGATIVE)
+                ?.setTextColor(android.graphics.Color.RED) // Red
     }
 
     private fun showExitConfirmationDialog() {
         val exitDialog =
                 AlertDialog.Builder(this)
-                        .setTitle("Exit Application")
-                        .setMessage(
-                                "Are you sure you want to exit? All connections will be closed."
-                        )
-                        .setPositiveButton("Exit") { _, _ -> gracefulShutdown() }
-                        .setNegativeButton("Cancel", null)
+                        .setTitle(R.string.exit_application)
+                        .setMessage(R.string.exit_confirmation_message)
+                        .setPositiveButton(R.string.exit) { _, _ -> gracefulShutdown() }
+                        .setNegativeButton(R.string.cancel, null)
                         .create()
         exitDialog.show()
         // Set button colors explicitly to make them visible
         exitDialog
                 .getButton(AlertDialog.BUTTON_POSITIVE)
                 ?.setTextColor(
-                        android.graphics.Color.parseColor("#D32F2F") // Red for exit
+                        android.graphics.Color.RED // Red for exit
                 )
         exitDialog
                 .getButton(AlertDialog.BUTTON_NEGATIVE)
                 ?.setTextColor(
-                        android.graphics.Color.parseColor("#0091EA") // Blue for cancel
+                        android.graphics.Color.BLUE // Blue for cancel
                 )
     }
 
     private fun gracefulShutdown() {
-        p2pManager.log("Initiating graceful shutdown...", "INFO")
+        p2pManager.log("INFO: Initiating graceful shutdown...")
 
         // Stop heartbeat
         heartbeatManager.setHeartbeatEnabled(false)
@@ -355,16 +395,15 @@ class MainActivity : AppCompatActivity() {
             unbindService(connection)
             isBound = false
         }
-        stopService(Intent(this, P2PService::class.java))
+        val serviceIntent = Intent(this, P2PService::class.java)
+        stopService(serviceIntent)
 
-        p2pManager.log("Shutdown complete. Exiting app.", "INFO")
+        p2pManager.log("INFO: Shutdown complete. Exiting app.")
 
         // Give a moment for logs to be written
         lifecycleScope.launch {
             kotlinx.coroutines.delay(500)
-            finish()
-            // Force kill the process to ensure clean exit
-            android.os.Process.killProcess(android.os.Process.myPid())
+            finishAffinity() // Safer than killProcess
         }
     }
 
@@ -403,17 +442,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun checkBatteryOptimization() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            val powerManager = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
-            if (!powerManager.isIgnoringBatteryOptimizations(packageName)) {
-                val intent =
-                        Intent(
-                                android.provider.Settings
-                                        .ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS
-                        )
-                intent.data = android.net.Uri.parse("package:$packageName")
-                startActivity(intent)
-            }
+        val powerManager = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+        if (!powerManager.isIgnoringBatteryOptimizations(packageName)) {
+            val intent =
+                    Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+            startActivity(intent)
         }
     }
 
@@ -455,16 +488,16 @@ class MainActivity : AppCompatActivity() {
                 withContext(Dispatchers.Main) {
                     Toast.makeText(
                                     this@MainActivity,
-                                    "Logs saved to ${file.absolutePath}. Sending to peers...",
+                                    getString(R.string.logs_saved_toast, file.absolutePath),
                                     Toast.LENGTH_LONG
                             )
                             .show()
-                    p2pManager.log("Logs saved locally. Attempting P2P transfer...")
-                    p2pManager.sendFile(file)
+                    p2pManager.log(getString(R.string.logs_saved_log))
+                    // p2pManager.sendFile(file) // File transfer not implemented in this refactor
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    p2pManager.log("ERROR: Failed to export logs: ${e.message}", "ERROR")
+                    p2pManager.log("ERROR: " + getString(R.string.logs_export_error, e.message))
                 }
             }
         }

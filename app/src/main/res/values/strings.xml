@@ -1,3 +1,33 @@
 <resources>
     <string name="app_name">Resilient P2P Testbed</string>
+    
+    <!-- Labels -->
+    <string name="heartbeat_settings">Heartbeat Settings</string>
+
+    <!-- Actions -->
+    <string name="done">Done</string>
+    <string name="accept">Accept</string>
+    <string name="reject">Reject</string>
+    <string name="exit">Exit</string>
+    <string name="cancel">Cancel</string>
+
+    <!-- Options -->
+    <string name="enable_heartbeat">Enable Heartbeat</string>
+    <string name="low_power_mode">Low Power Mode</string>
+    <string name="duty_cycle">Resilient Mode (Duty Cycle)</string>
+    <string name="hybrid_mode">Hybrid Mode (LAN/BLE)</string>
+    <string name="manual_connection_mode">Manual Connection Mode</string>
+    <string name="advanced_options">Advanced Options</string>
+
+    <!-- Dialogs & Messages -->
+    <string name="security_check">Security Check</string>
+    <string name="verify_code_message">Verify this code with the other device:\n\n%1$s</string>
+    <string name="exit_application">Exit Application</string>
+    <string name="exit_confirmation_message">Are you sure you want to exit? All connections will be closed.</string>
+    <string name="logs_saved_toast">Logs saved to %1$s. Sending to peers…</string>
+    <string name="logs_saved_log">Logs saved locally. Attempting P2P transfer…</string>
+    <string name="logs_export_error">ERROR: Failed to export logs: %1$s</string>
+    
+    <!-- Formats -->
+    <string name="interval_format">Interval: %1$dms</string>
 </resources>

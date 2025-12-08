@@ -39,38 +39,26 @@ class UwbManager(private val context: Context) {
     // Circular dependency handled via property injection
     var p2pManager: P2PManager? = null
 
+    init {
+        if (context.packageManager.hasSystemFeature("android.hardware.uwb")) {
+            try {
+                uwbManager = UwbManager.createInstance(context)
+            } catch (e: Exception) {
+                log("Failed to initialize UwbManager: ${e.message}", "ERROR")
+            }
+        }
+    }
+
     fun startRanging(peerEndpointId: String) {
-        if (!context.packageManager.hasSystemFeature("android.hardware.uwb")) {
-            log("UWB feature missing on this device.", "WARN")
+        if (uwbManager == null) {
+            log("UWB Manager not initialized or feature missing.", "WARN")
             return
         }
 
-        if (uwbManager == null) {
-            // Lazy init if possible or just log warning
-            // Usually UwbManager is retrieved via Context
-            // But we didn't init it in constructor in previous code properly if we rely on this
-            // check?
-            // Actually, `uwbManager` var is null initially.
-            // We should try to get instance.
-            // Using Application Context for UwbManager instance
-            // Assuming this class is initialized in Application or Activity where context is valid
-        }
-
-        // ... rest of implementation assumes uwbManager is set or retrieved ...
-        // For safety in this snippet context:
         val myId = p2pManager?.getLocalDeviceName() ?: ""
 
         scope.launch {
             try {
-                // We need to get instance here if null, but this class structure suggests
-                // dependency injection
-                // If it was passed or initialized in Application:
-                // uwbManager = UwbManager.createInstance(context) // Pseudo-code as Jetpack UWB
-                // usage varies
-
-                // Assuming initialized externally or we skip if null
-                // ...
-
                 if (myId > peerEndpointId) {
                     // Role: Controller
                     log("Initializing as UWB Controller for $peerEndpointId")
@@ -141,7 +129,15 @@ class UwbManager(private val context: Context) {
     }
 
     fun stopRanging() {
-        // Stop all sessions
+        log("Stopping UWB ranging sessions")
+        // UwbClientSessionScope doesn't have a close method.
+        // Cancelling the collection job is sufficient.
+        clientSessionScope = null
+
+        rangingJob?.cancel()
+        rangingJob = null
+
+        _state.update { it.copy(isRanging = false, peers = emptyMap(), azimuths = emptyMap()) }
     }
 
     private fun log(message: String, level: String = "DEBUG") {

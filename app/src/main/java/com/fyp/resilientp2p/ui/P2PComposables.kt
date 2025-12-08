@@ -1,10 +1,12 @@
 package com.fyp.resilientp2p.ui
 
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -27,6 +29,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.fyp.resilientp2p.data.RouteInfo
 import com.fyp.resilientp2p.managers.P2PManager
 import com.fyp.resilientp2p.managers.UwbManager
 import kotlin.math.cos
@@ -88,7 +91,7 @@ fun ResilientP2PApp(p2pManager: P2PManager, uwbManager: UwbManager, onExportLogs
                         // Master Mesh Button
                         Button(
                                 onClick = {
-                                        if (state.isDutyCycleActive) {
+                                        if (state.isMeshMaintenanceActive) {
                                                 p2pManager.setDutyCycle(false)
                                         } else {
                                                 p2pManager.setDutyCycle(true)
@@ -98,7 +101,7 @@ fun ResilientP2PApp(p2pManager: P2PManager, uwbManager: UwbManager, onExportLogs
                                 colors =
                                         ButtonDefaults.buttonColors(
                                                 containerColor =
-                                                        if (state.isDutyCycleActive)
+                                                        if (state.isMeshMaintenanceActive)
                                                                 colorScheme.error
                                                         else colorScheme.primary
                                         ),
@@ -107,7 +110,8 @@ fun ResilientP2PApp(p2pManager: P2PManager, uwbManager: UwbManager, onExportLogs
                         ) {
                                 Text(
                                         text =
-                                                if (state.isDutyCycleActive) "STOP MESH NETWORK"
+                                                if (state.isMeshMaintenanceActive)
+                                                        "STOP MESH NETWORK"
                                                 else "START MESH NETWORK",
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 16.sp
@@ -154,7 +158,7 @@ fun ResilientP2PApp(p2pManager: P2PManager, uwbManager: UwbManager, onExportLogs
                         isUwbPermissionGranted =
                                 state.isUwbPermissionGranted, // Pass UWB permission flag
                         knownPeers = state.knownPeers,
-                        connectedEndpoints = state.connectedEndpoints,
+                        connectedEndpoints = state.connectedEndpoints.toSet(),
                         onPeerClick = { peerId ->
                                 chatTargetId = peerId
                                 showChatDialog = true
@@ -166,13 +170,25 @@ fun ResilientP2PApp(p2pManager: P2PManager, uwbManager: UwbManager, onExportLogs
                 ChatDialog(
                         peerId = chatTargetId!!,
                         onDismiss = { showChatDialog = false },
-                        onSend = { msg -> p2pManager.sendData(chatTargetId!!, msg.toByteArray()) },
+                        onSend = { msg ->
+                                android.util.Log.d(
+                                        "P2PUI",
+                                        "ChatDialog: onSend clicked with message: $msg, target: $chatTargetId"
+                                )
+                                if (chatTargetId == "BROADCAST") {
+                                        p2pManager.broadcastMessage(msg)
+                                } else {
+                                        p2pManager.sendData(chatTargetId!!, msg)
+                                }
+                        },
                         onPing = {
                                 val timestamp = System.currentTimeMillis()
                                 val buffer = java.nio.ByteBuffer.allocate(8)
                                 buffer.putLong(timestamp)
                                 p2pManager.sendPing(chatTargetId!!, buffer.array())
-                        }
+                        },
+                        onStartAudio = { p2pManager.startAudioStreaming(chatTargetId!!) },
+                        onStopAudio = { p2pManager.stopAudioStreaming() }
                 )
         }
 }
@@ -186,7 +202,7 @@ fun DeviceStatusCard(deviceName: String, connectionQuality: Int) {
         ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                         Text(
-                                text = "Device Name",
+                                text = "My Device ID",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = colorScheme.primary
                         )
@@ -247,7 +263,7 @@ fun DashboardContent(
         onClearLogs: () -> Unit,
         isUwbSupported: Boolean,
         isUwbPermissionGranted: Boolean,
-        knownPeers: Map<String, P2PManager.RouteInfo>,
+        knownPeers: Map<String, RouteInfo>,
         connectedEndpoints: Set<String>,
         onPeerClick: (String) -> Unit
 ) {
@@ -283,7 +299,7 @@ fun DashboardContent(
 
 @Composable
 fun MeshContactsSection(
-        knownPeers: Map<String, P2PManager.RouteInfo>,
+        knownPeers: Map<String, RouteInfo>,
         connectedEndpoints: Set<String>,
         onPeerClick: (String) -> Unit
 ) {
@@ -299,6 +315,19 @@ fun MeshContactsSection(
                                 color = colorScheme.onSurface,
                                 fontWeight = FontWeight.Bold
                         )
+
+                        // Broadcast Button
+                        if (connectedEndpoints.isNotEmpty() || knownPeers.isNotEmpty()) {
+                                Button(
+                                        onClick = { onPeerClick("BROADCAST") },
+                                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                                        colors =
+                                                ButtonDefaults.buttonColors(
+                                                        containerColor = colorScheme.secondary
+                                                )
+                                ) { Text("BROADCAST MESSAGE", fontWeight = FontWeight.Bold) }
+                        }
+
                         Spacer(modifier = Modifier.height(12.dp))
 
                         if (knownPeers.isEmpty() && connectedEndpoints.isEmpty()) {
@@ -366,7 +395,7 @@ fun MeshContactsSection(
                                                         fontWeight = FontWeight.Bold
                                                 )
                                         }
-                                        Divider(
+                                        HorizontalDivider(
                                                 color =
                                                         colorScheme.outlineVariant.copy(
                                                                 alpha = 0.5f
@@ -383,38 +412,135 @@ fun ChatDialog(
         peerId: String,
         onDismiss: () -> Unit,
         onSend: (String) -> Unit,
-        onPing: () -> Unit
+        onPing: () -> Unit,
+        onStartAudio: () -> Unit,
+        onStopAudio: () -> Unit
 ) {
         var message by remember { mutableStateOf("") }
+        val context = androidx.compose.ui.platform.LocalContext.current
+        val isBroadcast = peerId == "BROADCAST"
+
+        val permissionLauncher =
+                rememberLauncherForActivityResult(
+                        androidx.activity.result.contract.ActivityResultContracts
+                                .RequestPermission()
+                ) { isGranted ->
+                        if (isGranted) {
+                                android.widget.Toast.makeText(
+                                                context,
+                                                "Permission granted. Hold to talk.",
+                                                android.widget.Toast.LENGTH_SHORT
+                                        )
+                                        .show()
+                        } else {
+                                android.widget.Toast.makeText(
+                                                context,
+                                                "Audio permission required",
+                                                android.widget.Toast.LENGTH_SHORT
+                                        )
+                                        .show()
+                        }
+                }
 
         AlertDialog(
                 onDismissRequest = onDismiss,
-                title = { Text(text = "Chat with $peerId") },
+                title = {
+                        Text(
+                                text =
+                                        if (isBroadcast) "Broadcast Message"
+                                        else "Chat with $peerId",
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold,
+                                color =
+                                        if (isBroadcast) MaterialTheme.colorScheme.secondary
+                                        else MaterialTheme.colorScheme.primary
+                        )
+                },
                 text = {
-                        Column {
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                                // Status Text
+                                Text(
+                                        text =
+                                                if (isBroadcast) "Sending to ALL connected peers."
+                                                else "Direct secure channel.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(bottom = 8.dp)
+                                )
+
                                 OutlinedTextField(
                                         value = message,
                                         onValueChange = { message = it },
                                         label = { Text("Message") },
-                                        modifier = Modifier.fillMaxWidth()
+                                        modifier = Modifier.fillMaxWidth(),
+                                        maxLines = 3
                                 )
                         }
                 },
                 confirmButton = {
-                        Row {
-                                TextButton(onClick = onPing) { Text("Ping") }
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Button(
-                                        onClick = {
-                                                if (message.isNotBlank()) {
-                                                        onSend(message)
-                                                        onDismiss()
-                                                }
+                        Button(
+                                onClick = {
+                                        if (message.isNotBlank()) {
+                                                onSend(message)
+                                                onDismiss()
                                         }
-                                ) { Text("Send") }
-                        }
+                                },
+                                enabled = message.isNotBlank()
+                        ) { Text("SEND") }
                 },
-                dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+                dismissButton = {
+                        Row {
+                                // Push-to-Talk Button
+                                val interactionSource = remember {
+                                        androidx.compose.foundation.interaction
+                                                .MutableInteractionSource()
+                                }
+                                val isPressed by interactionSource.collectIsPressedAsState()
+
+                                LaunchedEffect(isPressed) {
+                                        if (isPressed) {
+                                                if (androidx.core.content.ContextCompat
+                                                                .checkSelfPermission(
+                                                                        context,
+                                                                        android.Manifest.permission
+                                                                                .RECORD_AUDIO
+                                                                ) ==
+                                                                android.content.pm.PackageManager
+                                                                        .PERMISSION_GRANTED
+                                                ) {
+                                                        onStartAudio()
+                                                } else {
+                                                        permissionLauncher.launch(
+                                                                android.Manifest.permission
+                                                                        .RECORD_AUDIO
+                                                        )
+                                                }
+                                        } else {
+                                                onStopAudio()
+                                        }
+                                }
+
+                                Button(
+                                        onClick = {},
+                                        interactionSource = interactionSource,
+                                        colors =
+                                                ButtonDefaults.buttonColors(
+                                                        containerColor =
+                                                                if (isPressed) Color.Red
+                                                                else
+                                                                        MaterialTheme.colorScheme
+                                                                                .tertiary
+                                                )
+                                ) { Text(if (isPressed) "🎤" else "PTT") }
+
+                                Spacer(modifier = Modifier.width(8.dp))
+
+                                TextButton(onClick = onPing) { Text("PING") }
+
+                                TextButton(onClick = onDismiss) { Text("CLOSE") }
+                        }
+                }
         )
 }
 
@@ -504,6 +630,22 @@ fun P2PDashboardRadar(
                                         modifier = Modifier.fillMaxWidth().height(4.dp),
                                         color = colorScheme.primary,
                                         trackColor = colorScheme.outlineVariant
+                                )
+                                Spacer(modifier = Modifier.height(12.dp))
+                        }
+
+                        // Trace Path Display
+                        if (tracePath.isNotEmpty()) {
+                                Text(
+                                        text = "Last Packet Trace:",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = colorScheme.onSurfaceVariant
+                                )
+                                Text(
+                                        text = tracePath,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontFamily = FontFamily.Monospace,
+                                        color = colorScheme.secondary
                                 )
                                 Spacer(modifier = Modifier.height(12.dp))
                         }

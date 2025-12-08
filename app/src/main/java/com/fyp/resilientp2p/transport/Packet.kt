@@ -12,7 +12,8 @@ enum class PacketType {
     ACK,
     DATA,
     UWB_ADDRESS,
-    GOSSIP
+    GOSSIP,
+    IDENTITY
 }
 
 data class Hop(val peerId: String, val rssi: Int)
@@ -24,7 +25,7 @@ data class Packet(
         val sourceId: String,
         val destId: String,
         val payload: ByteArray = ByteArray(0),
-        val ttl: Int = 5,
+        val ttl: Int = 3,
         val trace: List<Hop> = emptyList(),
         val sequenceNumber: Long = 0
 ) {
@@ -32,10 +33,8 @@ data class Packet(
         val baos = ByteArrayOutputStream()
         val dos = DataOutputStream(baos)
 
-        // Optimize ID (UUID) -> 16 bytes
-        val uuid = UUID.fromString(id)
-        dos.writeLong(uuid.mostSignificantBits)
-        dos.writeLong(uuid.leastSignificantBits)
+        // Optimize ID (UUID) -> String (UTF) for safety
+        dos.writeUTF(id)
 
         dos.writeUTF(type.name)
         dos.writeLong(timestamp)
@@ -59,17 +58,15 @@ data class Packet(
         return baos.toByteArray()
     }
 
-    // toJson removed as we are moving to binary
+    // Binary serialization only
 
     companion object {
         fun fromBytes(bytes: ByteArray): Packet {
             val bais = ByteArrayInputStream(bytes)
             val dis = DataInputStream(bais)
 
-            // Deserialize ID (UUID)
-            val mostSigBits = dis.readLong()
-            val leastSigBits = dis.readLong()
-            val id = UUID(mostSigBits, leastSigBits).toString()
+            // Deserialize ID (String)
+            val id = dis.readUTF()
 
             val type = PacketType.valueOf(dis.readUTF())
             val timestamp = dis.readLong()
@@ -106,7 +103,7 @@ data class Packet(
             )
         }
 
-        // fromJson removed
+        // Binary serialization only
     }
 
     override fun equals(other: Any?): Boolean {

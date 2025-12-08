@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.fyp.resilientp2p">
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!-- Permissions for P2P networking -->
     <!-- Permissions for P2P networking -->
@@ -18,13 +18,15 @@
     
     <!-- Android 12+ (API 31+) -->
     <uses-permission android:name="android.permission.BLUETOOTH_SCAN"
-                     android:usesPermissionFlags="neverForLocation" />
+                     android:usesPermissionFlags="neverForLocation"
+                     tools:targetApi="31" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADVERTISE" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     
     <!-- Android 13+ (API 33+) -->
     <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES" />
     <uses-permission android:name="android.permission.UWB_RANGING" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
     <!-- Service & Resilience -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />

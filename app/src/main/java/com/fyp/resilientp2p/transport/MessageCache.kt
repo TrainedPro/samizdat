@@ -2,21 +2,8 @@ package com.fyp.resilientp2p.transport
 
 class MessageCache(private val capacity: Int = 1000) {
 
-    // Thread-safe LRU Cache using ConcurrentHashMap is tricky for LRU eviction.
-    // However, Collections.synchronizedMap wrapping LinkedHashMap is actually the standard way for
-    // LRU.
-    // But the review asked for ConcurrentHashMap.
-    // A pure ConcurrentHashMap doesn't support access-order iteration easily.
-    // For a "seen" cache (deduplication), we just need existence check.
-    // If we want to limit size, we can use a simple removal strategy or stick to Synchronized
-    // LinkedHashMap.
-    // Review said: "Uses Collections.synchronizedMap. This is fine, but a ConcurrentHashMap is
-    // generally more performant".
-    // I will switch to ConcurrentHashMap and use a simplified cleanup strategy (random or
-    // time-based) instead of strict LRU,
-    // OR just keep it simple.
-    // Actually, for deduplication, we usually want to expire old items.
-    // I will implement a time-based expiration using ConcurrentHashMap.
+    // Thread-safe cache using ConcurrentHashMap for deduplication.
+    // Implements time-based eviction to prevent memory leaks.
 
     private val cache = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
@@ -26,10 +13,21 @@ class MessageCache(private val capacity: Int = 1000) {
 
     fun markSeen(packetId: String) {
         cache[packetId] = System.currentTimeMillis()
-        // Occasional cleanup to prevent infinite growth if cleanup() isn't called externally
+        // Simple eviction: if size exceeds capacity, remove oldest entries
         if (cache.size > capacity) {
-            // Simple reduction: remove items older than some threshold or just clear half
-            // For now, relies on external cleanup(ttl)
+            val now = System.currentTimeMillis()
+            // Remove items older than 10 minutes
+            val ttl = 10 * 60 * 1000L
+            val iterator = cache.entries.iterator()
+            while (iterator.hasNext()) {
+                if (now - iterator.next().value > ttl) {
+                    iterator.remove()
+                }
+            }
+            // If still too big, just clear it (drastic but safe for memory)
+            if (cache.size > capacity) {
+                cache.clear()
+            }
         }
     }
 

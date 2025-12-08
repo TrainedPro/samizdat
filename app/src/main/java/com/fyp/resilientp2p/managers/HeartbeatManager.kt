@@ -48,13 +48,13 @@ class HeartbeatManager(private val p2pManager: P2PManager) {
             }
         }
 
-        // Zombie Cleanup Job Removed
-        // scope.launch {
-        //     while (true) {
-        //         delay(10000) // Check every 10 seconds
-        //         cleanupZombies()
-        //     }
-        // }
+        // Zombie Cleanup Task
+        scope.launch {
+            while (true) {
+                delay(10000) // Check every 10 seconds
+                cleanupZombies()
+            }
+        }
     }
 
     data class HeartbeatConfig(
@@ -102,8 +102,7 @@ class HeartbeatManager(private val p2pManager: P2PManager) {
         heartbeatJob =
                 scope.launch {
                     while (true) {
-                        // sendPing(config.payloadSizeBytes) // Old Heartbeat
-                        p2pManager.sendGossip() // New Mesh Heartbeat
+                        // p2pManager.sendGossip() // New Mesh Heartbeat - Not implemented yet
                         delay(config.intervalMs)
                     }
                 }
@@ -116,12 +115,6 @@ class HeartbeatManager(private val p2pManager: P2PManager) {
     }
 
     private fun sendPing(size: Int) {
-        // Use getNeighbors() from P2PManager if available, or state.connectedEndpoints
-        // Ideally P2PManager should expose neighbors map or list of Neighbor objects
-        // For now, we use connectedEndpoints but we need lastSeen for Zombie check
-        // We can't access neighbors map directly as it is private in P2PManager
-        // But we can iterate connectedEndpoints and send pings
-
         val peers = p2pManager.state.value.connectedEndpoints
         if (peers.isEmpty()) return
 
@@ -134,8 +127,21 @@ class HeartbeatManager(private val p2pManager: P2PManager) {
         log("Sent PING to ${peers.size} peers")
     }
 
-    // Zombie Cleanup Removed - Trusting API onDisconnected
-    // private fun cleanupZombies() { ... }
+    private fun cleanupZombies() {
+        val now = System.currentTimeMillis()
+        val neighbors = p2pManager.getNeighborsSnapshot()
+
+        neighbors.forEach { (id, neighbor) ->
+            // If we haven't seen them in 30 seconds (3x heartbeat), consider them dead
+            if (now - neighbor.lastSeen > 30000) {
+                log(
+                        "Peer $id is a zombie (Last seen ${now - neighbor.lastSeen}ms ago). Disconnecting.",
+                        "WARN"
+                )
+                p2pManager.disconnectFromEndpoint(id)
+            }
+        }
+    }
 
     private fun handlePayload(endpointId: String, packet: com.fyp.resilientp2p.transport.Packet) {
         if (packet.type == com.fyp.resilientp2p.transport.PacketType.PONG) {
@@ -153,6 +159,6 @@ class HeartbeatManager(private val p2pManager: P2PManager) {
     }
 
     private fun log(msg: String, type: String = "INFO") {
-        p2pManager.log(msg, type)
+        p2pManager.log("$type: $msg")
     }
 }

@@ -18,7 +18,7 @@ class P2PApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         uwbManager = com.fyp.resilientp2p.managers.UwbManager(this)
-        p2pManager = P2PManager(this, database.logDao(), database.packetDao())
+        p2pManager = P2PManager(this)
 
         // Wire up circular dependency
         p2pManager.uwbManager = uwbManager

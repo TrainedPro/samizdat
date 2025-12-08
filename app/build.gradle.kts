@@ -7,9 +7,7 @@ plugins {
 
 android {
     namespace = "com.fyp.resilientp2p"
-    compileSdk {
-        version = release(36)
-    }
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.fyp.resilientp2p"
@@ -60,19 +58,19 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.test.manifest)
 
     // Standard AndroidX libraries required for a basic app
-    implementation("androidx.core:core-ktx:1.13.1")
-    implementation("androidx.appcompat:appcompat:1.7.0")
-    implementation("androidx.activity:activity-ktx:1.9.0")
-    implementation("com.google.android.material:material:1.12.0")
-    implementation("androidx.constraintlayout:constraintlayout:2.1.4")
+    implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.appcompat)
+    implementation(libs.androidx.activity.ktx)
+    implementation(libs.material)
+    implementation(libs.androidx.constraintlayout)
 
     // Our core dependency for the P2P communication
-    implementation("com.google.android.gms:play-services-nearby:19.3.0")
+    implementation(libs.play.services.nearby)
 
     // Default test dependencies
-    testImplementation("junit:junit:4.13.2")
-    androidTestImplementation("androidx.test.ext:junit:1.1.5")
-    androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
+    testImplementation(libs.junit)
+    androidTestImplementation(libs.androidx.junit)
+    androidTestImplementation(libs.androidx.espresso.core)
 
     // Room
     implementation(libs.androidx.room.runtime)
@@ -80,5 +78,5 @@ dependencies {
     ksp(libs.androidx.room.compiler)
 
     // UWB
-    implementation("androidx.core.uwb:uwb:1.0.0-alpha08")
+    implementation(libs.androidx.uwb)
 }

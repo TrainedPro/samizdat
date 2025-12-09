@@ -65,6 +65,7 @@ namespace com.fyp.resilientp2p {
 namespace com.fyp.resilientp2p.audio {
     class AudioPlayer {
         -inputStream : InputStream
+        -log : (String, LogLevel) -> Unit
         -TAG : String
         -isAlive : Boolean
         -thread : Thread?
@@ -84,6 +85,7 @@ namespace com.fyp.resilientp2p.audio {
     }
     class AudioBuffer {
         <<abstract>>
+        -log : (String, LogLevel) -> Unit
         -TAG : String
         +size : Int
         +sampleRate : Int
@@ -94,20 +96,16 @@ namespace com.fyp.resilientp2p.audio {
     }
     class AudioRecorder {
         -context : android.content.Context
-        -TAG : String
-        -outputStream : OutputStream
-        -isAlive : Boolean
-        -thread : Thread?
-        +buffer : Buffer
-        +record : Any
-        +len : Any
-        +isRecording() Boolean
-        +start() Unit
-        -stopInternal() Unit
-        +stop() Unit
+        -log : (String, LogLevel) -> Unit
     }
 }
 namespace com.fyp.resilientp2p.data {
+    class Converters {
+        +fromLogLevel(value: LogLevel) String
+        +toLogLevel(value: String) LogLevel
+        +fromLogType(value: LogType) String
+        +toLogType(value: String) LogType
+    }
     class AppDatabase {
         <<Database>>
         <<abstract>>
@@ -149,12 +147,19 @@ namespace com.fyp.resilientp2p.data {
         <<data>>
         +id : Long
         +timestamp : Long
-        +type : String
-        +peerId : String?
         +message : String
+        +level : LogLevel
+        +logType : LogType
+        +peerId : String?
         +rssi : Int?
         +latencyMs : Long?
         +payloadSizeBytes : Int?
+    }
+    class LogType {
+        <<enumeration>>
+    }
+    class LogLevel {
+        <<enumeration>>
     }
     class RouteInfo {
         <<data>>
@@ -174,7 +179,9 @@ namespace com.fyp.resilientp2p.data {
         +isMeshMaintenanceActive : Boolean
         +isHybridMode : Boolean
         +isLowPower : Boolean
-        +logs : List<String>
+        +logs : List<LogEntry>
+        +logLevel : LogLevel
+        +localDeviceName : String
     }
     class Neighbor {
         <<data>>
@@ -212,20 +219,22 @@ namespace com.fyp.resilientp2p.managers {
         -DEFAULT_PAYLOAD_SIZE : Int
         -heartbeatJob : Job?
         -scope : CoroutineScope
-        +currentInterval : Any
-        +newInterval : Any
         +intervalMs : Long
         +payloadSizeBytes : Int
         +isEnabled : Boolean
         -_config : MutableStateFlow
         +config : Any
+        +currentInterval : Any
+        +newInterval : Any
         +newEnabled : Any
         +newConfig : Any
-        +peers : Any
+        +neighbors : Any
         +timestamp : System.currentTimeMillis
         +buffer : Any
         +now : System.currentTimeMillis
         +neighbors : Any
+        +currentConfig : Any
+        +threshold : Any
         +diff : Any
         +buffer : Any
         +originTimestamp : Any
@@ -238,7 +247,7 @@ namespace com.fyp.resilientp2p.managers {
         -sendPing(size: Int) Unit
         -cleanupZombies() Unit
         -handlePayload(endpointId: String, packet: com.fyp.resilientp2p.transport.Packet) Unit
-        -log(msg: String, type: String = "INFO") Unit
+        -log(msg: String, level: LogLevel = LogLevel.INFO) Unit
     }
     class HeartbeatConfig {
         <<data>>
@@ -248,6 +257,7 @@ namespace com.fyp.resilientp2p.managers {
     }
     class VoiceManager {
         -context : Context
+        -log : (String, LogLevel) -> Unit
         -audioRecorder : AudioRecorder?
         -audioPlayer : AudioPlayer?
         -TAG : String
@@ -265,6 +275,7 @@ namespace com.fyp.resilientp2p.managers {
         -context : Context
         -connectionsClient : ConnectionsClient
         -scope : CoroutineScope
+        -localUsername : Any
         -_state : MutableStateFlow
         +state : StateFlow<P2PState>
         -_payloadEvents : MutableSharedFlow<PayloadEvent>
@@ -275,24 +286,33 @@ namespace com.fyp.resilientp2p.managers {
         +bandwidthEvents : SharedFlow<BandwidthInfo>
         -neighbors : ConcurrentHashMap<String, Neighbor>
         -routingTable : ConcurrentHashMap<String, String>
+        -routingScores : Any
         -messageCache : ConcurrentHashMap<String, Long>
         -STRATEGY : Strategy.P2P_CLUSTER
         -SERVICE_ID : String
         -MAX_CONNECTIONS : Int
         -STABILITY_WINDOW_MS : Long
         +voiceManager : VoiceManager?
-        -localUsername : Any
         -payloadCallback : Any
         +packet : Packet.fromBytes
         -connectionLifecycleCallback : Any
-        +isDuplicate : Any
+        +existingId : Any
+        +existingNeighbor : Any
+        +isAlive : Any
+        +lostDestinations : Any
         +newConnecting : Any
         +newConnecting : Any
+        +existingName : Any
         +neighbor : Any
+        +lostDestinations : Any
         -endpointDiscoveryCallback : Any
         +advertisingOptions : AdvertisingOptions.Builder
         +discoveryOptions : DiscoveryOptions.Builder
-        +updated : Any
+        +newScore : Any
+        +currentScore : Any
+        +oldRoute : Any
+        +existing : Any
+        +newNeighbor : Any
         +pongPacket : Any
         +nextHop : Any
         +newPacket : Any
@@ -300,16 +320,23 @@ namespace com.fyp.resilientp2p.managers {
         +payload : Payload.fromBytes
         +packet : Any
         +packet : Any
+        +packet : Any
+        +bytes : Any
         +pfd : Any
         +payload : Payload.fromFile
         +targetEndpointIds : Any
         +id : Any
         +pfd : Any
         +payload : Payload.fromStream
+        +sb : StringBuilder
         +packet : Any
         +bytes : Any
         +neighborList : List
         +knownPeersMap : Any
+        +sdf : Any
+        +taggedMsg : String
+        +currentLevel : Any
+        +entry : Any
         +newLogs : Any
         +onPayloadReceived(endpointId: String, payload: Payload) Unit
         +onConnectionInitiated(endpointId: String, info: ConnectionInfo) Unit
@@ -318,20 +345,21 @@ namespace com.fyp.resilientp2p.managers {
         +onBandwidthChanged(endpointId: String, bandwidthInfo: BandwidthInfo) Unit
         +onEndpointFound(endpointId: String, info: DiscoveredEndpointInfo) Unit
         +onEndpointLost(endpointId: String) Unit
+        -startRoutingUpdates() Unit
         +start() Unit
         +stop() Unit
         +stopAll() Unit
-        -stopRadioActivity() Unit
         +startAdvertising() Unit
         +stopAdvertising() Unit
         +startDiscovery() Unit
         +stopDiscovery() Unit
         -handlePacket(packet: Packet, sourceEndpointId: String) Unit
         -processPacket(packet: Packet, sourceEndpointId: String) Unit
-        -forwardPacket(packet: Packet) Unit
+        -forwardPacket(packet: Packet, excludeEndpointId: String? = null) Unit
         +sendData(destId: String, message: String) Unit
         +broadcastMessage(message: String) Unit
         +sendPing(peerId: String, data: ByteArray) Unit
+        +sendDirectPing(endpointId: String, data: ByteArray) Unit
         +sendFile(peerId: String, uri: android.net.Uri) Unit
         +startAudioStreaming(peerName: String) Unit
         +stopAudioStreaming() Unit
@@ -344,10 +372,13 @@ namespace com.fyp.resilientp2p.managers {
         +setLowPower(enabled: Boolean) Unit
         +clearLogs() Unit
         +getNeighborsSnapshot() Map<String, Neighbor>
+        -dumpRoutingTable() Unit
+        -calculateRouteScore(packet: Packet) Int
         -sendIdentityPacket(endpointId: String) Unit
         -updateState(update: (P2PState) Unit
         -updateConnectedEndpoints() Unit
-        +log(msg: String) Unit
+        +setLogLevel(level: com.fyp.resilientp2p.data.LogLevel) Unit
+        -getTimestamp() String
     }
     class PayloadEvent {
         <<data>>
@@ -398,19 +429,27 @@ namespace com.fyp.resilientp2p.transport {
 }
     AppDatabase ..> LogDao
     AppDatabase ..> PacketDao
+    AudioBuffer --> LogLevel
     AudioPlayer --> Buffer
-    AudioRecorder --> Buffer
+    AudioPlayer --> LogLevel
+    AudioRecorder --> LogLevel
     AudioBuffer <|-- Buffer
+    Converters ..> LogLevel
+    Converters ..> LogType
     HeartbeatManager ..> HeartbeatConfig
+    HeartbeatManager ..> LogLevel
     HeartbeatManager --> P2PManager
     HeartbeatManager ..> Packet
     LocalBinder ..> P2PService
     LogDao ..> LogEntry
+    LogEntry *-- LogLevel
+    LogEntry *-- LogType
     MainActivity --> HeartbeatManager
     MainActivity --> P2PManager
     MainActivity --> P2PService
     P2PApplication --> HeartbeatManager
     P2PApplication --> P2PManager
+    P2PManager ..> LogLevel
     P2PManager o-- Neighbor
     P2PManager --> P2PState
     P2PManager --> Packet
@@ -419,6 +458,8 @@ namespace com.fyp.resilientp2p.transport {
     P2PManager --> VoiceManager
     P2PService --> LocalBinder
     P2PService --> P2PManager
+    P2PState *-- LogEntry
+    P2PState *-- LogLevel
     P2PState *-- RouteInfo
     Packet *-- Hop
     Packet *-- PacketType
@@ -426,3 +467,4 @@ namespace com.fyp.resilientp2p.transport {
     PayloadEvent *-- Packet
     VoiceManager --> AudioPlayer
     VoiceManager --> AudioRecorder
+    VoiceManager --> LogLevel

@@ -26,6 +26,7 @@ import java.nio.charset.StandardCharsets
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -42,7 +43,6 @@ class P2PManager(private val context: Context) {
 
     // Local Info
     // Use a unique name to prevent self-connection and manage duplicate links
-    // User requested "just the device name" initially.
     private val localUsername = android.os.Build.MODEL
 
     // State
@@ -63,7 +63,8 @@ class P2PManager(private val context: Context) {
     // Mesh Data
     private val neighbors = ConcurrentHashMap<String, Neighbor>() // endpointId -> Neighbor
     private val routingTable = ConcurrentHashMap<String, String>() // destId -> nextHopEndpointId
-    private val routingScores = ConcurrentHashMap<String, Int>() // destId -> routeScore (Higher is better)
+    private val routingScores =
+            ConcurrentHashMap<String, Int>() // destId -> routeScore (Higher is better)
     private val messageCache = ConcurrentHashMap<String, Long>() // packetId -> timestamp
 
     // Configuration
@@ -150,30 +151,36 @@ class P2PManager(private val context: Context) {
                         return
                     }
 
-                    // Duplicate Check: If we are already connected to this user (by name), reject.
-                    // This handles race conditions where both sides accept before one disconnects.
-                    // Reference: User "Duplicate Check" optimization.
-                    // Instead of unconditional REJECT, check if the old one is stale?
-                    // User Request: "It shouldn't be the case [we can't connect again]".
-                    // FIX: If we see a duplicate name, we assume the NEW one is the valid replacement
+                    // duplicate check logic
+                    // If we see a duplicate name, we assume the NEW one is the valid replacement
                     // (e.g. the old one timed out but we didn't get onDisconnected yet).
                     // We disconnect the OLD one and accept the NEW one.
-                    val existingId = neighbors.entries.find { it.value.peerName == info.endpointName }?.key
+                    val existingId =
+                            neighbors.entries.find { it.value.peerName == info.endpointName }?.key
                     if (existingId != null) {
                         val existingNeighbor = neighbors[existingId]
-                        val isAlive = existingNeighbor != null && (System.currentTimeMillis() - existingNeighbor.lastSeen < STABILITY_WINDOW_MS)
-                        
-                        if (isAlive) {
-                             log(
-                                "Refusing duplicate connection to ${info.endpointName} (Existing $existingId is ALIVE, last seen ${System.currentTimeMillis() - existingNeighbor!!.lastSeen}ms ago)"
-                             )
-                             connectionsClient.rejectConnection(endpointId)
-                             return
+                        val isAlive =
+                                existingNeighbor != null &&
+                                        (System.currentTimeMillis() - existingNeighbor.lastSeen <
+                                                STABILITY_WINDOW_MS)
+
+                        // Tie-Breaker Logic:
+                        // If the existing connection is "Alive", we only replace it if the NEW
+                        // endpointId is "Greater" than the OLD one.
+                        // This prevents "Death Spirals" where two devices constantly disconnect
+                        // each other.
+                        // If it's Stale, we always replace it.
+                        if (isAlive && existingId > endpointId) {
+                            log(
+                                    "Refusing duplicate connection to ${info.endpointName} (Existing $existingId is ALIVE & > New $endpointId). Keeping stable link."
+                            )
+                            connectionsClient.rejectConnection(endpointId)
+                            return
                         }
 
                         log(
-                            "Duplicate Connection from '${info.endpointName}'. Replacing Stale Old($existingId) with New($endpointId)",
-                            com.fyp.resilientp2p.data.LogLevel.WARN
+                                "Duplicate Connection from '${info.endpointName}'. Replacing Old($existingId) with New($endpointId). (Alive=$isAlive, Replace Strategy)",
+                                com.fyp.resilientp2p.data.LogLevel.WARN
                         )
                         // Proactively cleanup the old "Zombie"
                         connectionsClient.disconnectFromEndpoint(existingId)
@@ -255,6 +262,17 @@ class P2PManager(private val context: Context) {
                         return
                     }
 
+                    // Stabilization Logic: If we already have a route to this peer (Direct or Hop),
+                    // DO NOT attempt to connect again. This prevents "Cycling" where devices
+                    // constantly upgrade/downgrade between Direct and Hop connections.
+                    if (routingTable.containsKey(info.endpointName)) {
+                        log(
+                                "Ignoring discovered endpoint $endpointId (${info.endpointName}) - Valid connection already exists via ${routingTable[info.endpointName]}.",
+                                com.fyp.resilientp2p.data.LogLevel.TRACE
+                        )
+                        return
+                    }
+
                     log(
                             "Requesting connection to $endpointId",
                             com.fyp.resilientp2p.data.LogLevel.TRACE
@@ -286,14 +304,39 @@ class P2PManager(private val context: Context) {
         // Listen for incoming payloads (PING/PONG)
         scope.launch {
             _payloadEvents.collect { _ ->
-                // This block is intentionally left empty as the original code does not have a
-                // collector here.
                 // The existing logic for handling payload events is in processPacket.
             }
         }
         voiceManager = VoiceManager(context) { msg, level -> log(msg, level) }
         startAdvertising()
         startDiscovery()
+        startRoutingUpdates()
+    }
+
+    private fun startRoutingUpdates() {
+        scope.launch {
+            while (true) {
+                delay(8000)
+
+                try {
+                    log(
+                            "Broadcasting Periodic Routing Update (Identity)...",
+                            com.fyp.resilientp2p.data.LogLevel.TRACE
+                    )
+                    // Broadcast Identity to all neighbors.
+                    // This forces them to re-evaluate the route to 'Me'.
+                    // If they are a direct neighbor, they see TTL 3 (Score 3).
+                    // If indirect, they see TTL 2 (Score 2).
+                    // This creates a "Gradient" that pulls routes towards the most direct path.
+                    neighbors.keys.forEach { endpointId -> sendIdentityPacket(endpointId) }
+                } catch (e: Exception) {
+                    log(
+                            "Error in Routing Update Loop: ${e.message}",
+                            com.fyp.resilientp2p.data.LogLevel.ERROR
+                    )
+                }
+            }
+        }
     }
 
     fun start() {
@@ -311,23 +354,9 @@ class P2PManager(private val context: Context) {
         routingTable.clear()
         routingScores.clear()
         _state.value = P2PState(localDeviceName = localUsername)
-        // Cancel all running coroutines to prevent leaks
-        // scope.cancel() // CAUTION: If we cancel the scope, we can't restart P2PManager instance.
-        // Given P2PManager is a singleton-like in Application, we might NOT want to cancel it
-        // fully.
-        // However, review.md flagged "Unbounded Global Scope" as MAJOR.
-        // If we want to support restart, we should use a new scope on start().
-        // For now, let's just cancel the children jobs?
-        // Actually, looking at usages, stop() is called on app termination usually.
-        // But let's follow the recommendation: "This scope is never prohibited/cancelled".
-        // A better approach for this architecture is to not cancel it if it's bound to Application.
-        // But review.md says "If P2PManager is ever recreated... old coroutines will continue
-        // running".
-        // Since P2PManager is created in P2PApplication.onCreate, it lives as long as the app.
-        // So cancelling it might be wrong if the app doesn't die.
-        // BUT, if we want to be "Final State" perfect, we should clean up if explicit stop is
-        // requested.
-        // Let's assume stopAll is a teardown.
+        // Note: We do not cancel the CoroutineScope here to allow for
+        // potential restart of P2PManager if required by the application lifecycle
+        // without destroying the entire app process.
     }
 
     // --- Nearby Connections Actions ---
@@ -394,17 +423,19 @@ class P2PManager(private val context: Context) {
                 val currentScore = routingScores[packet.sourceId] ?: Int.MIN_VALUE
 
                 // STABILITY CHECK: Only update if the new route is STRICTLY better.
-                // Prevents flapping between equal routes and respects "Don't run too often / unnecessary updates"
+                // Prevents flapping between equal routes and respects "Don't run too often /
+                // unnecessary updates"
                 if (newScore > currentScore) {
                     val oldRoute = routingTable.put(packet.sourceId, sourceEndpointId)
                     routingScores[packet.sourceId] = newScore
-                    
+
                     if (oldRoute != sourceEndpointId) {
                         log(
                                 "RoutingTable Updated: ${packet.sourceId} -> $sourceEndpointId (Score: $newScore, Prev: $currentScore)",
                                 com.fyp.resilientp2p.data.LogLevel.DEBUG
                         )
                     }
+                    updateConnectedEndpoints()
                 }
             } else {
                 log(
@@ -500,11 +531,31 @@ class P2PManager(private val context: Context) {
         val payload = Payload.fromBytes(bytes)
 
         if (nextHop != null && neighbors.containsKey(nextHop)) {
-            connectionsClient.sendPayload(nextHop, payload)
+            connectionsClient.sendPayload(nextHop, payload).addOnFailureListener { e ->
+                log("Forward Packet Failed: ${e.message}")
+                if (e.message?.contains("8012") == true) {
+                    log(
+                            "Detected Dead Endpoint 8012: $nextHop. Disconnecting.",
+                            com.fyp.resilientp2p.data.LogLevel.WARN
+                    )
+                    disconnectFromEndpoint(nextHop)
+                }
+            }
         } else {
             // Split Horizon: Do not send back to the node we received it from (excludeEndpointId)
             neighbors.keys.filter { it != excludeEndpointId }.forEach { endpointId ->
-                connectionsClient.sendPayload(endpointId, payload)
+                connectionsClient.sendPayload(endpointId, payload).addOnFailureListener { e ->
+                    // Silent fail for broadcast or check for 8012
+                    if (e.message?.contains("8012") == true) {
+                        // Don't spam disconnects here, let heartbeat handle it or map logic
+                        // But for routing robustness:
+                        log(
+                                "Detected Dead Broadcast Endpoint 8012: $endpointId",
+                                com.fyp.resilientp2p.data.LogLevel.WARN
+                        )
+                        disconnectFromEndpoint(endpointId)
+                    }
+                }
             }
         }
     }
@@ -568,7 +619,6 @@ class P2PManager(private val context: Context) {
         try {
             val bytes = packet.toBytes()
             connectionsClient.sendPayload(endpointId, Payload.fromBytes(bytes))
-            // log("Sent Direct PING to $endpointId", "TRACE")
         } catch (e: Exception) {
             log("Error sending Direct PING to $endpointId: ${e.message}")
         }

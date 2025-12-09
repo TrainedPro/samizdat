@@ -18,6 +18,8 @@ def generate_erd_content():
         string type
         string peerId
         string message
+        string level
+        string logType
         int rssi
         long latencyMs
         int payloadSizeBytes

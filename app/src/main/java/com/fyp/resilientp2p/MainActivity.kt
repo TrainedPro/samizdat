@@ -444,7 +444,6 @@ class MainActivity : AppCompatActivity() {
                             )
                             .show()
                     p2pManager.log(getString(R.string.logs_saved_log))
-                    // p2pManager.sendFile(file) // File transfer not implemented in this refactor
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {

@@ -1,0 +1,40 @@
+\section{System Architecture}
+The system follows a layered architecture, separating the UI, Management Logic, and Data Transport layers.
+
+\subsection{Architectural Flow}
+The interaction between different threads and components is visualized in the Swimlane Diagram (Figure \ref{fig:swimlane}).
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{../../diagrams/output/swimlane_diagram.pdf}
+    \caption{Swimlane Diagram: Component Interaction}
+    \label{fig:swimlane}
+\end{figure}
+
+\section{Database Design}
+The application uses a local SQLite database (via Room Persistence Library) to store logs and queue persistent packets. 
+Figure \ref{fig:erd} shows the Entity Relationship Diagram.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{../../diagrams/output/database_schema.pdf}
+    \caption{Entity Relationship Diagram (ERD) of the Local Database}
+    \label{fig:erd}
+\end{figure}
+
+\section{Class Structure}
+The core logic resides in the `managers` package.
+\begin{itemize}
+    \item \textbf{P2PManager}: Handles discovery, connection lifecycle, and routing.
+    \item \textbf{HeartbeatManager}: Manages keep-alive signals and zombie detection.
+    \item \textbf{VoiceManager}: Handles audio recording and playback.
+\end{itemize}
+
+Figure \ref{fig:class_diagram} illustrates the comprehensive class structure and relationships.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{../../diagrams/class_structure.pdf}
+    \caption{Class Diagram of ResilientP2PTestbed}
+    \label{fig:class_diagram}
+\end{figure}

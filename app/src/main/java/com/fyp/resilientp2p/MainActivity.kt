@@ -23,7 +23,6 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.fyp.resilientp2p.managers.HeartbeatManager
 import com.fyp.resilientp2p.managers.P2PManager
-import com.fyp.resilientp2p.managers.UwbManager
 import com.fyp.resilientp2p.service.P2PService
 import com.fyp.resilientp2p.ui.ResilientP2PApp
 import com.fyp.resilientp2p.ui.theme.ResilientP2PTestbedTheme
@@ -43,7 +42,6 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var p2pManager: P2PManager
     private lateinit var heartbeatManager: HeartbeatManager
-    private lateinit var uwbManager: UwbManager
 
     // Dynamic permission list generation
     private fun getRequiredPermissions(): Array<String> {
@@ -65,13 +63,6 @@ class MainActivity : AppCompatActivity() {
             permissions.add(Manifest.permission.ACCESS_FINE_LOCATION)
         }
 
-        // Only request UWB permission if the hardware feature is present
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-                        packageManager.hasSystemFeature("android.hardware.uwb")
-        ) {
-            permissions.add(Manifest.permission.UWB_RANGING)
-        }
-
         return permissions.toTypedArray()
     }
 
@@ -81,25 +72,11 @@ class MainActivity : AppCompatActivity() {
                 @android.annotation.SuppressLint("InlinedApi")
                 val denied = permissions.filter { !it.value }.map { it.key }
 
-                // FIX: Filter out optional UWB permission.
-                // If UWB is denied, we still want the app to run.
-                // Use string literal to avoid InlinedApi warning on older SDKs
-                val criticalDenied = denied.filter { it != "android.permission.UWB_RANGING" }
-
-                if (criticalDenied.isEmpty()) {
-                    if (denied.contains(Manifest.permission.UWB_RANGING)) {
-                        p2pManager.log(
-                                "WARN: UWB Permission denied or not configured. Radar features will be disabled."
-                        )
-                    } else {
-                        p2pManager.log("All permissions granted.")
-                    }
-                    // Update UWB permission state
-                    val isUwbGranted = !denied.contains("android.permission.UWB_RANGING")
-                    p2pManager.updateUwbPermission(isUwbGranted)
+                if (denied.isEmpty()) {
+                    p2pManager.log("All permissions granted.")
                     startAndBindService()
                 } else {
-                    p2pManager.log("ERROR: Critical permissions denied: $criticalDenied")
+                    p2pManager.log("ERROR: Critical permissions denied: $denied")
                 }
             }
 
@@ -110,7 +87,6 @@ class MainActivity : AppCompatActivity() {
         val app = application as P2PApplication
         p2pManager = app.p2pManager
         heartbeatManager = app.heartbeatManager
-        uwbManager = app.uwbManager
 
         // Set Content to Pure Compose
         val composeView =
@@ -119,7 +95,6 @@ class MainActivity : AppCompatActivity() {
                         ResilientP2PTestbedTheme(darkTheme = false) {
                             ResilientP2PApp(
                                     p2pManager = p2pManager,
-                                    uwbManager = uwbManager,
                                     onExportLogs = { exportLogs() }
                             )
                         }
@@ -133,17 +108,6 @@ class MainActivity : AppCompatActivity() {
             requestPermissionLauncher.launch(neededPermissions)
         } else {
             startAndBindService()
-            // Check permissions again to set initial state correctly
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-                            ContextCompat.checkSelfPermission(
-                                    this,
-                                    Manifest.permission.UWB_RANGING
-                            ) == PackageManager.PERMISSION_GRANTED
-            ) {
-                p2pManager.updateUwbPermission(true)
-            } else {
-                p2pManager.updateUwbPermission(false)
-            }
         }
         checkBatteryOptimization()
 
@@ -211,17 +175,6 @@ class MainActivity : AppCompatActivity() {
                     setOnCheckedChangeListener { _, isChecked -> p2pManager.setLowPower(isChecked) }
                 }
         dialogView.addView(lpCheck)
-
-        // Duty Cycle Toggle
-        val dcCheck =
-                android.widget.CheckBox(this).apply {
-                    text = getString(R.string.duty_cycle)
-                    isChecked = p2pManager.state.value.isMeshMaintenanceActive // SYNCED STATE
-                    setOnCheckedChangeListener { _, isChecked ->
-                        p2pManager.setDutyCycle(isChecked)
-                    }
-                }
-        dialogView.addView(dcCheck)
 
         // Hybrid Mode Toggle
         val hmCheck =
@@ -386,9 +339,6 @@ class MainActivity : AppCompatActivity() {
 
         // Stop all P2P connections and advertising/discovery
         p2pManager.stopAll()
-
-        // Stop UWB ranging if active
-        uwbManager.stopRanging()
 
         // Unbind and stop service
         if (isBound) {

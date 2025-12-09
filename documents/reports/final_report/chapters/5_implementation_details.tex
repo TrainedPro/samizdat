@@ -1,0 +1,21 @@
+\section{Mesh Routing Algorithm}
+The system implements a flooding-based routing protocol with Time-To-Live (TTL) limits to prevent broadcast storms.
+\begin{lstlisting}[language=Java, caption=Packet Forwarding Logic]
+fun forwardPacket(packet: Packet) {
+    if (packet.ttl <= 0) return
+    if (messageCache.hasSeen(packet.id)) return
+    
+    packet.ttl--
+    neighbors.forEach { peer ->
+        if (peer.id != packet.sourceId) {
+            send(peer, packet)
+        }
+    }
+}
+\end{lstlisting}
+
+\section{Audio Streaming}
+Audio is captured using `AudioRecord` at 16kHz sample rate (MONO) to balance quality and bandwidth. The raw PCM data is chunked into 1KB payloads and transmitted via the high-bandwidth channel (Wi-Fi Direct) established by Nearby Connections.
+
+\section{Heartbeat Mechanism}
+To detect "zombie" connections (peers that are physically gone but logically connected), the `HeartbeatManager` sends a small ping payload every 5 seconds. If no packet is received from a peer for 30 seconds, the connection is terminated to free up slots.

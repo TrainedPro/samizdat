@@ -17,8 +17,8 @@ class VoiceManager(private val context: Context) {
     }
 
     /**
-     * Starts recording audio and returns a ParcelFileDescriptor for the read side of the pipe.
-     * The P2PManager should send this PFD as a Payload.
+     * Starts recording audio and returns a ParcelFileDescriptor for the read side of the pipe. The
+     * P2PManager should send this PFD as a Payload.
      */
     fun startRecording(): ParcelFileDescriptor? {
         if (audioRecorder != null && audioRecorder!!.isRecording()) {
@@ -33,7 +33,8 @@ class VoiceManager(private val context: Context) {
 
             audioRecorder = AudioRecorder(context, writeSide)
             audioRecorder?.start()
-            
+
+            Log.d(TAG, "AudioRecorder started successfully")
             return readSide
         } catch (e: Exception) {
             Log.e(TAG, "Failed to create pipe or start recorder", e)

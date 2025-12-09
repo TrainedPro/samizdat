@@ -4,6 +4,7 @@ import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.DataInputStream
 import java.io.DataOutputStream
+import java.nio.charset.StandardCharsets
 import java.util.UUID
 
 enum class PacketType {
@@ -11,7 +12,6 @@ enum class PacketType {
     PONG,
     ACK,
     DATA,
-    UWB_ADDRESS,
     GOSSIP,
     IDENTITY
 }
@@ -33,13 +33,20 @@ data class Packet(
         val baos = ByteArrayOutputStream()
         val dos = DataOutputStream(baos)
 
-        // Optimize ID (UUID) -> String (UTF) for safety
-        dos.writeUTF(id)
+        // Helper to write large strings
+        fun writeString(str: String) {
+            val bytes = str.toByteArray(StandardCharsets.UTF_8)
+            dos.writeInt(bytes.size)
+            dos.write(bytes)
+        }
 
-        dos.writeUTF(type.name)
+        // Optimize ID (UUID) -> String (UTF) for safety
+        writeString(id)
+
+        writeString(type.name)
         dos.writeLong(timestamp)
-        dos.writeUTF(sourceId)
-        dos.writeUTF(destId)
+        writeString(sourceId)
+        writeString(destId)
 
         dos.writeInt(payload.size)
         if (payload.isNotEmpty()) {
@@ -51,7 +58,7 @@ data class Packet(
 
         dos.writeInt(trace.size)
         trace.forEach { hop ->
-            dos.writeUTF(hop.peerId)
+            writeString(hop.peerId)
             dos.writeInt(hop.rssi)
         }
 
@@ -65,13 +72,21 @@ data class Packet(
             val bais = ByteArrayInputStream(bytes)
             val dis = DataInputStream(bais)
 
-            // Deserialize ID (String)
-            val id = dis.readUTF()
+            // Helper to read large strings
+            fun readString(): String {
+                val len = dis.readInt()
+                val b = ByteArray(len)
+                dis.readFully(b)
+                return String(b, StandardCharsets.UTF_8)
+            }
 
-            val type = PacketType.valueOf(dis.readUTF())
+            // Deserialize ID (String)
+            val id = readString()
+
+            val type = PacketType.valueOf(readString())
             val timestamp = dis.readLong()
-            val sourceId = dis.readUTF()
-            val destId = dis.readUTF()
+            val sourceId = readString()
+            val destId = readString()
 
             val payloadSize = dis.readInt()
             val payload = ByteArray(payloadSize)
@@ -85,7 +100,7 @@ data class Packet(
             val traceSize = dis.readInt()
             val trace = ArrayList<Hop>(traceSize)
             for (i in 0 until traceSize) {
-                val peerId = dis.readUTF()
+                val peerId = readString()
                 val rssi = dis.readInt()
                 trace.add(Hop(peerId, rssi))
             }

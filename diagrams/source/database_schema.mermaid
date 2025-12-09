@@ -1,0 +1,24 @@
+erDiagram
+    LOGS {
+        long id PK
+        long timestamp
+        string type
+        string peerId
+        string message
+        int rssi
+        long latencyMs
+        int payloadSizeBytes
+    }
+
+    PACKET_QUEUE {
+        string id PK
+        string destId
+        string type
+        byte_array payload
+        long timestamp
+        long expiration
+        string sourceId
+    }
+
+    %% Relationships can be implied or explicit if any
+    %% In this simple schema, tables are independent queues/logs

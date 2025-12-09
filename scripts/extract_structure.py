@@ -376,9 +376,20 @@ def main():
     
     if not os.path.exists(out_dir):
         os.makedirs(out_dir)
+    
+    # Define Separate Source/Output Directories
+    # Based on user request: source file -> diagrams/source, output -> diagrams/output
+    # The 'out_dir' argument handles the root 'diagrams' folder conceptually, but we enforce the split.
+    
+    base_diagrams_dir = out_dir if out_dir != "documents/diagrams" else "diagrams"
+    source_dir = os.path.join(base_diagrams_dir, "source")
+    output_dir = os.path.join(base_diagrams_dir, "output")
+    
+    if not os.path.exists(source_dir): os.makedirs(source_dir)
+    if not os.path.exists(output_dir): os.makedirs(output_dir)
         
-    mermaid_file = os.path.join(out_dir, "class_structure.mermaid")
-    pdf_file = os.path.join(out_dir, "class_structure.pdf")
+    mermaid_file = os.path.join(source_dir, "class_structure.mermaid")
+    pdf_file = os.path.join(output_dir, "class_structure.pdf")
     
     with open(mermaid_file, "w", encoding="utf-8") as f:
         f.write(mermaid_content)

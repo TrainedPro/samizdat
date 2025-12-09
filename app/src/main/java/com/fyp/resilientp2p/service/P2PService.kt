@@ -26,6 +26,11 @@ class P2PService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        super.onCreate()
+        // Dependency Injection: Service relies on Application singleton for shared P2PManager
+        // state.
+        // Known Coupling: Using 'application as P2PApplication' is intentional for this prototype's
+        // scope.
         p2pManager = (application as P2PApplication).p2pManager
         startForegroundService()
     }

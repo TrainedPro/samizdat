@@ -1,0 +1,37 @@
+\section{Conclusion}
+The \textit{ResilientP2PTestbed} successfully demonstrates the viability of smartphone-based off-grid mesh networks for disaster recovery. By abstracting the complexities of radio management through the Nearby Connections API, we achieved a stable text and voice communication platform that operates without any external infrastructure.
+
+\section{Limitations}
+\begin{itemize}
+    \item \textbf{Battery Drain}: Continuous advertising and scanning consumes significant power.
+    \item \textbf{Hardware Constraints}: Wi-Fi Direct range is limited by the physical antenna of the device.
+\end{itemize}
+
+\section{Future Work}
+Based on the FYP2 Implementation Roadmap, the next phases of development will focus on:
+
+\begin{enumerate}
+    \item \textbf{The Gateway Bridge (Horizon 1 Extension)}:
+    \begin{itemize}
+        \item Implementing an Internet Detection Module to continuously monitor connectivity.
+        \item Developing a Bridging Protocol to relay messages between the mesh and a central server via MQTT or WebSockets when internet is available.
+    \end{itemize}
+    
+    \item \textbf{Store-and-Forward Engine (Resilience)}:
+    \begin{itemize}
+        \item Ensuring no message is lost by persisting packets in a `MessageTable`.
+        \item Implementing background `WorkManager` tasks to retry delivery when neighbors reappear.
+    \end{itemize}
+    
+    \item \textbf{Intelligent Routing (Horizon 2)}:
+    \begin{itemize}
+        \item Moving beyond flooding to a metric-based routing algorithm ($Cost = f(RSSI, Battery, Hops)$).
+        \item Experimenting with On-Device ML (TFLite) to predict link stability.
+    \end{itemize}
+    
+    \item \textbf{Censorship Resistance}:
+    \begin{itemize}
+        \item Wrapping traffic in standard HTTPS/WebSocket frames to evade DPI (Deep Packet Inspection).
+        \item Supporting user-configurable self-hosted relays.
+    \end{itemize}
+\end{enumerate}

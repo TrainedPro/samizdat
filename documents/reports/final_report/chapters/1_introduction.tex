@@ -1,0 +1,20 @@
+\section{Project Vision}
+The reliability of communication networks is often taken for granted until a catastrophic event occurs. Natural disasters such as earthquakes, floods, and hurricanes frequently damage cellular towers and fiber-optic cables, rendering traditional communication infrastructure useless. In such scenarios, the ability to coordinate rescue efforts, locate survivors, and distribute aid is severely hampered gap.
+
+\textbf{ResilientP2PTestbed} is designed to bridge this gap. By transforming standard Android smartphones into nodes of a self-sustaining mesh network, the system enables communication in completely off-grid environments. The vision is to empower communities and first responders with a "deploy-anywhere" communication tool that requires no pre-existing infrastructure, Internet connection, or SIM card.
+
+\section{Problem Statement}
+Current disaster response protocols rely heavily on satellite phones (which are expensive and scarce) or deploying temporary cell towers (COWs), which takes time. During the critical "Golden Hour" immediately following a disaster, victims are often isolated. There is a lack of widely available, zero-cost, infrastructure-independent communication software that can run on consumer hardware people already possess.
+
+\section{Proposed Solution}
+The proposed solution, \textit{ResilientP2P}, is an Android application that leverages the Google Nearby Connections API to establish high-bandwidth peer-to-peer (P2P) connections. The system uses a \textbf{P2P\_CLUSTER} strategy to form a dynamic mesh network.
+
+Key Objectives:
+\begin{itemize}
+    \item \textbf{Off-Grid}: Zero reliance on Internet/Cellular.
+    \item \textbf{High Bandwidth}: Utilizes Wi-Fi Direct for voice and data.
+    \item \textbf{Self-Healing}: Dynamic routing adapts to node movement.
+    \item \textbf{Metric-Driven}: Includes built-in instrumentation for RSSI monitoring and network performance logging.
+\end{itemize}
+
+This project focuses on the "Phase 1" milestones: establishing a robust transport layer, ensuring reliability with application-level ACKs, and validating performance through rigorous field testing.

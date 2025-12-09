@@ -1,0 +1,105 @@
+\documentclass[12pt, a4paper]{report}
+
+% Packages
+\usepackage[utf8]{inputenc}
+\usepackage{graphicx}
+\usepackage{geometry}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{float}
+\usepackage[acronym]{glossaries}
+\usepackage{titlesec}
+\usepackage{fancyhdr}
+\usepackage{setspace}
+% \usepackage{biblatex} % Removed due to missing package
+% \addbibresource{references.bib}
+
+% Geometry
+\geometry{
+  top=0.6in,
+  bottom=0.8in,
+  left=1in,
+  right=1in,
+  includehead
+}
+
+% Header/Footer
+\pagestyle{fancy}
+\fancyhf{}
+\rhead{\thepage}
+\lhead{\leftmark}
+\setlength{\headheight}{15pt}
+
+% Title Page Data
+\title{ResilientP2PTestbed: Off-Grid Disaster Communication System}
+\author{Hassaan}
+\date{\today}
+
+\begin{document}
+
+\begin{titlepage}
+    \centering
+    \vspace*{1cm}
+    
+    \Huge
+    \textbf{ResilientP2PTestbed}
+    
+    \vspace{0.5cm}
+    \LARGE
+    An Off-Grid Disaster Recovery Communication System
+    
+    \vspace{1.5cm}
+    \textbf{Hassaan Anwar (22P-9160)}\\
+    \textbf{Muhammad Aais Rabbani (22P-9164)}
+    
+    \vspace{1cm}
+    
+    \textbf{Supervisor: Dr. Ali Sayyed}
+    
+    \vfill
+    
+    Department of Computer Science\\
+    National University of Computer and Emerging Sciences\\
+    Peshawar Campus
+    
+    \vspace{0.8cm}
+    
+    \Large
+    \today
+    
+\end{titlepage}
+
+\begin{abstract}
+    In the wake of natural disasters, cellular infrastructure often fails, leaving affected populations and first responders without a reliable means of communication. This project, \textit{ResilientP2PTestbed}, presents a robust, off-grid mobile communication system leveraging the Google Nearby Connections API. The system utilizes a mesh network topology to facilitate text and audio communication between devices without reliance on centralized infrastructure (Internet, Cellular, Satellites). Key features include automatic peer discovery, multi-hop routing, and delay-tolerant message delivery. This report details the design, implementation, and testing of the system, demonstrating its viability as a rapid-deployment communication tool for emergency scenarios.
+\end{abstract}
+
+\tableofcontents
+\listoffigures
+%\listoftables
+
+\chapter{Introduction}
+\input{chapters/1_introduction}
+
+\chapter{Literature Review}
+\input{chapters/2_literature_review}
+
+\chapter{System Analysis}
+\input{chapters/3_system_analysis}
+
+\chapter{System Design}
+\input{chapters/4_system_design}
+
+\chapter{Implementation Details}
+\input{chapters/5_implementation_details}
+
+\chapter{Results and Testing}
+\input{chapters/6_results_and_testing}
+
+\chapter{Conclusion and Future Work}
+\input{chapters/7_conclusion}
+
+\bibliographystyle{plain}
+\bibliography{references}
+
+\end{document}

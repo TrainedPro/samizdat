@@ -11,8 +11,6 @@ data class P2PState(
         val isManualConnectionEnabled: Boolean = false,
         val authenticationDigits: String? = null,
         val authenticatingEndpointId: String? = null,
-        val isUwbSupported: Boolean = false,
-        val isUwbPermissionGranted: Boolean = false,
         val isMeshMaintenanceActive: Boolean = true,
         val isHybridMode: Boolean = false,
         val isLowPower: Boolean = false,

@@ -1,0 +1,12 @@
+\section{Performance Testing}
+\begin{itemize}
+    \item \textbf{Connection Time}: Average connection establishment time is 3-5 seconds.
+    \item \textbf{Range}: Effective range is approximately 30-50 meters indoors and 80-100 meters outdoors (line of sight).
+    \item \textbf{Audio Latency}: Measured latency is ~200ms on single hop and ~600ms on double hop.
+\end{itemize}
+
+\section{Stress Testing}
+Creating a cluster of 4 devices resulted in stable mesh performace. However, audio broadcasting to all 3 peers simultaneously caused minor frame drops, indicating bandwidth saturation limits of the current implementation.
+
+\section{User Interface}
+The UI is built with Jetpack Compose, ensuring a responsive and modern experience. The dashboard provides real-time visualization of mesh neighbors and routing activities.

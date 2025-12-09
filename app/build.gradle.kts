@@ -78,5 +78,5 @@ dependencies {
     ksp(libs.androidx.room.compiler)
 
     // UWB
-    implementation(libs.androidx.uwb)
+
 }

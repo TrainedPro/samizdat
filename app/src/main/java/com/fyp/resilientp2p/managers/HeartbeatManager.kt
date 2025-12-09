@@ -102,7 +102,7 @@ class HeartbeatManager(private val p2pManager: P2PManager) {
         heartbeatJob =
                 scope.launch {
                     while (true) {
-                        // p2pManager.sendGossip() // New Mesh Heartbeat - Not implemented yet
+                        sendPing(config.payloadSizeBytes)
                         delay(config.intervalMs)
                     }
                 }
@@ -124,7 +124,8 @@ class HeartbeatManager(private val p2pManager: P2PManager) {
         // Remaining bytes are 0-padding by default
 
         peers.forEach { peerId -> p2pManager.sendPing(peerId, buffer.array()) }
-        log("Sent PING to ${peers.size} peers")
+        // Lower log level or make it less spammy if needed, but user requested MORE logging.
+        log("Sent PING to ${peers.size} peers. TS=$timestamp")
     }
 
     private fun cleanupZombies() {
@@ -133,12 +134,15 @@ class HeartbeatManager(private val p2pManager: P2PManager) {
 
         neighbors.forEach { (id, neighbor) ->
             // If we haven't seen them in 30 seconds (3x heartbeat), consider them dead
-            if (now - neighbor.lastSeen > 30000) {
+            val diff = now - neighbor.lastSeen
+            if (diff > 30000) {
                 log(
-                        "Peer $id is a zombie (Last seen ${now - neighbor.lastSeen}ms ago). Disconnecting.",
+                        "Zombie Detected: $id (Name: ${neighbor.peerName}). Last seen ${diff}ms ago. Threshold 30000ms. Disconnecting...",
                         "WARN"
                 )
                 p2pManager.disconnectFromEndpoint(id)
+            } else {
+                log("Peer $id alive. Last seen ${diff}ms ago.", "DEBUG")
             }
         }
     }

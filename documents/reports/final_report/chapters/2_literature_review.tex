@@ -1,0 +1,23 @@
+\section{Off-Grid Communication}
+Off-grid communication has been a subject of research for decades. Traditional approaches include packet radio (AX.25) and specialized hardware like LoRaWAN mesh networks (e.g., Meshtastic). While effective, these require specialized hardware dongles that the average disaster victim does not carry.
+
+\section{Google Nearby Connections API}
+Google Nearby Connections provides a high-level abstraction over Wi-Fi Direct, Bluetooth Classic, and BLE \cite{nearbyconnections}. It handles the complexity of basic radio negotiation, making it an ideal foundation for rapid prototyping.
+
+The API offers three connection strategies:
+\begin{itemize}
+    \item \textbf{P2P\_POINT\_TO\_POINT}: 1-to-1 connection, high bandwidth.
+    \item \textbf{P2P\_STAR}: 1-to-N connection, hub-and-spoke.
+    \item \textbf{P2P\_CLUSTER}: M-to-N connection. This strategy allows any device to connect to multiple other devices, forming a loose mesh topology. ResilientP2P primarily utilizes this strategy to support multi-hop routing.
+\end{itemize}
+
+\section{Mobile Ad-Hoc Networks (MANETs)}
+Mobile Ad-Hoc Networks (MANETs) are decentralized wireless networks where each node participates in routing by forwarding data for other nodes.
+Key challenges in MANETs include:
+\begin{enumerate}
+    \item \textbf{Dynamic Topology}: Nodes move freely, breaking links frequently.
+    \item \textbf{Battery Constraints}: Mobile devices have limited power; continuous routing drains energy.
+    \item \textbf{Routing Overhead}: Protocols must balance between maintaining valid routes and flooding the network with control packets. 
+\end{enumerate}
+
+Traditional protocols like \textbf{AODV} (Ad hoc On-Demand Distance Vector) and \textbf{DSR} (Dynamic Source Routing) are standard in this domain \cite{royer1999}. However, for small-scale disaster scenarios with high mobility, simple \textbf{Flooding} or \textbf{Gossip} protocols often provide better robustness despite higher redundancy.

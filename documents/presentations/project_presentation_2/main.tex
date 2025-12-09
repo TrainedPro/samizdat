@@ -1,0 +1,414 @@
+\documentclass[aspectratio=169]{beamer} % 16:9 widescreen
+
+\mode<presentation>{
+  \usetheme{Madrid}
+  \usecolortheme{dolphin}
+  \usefonttheme{professionalfonts}
+  \setbeamertemplate{navigation symbols}{}
+  \setbeamertemplate{caption}[numbered]
+}
+
+% --- PACKAGES ---
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{caption}
+\captionsetup{font=small,justification=centering,singlelinecheck=true,width=\linewidth}
+\usepackage{multirow}
+\usepackage{array}
+\usepackage{tikz}
+\usepackage{microtype}   % improves typographic spacing
+\usepackage{enumitem}    % custom lists
+\emergencystretch=1em
+\usepackage{hyperref}
+\usepackage{tabularx}
+\usepackage{ragged2e}
+\usepackage[absolute,overlay]{textpos}
+\usepackage{fontawesome5} % For icons like in the example
+\usepackage{attachfile2}
+\usepackage{xcolor}
+\hypersetup{
+  colorlinks=true,
+  linkcolor=structure,
+  urlcolor=blue,
+  filecolor=blue
+}
+
+
+% --- PDF & HYPERREF FIXES ---
+\pdfstringdefDisableCommands{%
+  \def\\{}%
+  \def\hskip#1{}%
+}
+\sloppy
+
+% --- FONT & LIST STYLING (from your original) ---
+\setbeamerfont{normal text}{size=\large}
+\setbeamerfont{frametitle}{size=\Large}
+\setbeamerfont{framesubtitle}{size=\normalsize}
+\setlist[itemize]{leftmargin=*, itemsep=8pt, parsep=4pt, topsep=6pt}
+\setlist[enumerate]{leftmargin=*, itemsep=10pt, parsep=4pt, topsep=6pt, label=\textbf{\LARGE\arabic*.}}
+
+% --- TITLE INFO ---
+\title[Resilient Mobile Communication]{An Open, Verifiable, and Performant Architecture for Resilient Mobile Communication}
+\author[22P-9160 \& 22P-9164]{Hassaan Anwar (22P-9160) \\ Muhammad Aais Rabbani (22P-9164)}
+\institute[FAST-NUCES Peshawar]{Department of Computer Science\\FAST-NUCES, Peshawar}
+\date{October 26, 2025} % Using a fixed date for the progress update
+
+% --- LAYOUT & LOGO ---
+\setbeamersize{text margin left=8mm,text margin right=8mm}
+\addtobeamertemplate{frametitle}{}{%
+  \begin{textblock*}{1cm}(1.025\textwidth,0.16cm)
+    \includegraphics[height=1cm]{logo.png}
+  \end{textblock*}
+}
+
+\begin{document}
+
+% --- Title Frame (Slightly modified for Progress Update context) ---
+\begin{frame}[plain]
+  \vfill
+  \centering
+  {\LARGE\bfseries An Open, Verifiable, and Performant\\[6pt] Architecture for Resilient Mobile Communication}\vspace{0.4em}
+  {\large\bfseries Project Progress Update}\vspace{0.9em}
+
+  \rule{0.55\textwidth}{0.6pt}\vspace{0.7em}
+
+  {\textbf{Supervisor: Dr. Ali Sayyed}}\vspace{0.5em}
+
+  {\large\parbox{0.85\textwidth}{\centering
+     Hassaan Anwar (22P-9160)\\[0.3em]
+     Muhammad Aais Rabbani (22P-9164)
+  }}\vspace{0.7em}
+
+  {\small Department of Computer Science \\ FAST-NUCES, Peshawar}\vspace{0.8em}
+
+  \includegraphics[height=1.5cm]{logo.png}\vspace{0.3em}
+
+  {\footnotesize Date: 26th October 2025}
+  \vfill
+\end{frame}
+
+% --- NEW Outline for Progress Update ---
+\begin{frame}{Outline}
+  \centering
+  {\Large
+  \vspace{-6pt}
+  \begin{columns}[T,onlytextwidth]
+    \column{0.5\textwidth}
+      \begin{enumerate}[label=\textbf{\LARGE\arabic*.}, itemsep=10pt]
+        \item Project Recap
+        \item Competitor Review
+        \item Literature Review
+        \item Problem Statement
+        \item \Project Progress
+
+      \end{enumerate}
+
+    \column{0.5\textwidth}
+      \begin{enumerate}[label=\textbf{\LARGE\arabic*.}, start=6, itemsep=10pt]
+        \item Diagrams
+        \item Challenges \& Risks
+        \item Next Steps
+        \item Updated Timeline
+        \item Team Work
+      \end{enumerate}
+  \end{columns}
+  }
+\end{frame}
+
+% --- Recap Slides (Condensed from your original defense) ---
+\section{Recap}
+\begin{frame}{Project Recap: Introduction \& Motivation}
+  \begin{itemize}[itemsep=12pt]
+    \item \textbf{Goal:} Design an open, protocol-agnostic architecture for resilient mobile communication when infrastructure fails or is censored.
+    \item \textbf{Core Features:} A multi-hop local mesh network and an opportunistic "gateway" to bridge offline groups to the internet.
+    \item \textbf{Motivation:} Existing centralized systems are fragile. Closed-source alternatives like Bridgefy lack the verifiability and trust needed for critical scenarios.
+  \end{itemize}
+\end{frame}
+
+
+\section{Competitor Review}
+
+\begin{frame}{Competitor Review}
+  \scriptsize
+  \begin{tabularx}{\linewidth}{|l|X|X|}
+    \hline
+    \textbf{App / Project} & \textbf{Strength} & \textbf{Weakness} \\
+    \hline
+    FireChat & Uses Bluetooth and Wi-Fi P2P for offline messaging through a self-forming mesh network. It gained popularity for working without internet or SIM registration and functions effectively in dense environments. & Relies heavily on user density for stable connectivity. Limited message delivery reliability in sparse areas and no built-in support for network bridging or modern APIs.\\
+    \hline
+    Bridgefy & Provides offline messaging via Bluetooth and offers an SDK for developers to embed mesh messaging features in their apps. It is simple and quick to set up. & Bluetooth-only communication restricts scalability and can cause high battery usage during long sessions. Performance degrades with many simultaneous users.\\
+    \hline
+    Briar & Offers secure offline and online communication using Bluetooth, Wi-Fi, or the Tor network. Strong focus on privacy with end-to-end encryption and decentralized design. & More suited for privacy-focused users than real-time communication. Syncing messages can be slow, and setup complexity reduces usability for general audiences. \\
+    \hline
+    Serval Mesh & Creates a peer-to-peer Wi-Fi mesh network that supports voice, text, and file sharing. It is open-source and useful for community or disaster communication. & Requires Wi-Fi interface configuration, making setup complex for average users. Lacks integration with modern mobile APIs and automatic reconnection mechanisms. \\
+    \hline
+  \end{tabularx}
+  \vspace{2mm}
+  \caption{Comparison of major mobile ad-hoc messaging apps}
+\end{frame}
+
+
+
+% -------------------------
+% NEW SLIDE: Literature Review
+% -------------------------
+% -------------------------
+% -------------------------
+% -------------------------
+\section{Literature Review}
+\begin{frame}{Literature Review}
+  \scriptsize
+  \begin{tabularx}{\linewidth}{|p{3cm}|p{0.8cm}|X|X|}
+    \hline
+    \textbf{Paper Title} & \textbf{Year} & \textbf{Key Contributions} & \textbf{Limitations / Gaps (Addressed in Our Work)} \\
+    \hline
+    Dolphin: A Cellular Voice Based Internet Shutdown Resistance System & 2023 &
+    Presents a system that enables data transmission over voice calls using a reliable, TCP-like protocol with encryption and compression. Demonstrates resilience during internet shutdowns. &
+    Focuses solely on cellular voice channels without integrating with ad hoc or mesh-based communication. Lacks dynamic peer discovery and hybrid gateway support. \\
+    \hline
+    A Framework for Multi-Hop Ad Hoc Networking over Wi-Fi Direct with Android Smart Devices & 2021 &
+    Proposes a framework for enabling multi-hop routing over Wi-Fi Direct on Android devices, achieving internet-free communication between peers. &
+    Offers no mechanism for automatic peer discovery or transition between offline and online modes. Scalability and gateway bridging are not addressed. \\
+    \hline
+    Device-to-Device Communications with Wi-Fi Direct: Overview and Experimental Evaluation & 2013 &
+    Provides a detailed experimental analysis of Wi-Fi Direct’s performance, including device discovery time, connection setup delay, and power consumption metrics. &
+    Evaluation limited to controlled single-hop scenarios; no consideration for message persistence, mesh expansion, or integration with cloud backends. \\
+    \hline
+  \end{tabularx}
+\end{frame}
+
+
+
+
+
+
+
+
+
+
+
+
+\section{Problem Statement}
+\begin{frame}{Problem Statement}
+  \vspace{8pt}
+  \begin{itemize}[itemsep=14pt]
+    \item \textbf{Scenario:} During an infrastructure failure (e.g., natural disaster) on a campus, mobile users are isolated from central services and each other, preventing essential communication.
+    \item \textbf{Technical Challenge:} Build a resilient system that respects mobile constraints (battery, churn) and allows for reproducible, auditable performance measurements on a small-scale testbed.
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Project Progress To Date}
+  \small
+  % Tighter list spacing locally
+  \setlist[itemize]{leftmargin=*,itemsep=4pt,parsep=2pt,topsep=4pt}
+
+  \begin{columns}[T,onlytextwidth]
+    \column{0.48\textwidth}
+      \begin{itemize}
+        \item \textbf{Technology stack}
+          \begin{itemize}
+            \item Kotlin (Android prototype)
+            \item Google Nearby Connections Framework
+          \end{itemize}
+
+        \item \textbf{Proof-of-Concept (PoC) testbed}
+          \begin{itemize}
+            \item Working prototype demonstrating the core P2P link
+            \item Device discovery and connection management
+          \end{itemize}
+      \end{itemize}
+
+    \column{0.48\textwidth}
+      \begin{itemize}
+        \item \textbf{System architecture}
+          \begin{itemize}
+            \item High-level components defined
+            \item Core mesh logic separated from pluggable transport layer
+            \item Designed for protocol-agnostic transport swapping
+          \end{itemize}
+
+        \item \textbf{Milestones achieved}
+          \begin{itemize}
+            \item Literature review complete
+            \item Prototype testbed validated on small devices
+          \end{itemize}
+      \end{itemize}
+  \end{columns}
+\end{frame}
+
+\begin{frame}{Diagrams}
+  \vspace{6pt}
+  \small
+
+  \begin{tabularx}{\linewidth}{@{}l@{}}
+    % 1
+    \attachfile[icon=Paperclip]{architecture.pdf}%
+    \hspace{0.6em}{\large\textcolor{structure}{High-Level System Architecture}} \\[10pt]
+
+    % 2
+    \attachfile[icon=Paperclip]{sequence.pdf}%
+    \hspace{0.6em}{\large\textcolor{structure}{Sequence Diagram}} \\[10pt]
+
+    % 3
+    \attachfile[icon=Paperclip]{activity.pdf}%
+    \hspace{0.6em}{\large\textcolor{structure}{Activity Diagram}} \\[10pt]
+
+    % 4
+    \attachfile[icon=Paperclip]{swimlane.pdf}%
+    \hspace{0.6em}{\large\textcolor{structure}{Swimlane Diagram}} \\[10pt]
+
+    % 5
+    \attachfile[icon=Paperclip]{use_case.pdf}%
+    \hspace{0.6em}{\large\textcolor{structure}{Use Case Diagram}} \\
+  \end{tabularx}
+
+  \vspace{4pt}
+\end{frame}
+
+% -------------------------
+% NEW SLIDE: Functional Test Cases
+% -------------------------
+\section{Test Cases}
+\begin{frame}{Test Cases}
+  \scriptsize
+  \begin{tabularx}{\linewidth}{|p{0.8cm}|p{2.90cm}|X|X|}
+    \hline
+    \textbf{ID} & \textbf{Category} & \textbf{Test Description} & \textbf{Expected Result} \\
+    \hline
+    TC-1 & Basic Connection & Establish a peer-to-peer connection between two nearby devices. & Devices successfully connect using Bluetooth/Wi-Fi Direct. \\
+    \hline
+    TC-2 & Device Discovery and Advertisement & Verify that a device can advertise its presence and discover nearby peers. & Devices are able to detect each other through the discovery and advertisement process. \\
+    \hline
+    TC-3 & Mesh Messaging & Send message between two nearby nodes. & Message successfully delivered within mesh range. \\
+    \hline
+    TC-4 & Multi-Hop Delivery & Send message from Node A → C through intermediate Node B. & Message reaches Node C via Node B (multi-hop verified). \\
+    \hline
+    TC-5 & Store-and-Forward & Send message while receiver is offline. & Message stored locally and delivered once receiver reconnects. \\
+    \hline
+    TC-6 & Gateway Bridging & Send message from offline mesh node to online user through gateway. & Message routed successfully via gateway to remote user. \\
+    \hline
+    TC-7 & Gateway Outage & Gateway loses internet temporarily. & Messages buffered and synced once connectivity resumes. \\
+    \hline
+    TC-8 & Security Check & Attempt to intercept transmitted message. & Data appears encrypted and unreadable. \\
+    \hline
+    TC-9 & Session Persistence & Restart app and resume session. & Previous messages persist; session restored successfully. \\
+    \hline
+    TC-10 & Fault Tolerance & Random node failure during transmission. & Message rerouted through alternate path if available. \\
+    \hline
+  \end{tabularx}
+  \vspace{2mm}
+  \caption{Core functional test cases for the Samizdat system}
+\end{frame}
+
+
+
+
+% --- FORWARD-LOOKING SECTION ---
+\section{Challenges \& Next Steps}
+\begin{frame}{Challenges \& Risks}
+  \begin{itemize}
+    \item \textbf{\faBatteryHalf\ Android Background Process Limitations:}
+      \begin{itemize}
+        \item Modern Android versions are extremely aggressive in killing background services to save battery.
+        \item This poses a significant risk to maintaining persistent P2P connections and requires careful implementation of foreground services and battery optimization exceptions.
+      \end{itemize}
+
+    \item \textbf{\faGoogle\ Google Nearby API Dependencies:}
+      \begin{itemize}
+        \item The API requires Google Play Services, which may not be available on all devices or in all regions, slightly conflicting with our goal of maximum accessibility. This is an accepted trade-off for the FYP prototype.
+      \end{itemize}
+    
+    % <-- TODO: Add any other challenges you've discovered.
+    % For example, issues with connection stability, specific device incompatibilities, etc.
+  \end{itemize}
+\end{frame}
+
+\begin{frame}{Next Steps (Immediate Priorities)}
+  % Slight top padding for consistency with other slides
+  \vspace{4pt}
+
+  \begin{itemize}[itemsep=8pt] % reduced from 12pt → 8pt for tighter layout
+    \item \textbf{\faSitemap\ Implement Multi-Peer Mesh Formation:}
+      \begin{itemize}[itemsep=4pt, topsep=2pt] % tighter inner spacing
+        \item Extend the current P2P link to support a true M-to-N (many-to-many) cluster topology.
+        \item Develop the logic for nodes to discover and connect to multiple peers simultaneously.
+      \end{itemize}
+
+    \item \textbf{\faHeartbeat\ Establish Connection Reliability \& Stability:}
+      \begin{itemize}[itemsep=4pt, topsep=2pt]
+        \item Implement robust handling for unexpected disconnections and graceful peer reconnection.
+        \item Ensure the mesh remains stable as devices enter and leave the network (churn).
+      \end{itemize}
+
+    \item \textbf{\faRulerCombined\ Conduct Foundational Performance Benchmarking:}
+      \begin{itemize}[itemsep=4pt, topsep=2pt]
+        \item Design and execute experiments to measure key baseline metrics: connection range, latency, and throughput in realistic scenarios (e.g., with obstacles).
+      \end{itemize}
+  \end{itemize}
+
+  % Light bottom padding to balance slide visually
+  \vspace{2pt}
+\end{frame}
+
+
+% --- CONCLUDING SLIDES (from your original) ---
+\section{Timeline & Team}
+\begin{frame}{Updated Timeline (Gantt)}
+  \vspace{8pt}
+  \small
+  \setlength{\tabcolsep}{8pt}
+  \begin{tabularx}{\textwidth}{@{} >{\raggedright\arraybackslash}X  >{\raggedright\arraybackslash}X @{}}
+    \textbf{FYP1:} Prototype P2P link, local mesh, calibration and baseline tests. &
+    \textbf{FYP2:} Gateway bridging, store-and-forward, experiments, analysis and paper.
+  \end{tabularx}
+
+  \vspace{6pt}
+  \vfill
+
+  \centering
+  \includegraphics[width=1.05\textwidth,height=1.05\textheight,keepaspectratio]{gantt.png}
+\end{frame}
+
+\begin{frame}{Team Work}
+  \small
+  \setlist[itemize]{leftmargin=*,itemsep=6pt,parsep=2pt,topsep=6pt}
+  \begin{itemize}
+    \item \textbf{Equal contribution} across Requirements → Design → Implementation → Testing.
+    \item \textbf{Workflow:} sequential handoff — one member leads a phase while the other supports; integration and testing run concurrently when needed.
+    \item \textbf{Roles:}
+      \begin{itemize}[leftmargin=*,itemsep=4pt,topsep=4pt]
+        \item Hassaan Anwar (22P-9160) — architecture, P2P link, core APK.
+        \item Muhammad Aais Rabbani (22P-9164) — gateway/integration, experiment harness, data analysis.
+      \end{itemize}
+    \item Contributions are tracked via concise git commits and short log notes for traceability.
+  \end{itemize}
+\end{frame}
+
+\begin{frame}[plain]
+  \frametitle{}
+
+  \begin{center}
+    \vspace*{0.6cm}
+
+    {\Huge\bfseries Thank You!}\\[8pt]
+    \rule{0.45\textwidth}{0.6pt}\\[0.9em]
+
+    {\large We welcome your questions and feedback.}\\[2em]
+
+    {\normalsize
+      \begin{tabular}{c}
+        \textbf{Supervisor:} Dr. Ali Sayyed \\[0.6em]
+        Hassaan Anwar (22P-9160) \quad\textbullet\quad Muhammad Aais Rabbani (22P-9164)
+      \end{tabular}
+    }\\[1.2em]
+
+\includegraphics[height=1.5cm]{logo.png}\vspace{0.3em}
+    
+  \end{center}
+
+\end{frame}
+
+\end{document}

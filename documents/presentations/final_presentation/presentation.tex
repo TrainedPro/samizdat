@@ -1,0 +1,149 @@
+\documentclass[aspectratio=169]{beamer}
+
+\mode<presentation>{
+  \usetheme{Madrid}
+  \usecolortheme{dolphin}
+  \usefonttheme{professionalfonts}
+  \setbeamertemplate{navigation symbols}{}
+  \setbeamertemplate{caption}[numbered]
+}
+
+% Packages
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{caption}
+\usepackage{xcolor}
+\usepackage[absolute,overlay]{textpos}
+
+% --- LAYOUT & LOGO ---
+\setbeamersize{text margin left=8mm,text margin right=8mm}
+\addtobeamertemplate{frametitle}{}{%
+  \begin{textblock*}{1cm}(1.025\textwidth,0.16cm)
+    \includegraphics[height=1cm]{logo.png}
+  \end{textblock*}
+}
+
+% Title Info
+\title[Resilient Mobile Communication]{ResilientP2PTestbed: Off-Grid Disaster Communication System}
+\author[Hassaan \& Aais]{Hassaan Anwar (22P-9160) \\ Muhammad Aais Rabbani (22P-9164)}
+\institute[FAST-NUCES]{Supervised by Dr. Ali Sayyed \\ Department of Computer Science, FAST-NUCES Peshawar}
+\date{\today}
+
+\begin{document}
+
+% Title Frame
+\begin{frame}[plain]
+  \vfill
+  \centering
+  {\LARGE\bfseries ResilientP2PTestbed}\\[6pt]
+  {\large\bfseries An Off-Grid Disaster Recovery Communication System}\vspace{0.4em}
+  
+  \rule{0.55\textwidth}{0.6pt}\vspace{0.7em}
+
+  {\textbf{Supervisor: Dr. Ali Sayyed}}\vspace{0.5em}
+
+  {\large\parbox{0.85\textwidth}{\centering
+     Hassaan Anwar (22P-9160)\\[0.3em]
+     Muhammad Aais Rabbani (22P-9164)
+  }}\vspace{0.7em}
+
+  {\small Department of Computer Science \\ FAST-NUCES, Peshawar}\vspace{0.8em}
+
+  \includegraphics[height=1.5cm]{logo.png}\vspace{0.3em}
+
+  {\footnotesize Date: \today}
+  \vfill
+\end{frame}
+
+\begin{frame}{Outline}
+    \tableofcontents
+\end{frame}
+
+\section{Introduction}
+\begin{frame}{Problem Statement}
+    \begin{itemize}
+        \item \textbf{Scenario:} Natural disasters (earthquakes, floods) destroy critical infrastructure.
+        \item \textbf{Impact:} "Golden Hour" rescue efforts are hampered by lack of communication.
+        \item \textbf{Gap:} Satellite phones are scarce; existing consumer apps lack robust mesh routing.
+    \end{itemize}
+\end{frame}
+
+\begin{frame}{Proposed Solution}
+    \begin{itemize}
+        \item \textbf{ResilientP2P}: Smartphone-based mesh network.
+        \item \textbf{Core Tech}: Google Nearby Connections (Wi-Fi Direct + BLE).
+        \item \textbf{Topology}: \texttt{P2P\_CLUSTER} (Many-to-Many).
+        \item \textbf{Features}:
+            \begin{itemize}
+                \item Zero Infrastructure Required.
+                \item High Bandwidth (Voice + Data).
+                \item Self-Healing Routing.
+            \end{itemize}
+    \end{itemize}
+\end{frame}
+
+\section{System Design}
+\begin{frame}{System Architecture & Diagrams}
+    The system design is captured in the following diagrams. Click to open.
+    \vspace{0.5cm}
+    \begin{itemize}
+        \item \href{run:./diagrams/class_structure.pdf}{\beamerbutton{Class Diagram (PDF)}} - Core application structure.
+        \item \href{run:./diagrams/use_case_diagram.png}{\beamerbutton{Use Case Diagram (PNG)}} - Survivor/Rescuer interactions.
+        \item \href{run:./diagrams/sequence_diagram.pdf}{\beamerbutton{Sequence Diagram (PDF)}} - Connection establishment flow.
+        \item \href{run:./diagrams/swimlane_diagram.pdf}{\beamerbutton{Swimlane Diagram (PDF)}} - Component interaction and threading.
+        \item \href{run:./diagrams/database_schema.pdf}{\beamerbutton{Database Schema (PDF)}} - Room database ERD.
+    \end{itemize}
+\end{frame}
+
+\section{Implementation}
+\begin{frame}{Implementation Details}
+    \begin{block}{Mesh Routing}
+        Flooding protocol with TTL limits and Message ID caching to prevent broadcast loops.
+    \end{block}
+    
+    \begin{block}{Zombie Detection}
+        Heartbeats Sent every 5s. Peers disconnected after 30s inactivity.
+    \end{block}
+    
+    \begin{block}{Audio}
+        16kHz PCM Audio Chunks transmitted over Wi-Fi Direct.
+    \end{block}
+\end{frame}
+
+\section{Results}
+\begin{frame}{Performance Results}
+    \begin{itemize}
+        \item \textbf{Range}: 40m (Indoors), 100m (Outdoors).
+        \item \textbf{Latency}: Voice $<$ 200ms per hop.
+        \item \textbf{Stability}: Successfully maintains cluster of 4+ devices.
+    \end{itemize}
+\end{frame}
+
+\section{Conclusion}
+\begin{frame}{Conclusion & Future Work}
+    \textbf{Conclusion}:
+    A functional, high-bandwidth off-grid mesh system running on standard Android hardware.
+
+    \textbf{Future Work}:
+    \begin{itemize}
+        \item End-to-End Encryption (ECDH).
+        \item Optimized Routing (DSR/AODV).
+        \item Integration with LoRaWAN gateways.
+    \end{itemize}
+\end{frame}
+
+\begin{frame}[plain]
+  \vfill
+  \centering
+  {\Huge\bfseries Thank You!}\\[8pt]
+  \rule{0.45\textwidth}{0.6pt}\\[0.9em]
+
+  {\large We welcome your questions and feedback.}\\[2em]
+  
+  \includegraphics[height=1.5cm]{logo.png}\vspace{0.3em}
+  \vfill
+\end{frame}
+
+\end{document}

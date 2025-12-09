@@ -1,0 +1,55 @@
+\section{Functional Requirements}
+\begin{itemize}
+    \item \textbf{FR1 - Peer Discovery}: The system must automatically discover other devices running the application within radio range.
+    \item \textbf{FR2 - Text Communication}: Users must be able to send text messages to direct and multi-hop peers.
+    \item \textbf{FR3 - Audio Streaming}: The system must support Push-to-Talk (PTT) voice communication.
+    \item \textbf{FR4 - Mesh Routing}: Messages must be forwarded to nodes not directly connected to the sender.
+    \item \textbf{FR5 - Resilience}: The network must self-heal when nodes join or leave.
+\end{itemize}
+
+\section{Non-Functional Requirements}
+\begin{itemize}
+    \item \textbf{NFR1 - Latency}: Voice transmission latency should be minimal (< 500ms) for usability.
+    \item \textbf{NFR2 - Battery Efficiency}: The application should handle power management to prolong operation during emergencies.
+    \item \textbf{NFR3 - Usability}: The UI must be simple and high-contrast for use in stressful environments.
+\end{itemize}
+
+\section{Use Case Analysis}
+The primary actors are \textbf{Survivors} and \textbf{Rescuers}.
+\begin{itemize}
+    \item \textbf{Broadcast Alert}: A survivor broadcasts an "SOS" message. It propagates through the mesh to a Rescuer.
+    \item \textbf{Voice Coordination}: Rescuers use PTT to coordinate searching a building without needing line-of-sight.
+    \item \textbf{Mesh Formation}: Devices automatically discover and connect to neighbors to extend network range.
+\end{itemize}
+
+Figure \ref{fig:usecase} illustrates the high-level interactions between these actors and the system.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.9\textwidth]{../../diagrams/output/use_case_diagram.png}
+    \caption{Use Case Diagram}
+    \label{fig:usecase}
+\end{figure}
+
+\section{Behavioral Modeling}
+To understand the dynamic behavior of the system, we analyze the sequence of events during connection establishment and data transmission.
+
+\subsection{Sequence Diagram}
+Figure \ref{fig:sequence} details the interaction flow between the UI, P2P Manager, and the Nearby Connections API when a user initiates a connection.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.8\textwidth]{../../diagrams/output/sequence_diagram.pdf}
+    \caption{Sequence Diagram: Connection Establishment}
+    \label{fig:sequence}
+\end{figure}
+
+\subsection{Activity Diagram}
+The overall workflow for a node participating in the mesh is depicted in Figure \ref{fig:activity}.
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.5\textwidth]{../../diagrams/output/activity_diagram.pdf}
+    \caption{Activity Diagram: Mesh Participation}
+    \label{fig:activity}
+\end{figure}

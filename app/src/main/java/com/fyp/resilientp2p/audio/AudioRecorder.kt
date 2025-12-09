@@ -69,6 +69,17 @@ class AudioRecorder(private val context: android.content.Context, file: ParcelFi
             if (record.state != AudioRecord.STATE_INITIALIZED) {
                 Log.w(TAG, "Failed to start recording")
                 isAlive = false
+                // The following lines were part of the user's instruction but refer to undefined
+                // variables
+                // (neighbors, sourceEndpointId, packet) in this context.
+                // To maintain syntactic correctness as per instructions, they are commented out.
+                // If these variables are meant to be defined elsewhere, please provide that
+                // context.
+                // neighbors[sourceEndpointId]?.let {
+                // it.lastSeen = System.currentTimeMillis()
+                // log("Updated lastSeen for $sourceEndpointId to ${it.lastSeen} (MsgType:
+                // ${packet.type})")
+                // }
                 return@Thread
             }
 
@@ -80,14 +91,23 @@ class AudioRecorder(private val context: android.content.Context, file: ParcelFi
                 while (isRecording()) {
                     val len = record.read(buffer.data, 0, buffer.size)
                     if (len >= 0 && len <= buffer.size) {
-                        outputStream.write(buffer.data, 0, len)
-                        outputStream.flush()
+                        try {
+                            outputStream.write(buffer.data, 0, len)
+                            outputStream.flush()
+                        } catch (e: IOException) {
+                            Log.e(TAG, "Error writing to output stream: ${e.message}", e)
+                            // Optionally, break the loop or handle the error further
+                            break
+                        }
                     } else {
                         Log.w(TAG, "Unexpected length returned: $len")
                     }
                 }
             } catch (e: IOException) {
-                Log.e(TAG, "Exception with recording stream", e)
+                // This usually happens if the peer disconnects or the pipe breaks.
+                // We log as warning instead of error to reduce noise, as it's an expected condition
+                // during disconnects.
+                Log.w(TAG, "Audio stream ended/broke: ${e.message}")
             } finally {
                 stopInternal()
                 try {
@@ -113,8 +133,10 @@ class AudioRecorder(private val context: android.content.Context, file: ParcelFi
     /** Stops recording audio. */
     fun stop() {
         stopInternal()
+        thread?.interrupt() // Interrupt any blocking Read/Write
         try {
-            thread?.join()
+            // Wait max 1000ms for thread to die, then give up to avoid UI freeze
+            thread?.join(1000)
         } catch (e: InterruptedException) {
             Log.e(TAG, "Interrupted while joining AudioRecorder thread", e)
             Thread.currentThread().interrupt()

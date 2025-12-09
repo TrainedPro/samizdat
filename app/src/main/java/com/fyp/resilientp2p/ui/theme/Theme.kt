@@ -18,11 +18,15 @@ import androidx.core.view.WindowCompat
 
 private val DarkColorScheme =
         darkColorScheme(
-                primary = NeonBlue,
-                secondary = NeonGreen,
-                tertiary = NeonRed,
+                primary = TechBluePrimary,
+                secondary = TechTealLight,
+                tertiary = StatusRed,
                 background = DarkBackground,
                 surface = DarkSurface,
+                primaryContainer = TechBlueDark,
+                onPrimaryContainer = Color.White,
+                secondaryContainer = TechTealLight,
+                onSecondaryContainer = Color.Black,
                 onPrimary = Color.White,
                 onSecondary = Color.Black,
                 onBackground = TextWhite,
@@ -31,22 +35,29 @@ private val DarkColorScheme =
 
 private val LightColorScheme =
         lightColorScheme(
-                primary = NeonBlueDark,
-                secondary = NeonGreenDark,
-                tertiary = NeonRedDark,
-                background = Color(0xFFF5F5F5),
-                surface = Color.White,
+                primary = TechBluePrimary,
+                secondary = TechTealSecondary,
+                tertiary = StatusRed,
+                background = LightBackground,
+                surface = LightSurface,
+                primaryContainer = TechBlueContainer,
+                onPrimaryContainer = TechBlueOnContainer,
+                secondaryContainer = TechTealContainer,
+                onSecondaryContainer = Color.Black,
+                surfaceVariant = LightSurfaceVariant,
+                onSurfaceVariant = TextBlack,
                 onPrimary = Color.White,
                 onSecondary = Color.White,
-                onBackground = Color.Black,
-                onSurface = Color.Black
+                onBackground = TextBlack,
+                onSurface = TextBlack
         )
 
 @Composable
 fun ResilientP2PTestbedTheme(
         darkTheme: Boolean = isSystemInDarkTheme(),
         // Dynamic color is available on Android 12+
-        dynamicColor: Boolean = false, // Disabled dynamic color to enforce our custom UI branding
+        // Dynamic color is available on Android 12+
+        dynamicColor: Boolean = false,
         content: @Composable () -> Unit
 ) {
         val colorScheme =
@@ -59,7 +70,7 @@ fun ResilientP2PTestbedTheme(
                         darkTheme -> DarkColorScheme
                         else -> LightColorScheme
                 }
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        
+
         val view = LocalView.current
         if (!view.isInEditMode) {
                 SideEffect {

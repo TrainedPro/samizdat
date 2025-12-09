@@ -26,6 +26,7 @@ import com.fyp.resilientp2p.managers.P2PManager
 import com.fyp.resilientp2p.service.P2PService
 import com.fyp.resilientp2p.ui.ResilientP2PApp
 import com.fyp.resilientp2p.ui.theme.ResilientP2PTestbedTheme
+import com.fyp.resilientp2p.data.LogLevel
 import com.google.android.material.slider.Slider
 import java.io.File
 import java.io.FileWriter
@@ -76,7 +77,7 @@ class MainActivity : AppCompatActivity() {
                     p2pManager.log("All permissions granted.")
                     startAndBindService()
                 } else {
-                    p2pManager.log("ERROR: Critical permissions denied: $denied")
+                    p2pManager.log("Critical permissions denied: $denied", LogLevel.ERROR)
                 }
             }
 
@@ -332,7 +333,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun gracefulShutdown() {
-        p2pManager.log("INFO: Initiating graceful shutdown...")
+        p2pManager.log("Initiating graceful shutdown...", LogLevel.INFO)
 
         // Stop heartbeat
         heartbeatManager.setHeartbeatEnabled(false)
@@ -348,7 +349,7 @@ class MainActivity : AppCompatActivity() {
         val serviceIntent = Intent(this, P2PService::class.java)
         stopService(serviceIntent)
 
-        p2pManager.log("INFO: Shutdown complete. Exiting app.")
+        p2pManager.log("Shutdown complete. Exiting app.", LogLevel.INFO)
 
         // Give a moment for logs to be written
         lifecycleScope.launch {
@@ -426,7 +427,7 @@ class MainActivity : AppCompatActivity() {
                         val date = dateFormat.format(Date(log.timestamp))
                         writer.append("${log.id},")
                         writer.append("$date,")
-                        writer.append("${log.type},")
+                        writer.append("${log.logType},")
                         writer.append("${log.peerId ?: ""},")
                         writer.append("\"${log.message.replace("\"", "\"\"")}\",")
                         writer.append("${log.rssi ?: ""},")
@@ -447,7 +448,7 @@ class MainActivity : AppCompatActivity() {
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {
-                    p2pManager.log("ERROR: " + getString(R.string.logs_export_error, e.message))
+                    p2pManager.log(getString(R.string.logs_export_error, e.message), LogLevel.ERROR)
                 }
             }
         }

@@ -1,9 +1,9 @@
 package com.fyp.resilientp2p.audio
 
-import android.util.Log
+import com.fyp.resilientp2p.data.LogLevel
 
 /** A buffer that handles the size calculation for AudioRecord and AudioTrack. */
-abstract class AudioBuffer {
+abstract class AudioBuffer(private val log: (String, LogLevel) -> Unit) {
     companion object {
         private const val TAG = "AudioBuffer"
     }
@@ -15,7 +15,7 @@ abstract class AudioBuffer {
     init {
         var size = getMinBufferSize(sampleRate)
         if (!validSize(size)) {
-            Log.w(TAG, "Failed to get min buffer size with sample rate $sampleRate")
+            log("[$TAG] Failed to get min buffer size with sample rate $sampleRate", LogLevel.WARN)
             size = 0
         }
         this.size = size

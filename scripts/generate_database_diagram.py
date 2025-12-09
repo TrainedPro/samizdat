@@ -64,7 +64,7 @@ def run_pdf_generation(mermaid_file, output_pdf):
             os.remove(config_file)
 
 def main():
-    base_dir = "diagrams"
+    base_dir = "documents/diagrams"
     source_dir = os.path.join(base_dir, "source")
     output_dir = os.path.join(base_dir, "output")
 

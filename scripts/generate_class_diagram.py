@@ -378,10 +378,7 @@ def main():
         os.makedirs(out_dir)
     
     # Define Separate Source/Output Directories
-    # Based on user request: source file -> diagrams/source, output -> diagrams/output
-    # The 'out_dir' argument handles the root 'diagrams' folder conceptually, but we enforce the split.
-    
-    base_diagrams_dir = out_dir if out_dir != "documents/diagrams" else "diagrams"
+    base_diagrams_dir = out_dir
     source_dir = os.path.join(base_diagrams_dir, "source")
     output_dir = os.path.join(base_diagrams_dir, "output")
     

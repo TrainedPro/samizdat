@@ -1,225 +1,286 @@
-# ResilientP2PTestbed - Technical Reference Manual
+# ResilientP2PTestbed - Comprehensive Developer Reference
 
-**Project Name**: ResilientP2PTestbed (Samizdat)
-**Platform**: Android (Kotlin / Jetpack Compose)
-**Core API**: Google Nearby Connections (Strategies.P2P_CLUSTER)
+**Project**: Samizdat (ResilientP2PTestbed)
+**Purpose**: Infrastructure-less Mesh Networking for Android
+**Core Stack**: Kotlin, Jetpack Compose, Room, Google Nearby Connections API
+
+This document serves as the **definitive technical bible** for the codebase. It details the project structure, architecture, and provides a file-by-file, function-by-function deep dive into the implementation.
 
 ---
 
 ## 1. Directory Structure
 
-This section details the purpose of every top-level directory in the project repository.
+### `root`
+*   **`app/`**: The primary Android module.
+*   **`documents/`**: UML diagrams and PDFs.
+*   **`gradle/`**: Build system wrapper.
+*   **`scripts/`**: Development utilities (Python).
+*   **`PROJECT_DOCUMENTATION.md`**: This file.
 
-### `app/`
-The main Android application module.
-*   `src/main/java`: Contains all Kotlin source code (`com.fyp.resilientp2p`).
-*   `src/main/res`: Android resources (drawables, strings, layouts, etc.).
-*   `src/main/AndroidManifest.xml`: The app manifest defining permissions, activities, and services.
-
-### `documents/`
-Stores project-related documentation, diagrams, and reference materials.
-*   Contains UML Class diagrams, Sequence diagrams, and architecture PDFs.
-*   Used for generating the Final Year Project report.
-
-### `scripts/`
-Helper Python scripts used during development for analysis and automation.
-*   **`generate_class_diagram.py`**: A utility that scans the Kotlin source code to generate a PlantUML representation of the class structure.
-*   **`generate_database_diagram.py`**: inspects Room database entities to visualize the schema.
-
-### `gradle/`
-Contains the Gradle Wrapper files (`gradle-wrapper.jar`, `gradle-wrapper.properties`).
-*   Ensures the project builds with a consistent Gradle version regardless of the machine's local installation.
-
-### `samples/`
-Contains reference implementations or snippets (e.g., `walkie-talkie-sample`) used for researching specific features like audio streaming.
+### `app/src/main`
+*   **`java/com/fyp/resilientp2p/`**: Source code root.
+*   **`assets/`**: Unused in current build (legacy).
+*   **`res/`**:
+    *   `drawable/`: Icons (Vector Drawables).
+    *   `values/`: Strings (`strings.xml`) and legacy Style definitions.
+*   **`AndroidManifest.xml`**: Defines Permissions, `P2PService`, and `MainActivity`.
 
 ---
 
-## 2. Technical Architecture Overview
+## 2. Source Code Deep Dive (Depth-First Search)
 
-The application is built on a **Clean Architecture** variant, heavily utilizing the **Manager Pattern** to encapsulate logic, separated from the UI.
+We traverse `com.fyp.resilientp2p` and its sub-packages.
 
-### **Layers**
-1.  **Presentation Layer**: Pure Jetpack Compose UI (`MainActivity`, `P2PComposables`). No Fragments or XML layouts are used for the main interface.
-2.  **Domain/Logic Layer**: Singleton "Managers" (`P2PManager`, `HeartbeatManager`, `VoiceManager`) that handle business logic and state.
-3.  **Data Layer**: Room Database and Data Classes definitions (`Packet`, `Neighbor`, `LogEntry`).
-4.  **Infrastructure/Service Layer**: `P2PService` ensuring background execution.
-
-### **State Management**
-*   **Single Source of Truth**: The `P2PManager` holds the canonical `_state` (`MutableStateFlow<P2PState>`).
-*   **Observation**: The UI observes this state flow using `collectAsStateWithLifecycle()`. Any change in the mesh (new neighbor, message received) updates this flow, triggering a UI recomposition.
-
----
-
-## 3. File-by-File Deep Dive
-
-This section provides a detailed explanation of every critical file in the codebase.
-
-### 3.1 Root Package (`com.fyp.resilientp2p`)
-
-#### `MainActivity.kt`
-The application entry point.
-*   **Permissions Handling**: Checks and requests runtime permissions required for Nearby Connections:
-    *   `BLUETOOTH_SCAN`, `BLUETOOTH_ADVERTISE`, `BLUETOOTH_CONNECT` (Android 12+).
-    *   `ACCESS_FINE_LOCATION` (Required for BLE discovery on all versions).
-    *   `NEARBY_WIFI_DEVICES` (Android 13+).
-*   **Service Binding**: Binds to `P2PService` immediately upon launch. This "promotes" the app process to a Foreground priority, preventing the OS from killing the mesh connection when the user minimizes the app.
-*   **Graceful Shutdown**:
-    *   Implements `gracefulShutdown()` which ensures radios are powered down properly.
-    *   Unbinds the service and explicitly calls `stopService` to remove the persistent notification.
-    *   Stops the `HeartbeatManager`.
+### 2.1 Package: `com.fyp.resilientp2p` (Root)
 
 #### `P2PApplication.kt`
-The global `Application` subclass.
-*   **Dependency Injection Root**: Manages the singleton instances of `P2PManager`, `HeartbeatManager`, and `AppDatabase`.
-*   **Lifecycle**: Created before any Activity. Initializes the database and managers ensuring they exist for the entire app lifetime.
+The application class, responsible for global state initialization.
+
+*   **Class**: `P2PApplication : Application`
+*   **Variables**:
+    *   `database`: `AppDatabase` (Lazy initialized Room DB).
+    *   `p2pManager`: `P2PManager` (Singleton).
+    *   `heartbeatManager`: `HeartbeatManager` (Singleton).
+*   **Functions**:
+    *   `onCreate()`:
+        *   Initializes the `AppDatabase`.
+        *   Initializes `P2PManager` with the Application Context.
+        *   Initializes `HeartbeatManager` passing the `P2PManager` instance (Dependency Injection).
+*   **Important Notes**:
+    *   This acts as a manual Dependency Injection container. The Managers are singletons that live as long as the OS process.
+
+#### `MainActivity.kt`
+The Composition Root and UI Host.
+
+*   **Class**: `MainActivity : AppCompatActivity`
+*   **Key Functions**:
+    *   `onCreate()`:
+        *   Retrieves Managers from `P2PApplication`.
+        *   Sets content to `ResilientP2PApp` (Compose entry).
+        *   Calls `getRequiredPermissions()` and requests them.
+        *   Calls `startAndBindService()` to promote process priority.
+    *   `getRequiredPermissions()`:
+        *   **Android 13+ (Tiramisu)**: Requests `UWB` (optional), `NEARBY_WIFI_DEVICES`.
+        *   **Android 12 (S)**: Requests `BLUETOOTH_SCAN/ADVERTISE/CONNECT`.
+        *   **Legacy**: Requests `ACCESS_FINE_LOCATION`.
+        *   *Logic*: Adapts to fragmentation in Android's Bluetooth permission model.
+    *   `startAndBindService()`:
+        *   Starts `P2PService` (Foreground) and binds `MainActivity` to it.
+        *   *Why?* To ensure the `P2PManager` inside the specific Service scope (or App scope) stays alive.
+    *   `gracefulShutdown()`:
+        *   Called when user selects "Exit".
+        *   Stops Heartbeat, Stops P2PManager (`stopAll`), Unbinds Service, Stops Service.
+        *   *Critical*: Without this, the background service would keep the Bluetooth radio hot indefinitely.
+    *   `exportLogs()`:
+        *   Dumps the SQLite `log_entries` table to a CSV file in `ExternalFilesDir`.
+        *   Used for post-test verification of mesh performance (latency/RSSI).
 
 ---
 
-### 3.2 Managers Package (`com.fyp.resilientp2p.managers`)
+### 2.2 Package: `com.fyp.resilientp2p.audio`
 
-#### `P2PManager.kt`
-**Role**: The central controller of the mesh network. This is the largest and most complex file (approx 800 lines).
-
-**Key Responsibilities**:
-1.  **Nearby Connections Integration**:
-    *   **Strategy**: Uses `Strategy.P2P_CLUSTER`. This enables M-to-N topology (a mesh), allowing a device to accept incoming connections while also connecting to others.
-    *   **Advertising & Discovery**: Uniquely, this manager keeps *both* Advertising and Discovery active simultaneously. This "Always-On" approach allows the mesh to grow dynamically and heal partitions.
-    *   **Callbacks**:
-        *   `ConnectionLifecycleCallback`: Handles `onConnectionInitiated` (handshake), `onConnectionResult` (success/failure), and `onDisconnected`.
-        *   `PayloadCallback`: Receives raw bytes (`Type.BYTES`) or audio streams (`Type.STREAM`).
-
-2.  **Routing Logic (The "Protocol")**:
-    *   Implements a custom **Distance Vector / Controlled Flooding** protocol.
-    *   **`routingTable`**: A Map of `<DestinationID, NextHopID>`. Determines where to forward a packet.
-    *   **`routingScores`**: Stores the "Score" (TTL) of a route. Higher TTL = Better Route (fewer hops).
-    *   **Route Update**: When a packet arrives from Source `S` with TTL `T` via Neighbor `N`:
-        *   Calculates `NewScore = T`.
-        *   If `NewScore > CurrentScore(S)`, updates table: `Route(S) = N`.
-
-3.  **Duplicate Connection Handling (Stability Fix)**:
-    *   Addresses a race condition where two devices discover each other simultaneously.
-    *   **Logic**: If `onConnectionInitiated` connects to an existing peer name, it checks stability.
-        *   If the existing connection is "Stale" or "Ghost", it disconnects and accepts the new one.
-        *   If the new connection ID > old connection ID (tie-breaker), it might swap them to prevent deadlock.
-
-4.  **Error Handling (The "8012" Fix)**:
-    *   Monitors `sendPayload` failures. If the Google API returns status `8012` (Endpoint IO Error), it indicates a radio stack stall.
-    *   **Action**: Automatically calls `disconnectFromEndpoint(id)`, forcing a clean reset of the connection handle.
-
-#### `HeartbeatManager.kt`
-**Role**: Connectivity Watchdog.
-
-**Logic**:
-1.  **Periodic Ping**: Every `config.intervalMs` (default 8000ms), it iterates through all connected neighbors.
-2.  **Ping Packet**: Sends a `PacketType.PING` containing a timestamp.
-3.  **Response**: Expects a `PacketType.PONG` via `P2PManager`.
-4.  **Zombie Detection**:
-    *   Maintains a `lastSeenMap`.
-    *   On each tick, checks: `if (now - lastSeen > 30,000ms) ==> Disconnect`.
-    *   This removes peers that have physically walked away but for whom the OS hasn't yet triggered `onDisconnected`.
-
-#### `VoiceManager.kt`
-**Role**: Audio Subsystem Interface.
-
-**Audio Pipeline**:
-1.  **Capture**: Uses `AudioRecord` (16kHz, Mono, PCM 16-bit).
-2.  **Stream Creation**: Writes raw audio bytes to a `ParcelFileDescriptor` pipe.
-3.  **Transmission**: Hands the read-end of the pipe to `Nearby.sendPayload` as `Payload.Type.STREAM`.
-4.  **Playback**:
-    *   Receives `InputStream` from `P2PManager`.
-    *   Buffering: Reads chunks into a buffer.
-    *   Output: Writes to `AudioTrack` ensuring minimal latency.
+#### `AudioBuffer.kt` / `AudioPlayer.kt` / `AudioRecorder.kt`
+Legacy/Refactored classes.
+*   *Note*: The active implementation uses `VoiceManager`. These files contain earlier experiments with `AudioTrack` buffer management and may be deprecated or used as internal helpers for `VoiceManager`.
 
 ---
 
-### 3.3 Service Package (`com.fyp.resilientp2p.service`)
-
-#### `P2PService.kt`
-**Role**: Process Persistence.
-
-*   **Foreground Service**: Required by Android to keep a process running when not visible.
-*   **Notification**: displays a persistent status bar notification ("P2P Service is Running"), satisfying OS background execution requirements.
-*   **Binder**: Provides a `LocalBinder` so `MainActivity` can communicate with it (though most communication happens via the singleton `P2PManager`).
-
----
-
-### 3.4 Data Package (`com.fyp.resilientp2p.data`)
+### 2.3 Package: `com.fyp.resilientp2p.data`
 
 #### `Packet.kt`
-**Role**: The "Wire Format" of the mesh protocol.
-**Structure**:
-```kotlin
-data class Packet(
-    val id: String,          // Unique UUID for deduplication
-    val type: PacketType,    // DATA, PING, PONG, IDENTITY
-    val sourceId: String,    // Author of the message
-    val destId: String,      // Target (or "BROADCAST")
-    val payload: ByteArray,  // The actual data (text, image bytes)
-    val ttl: Int = 3,        // Time-To-Live (Hop Limit)
-    val timestamp: Long      // Creation time
-)
-```
-*   **Serialization**: Contains `toBytes()` and `fromBytes()` using JSON (Gson) or native serialization for converting the object to a `ByteArray` for transmission.
+The core data structure for the custom protocol.
+
+*   **Data Class**: `Packet`
+*   **Fields**:
+    *   `id`: `String` (UUID). Unique ID for deduplication.
+    *   `type`: `PacketType` (Enum: `DATA`, `PING`, `PONG`, `IDENTITY`).
+    *   `sourceId`: `String` (Original Sender Name).
+    *   `destId`: `String` ("BROADCAST" or Specific Device Name).
+    *   `payload`: `ByteArray` (Actual content).
+    *   `ttl`: `Int` (Time-To-Live). Defaults to 3.
+    *   `timestamp`: `Long`.
+*   **Functions**:
+    *   `toBytes()`: Serializes the object to JSON -> ByteArray.
+    *   `fromBytes()`: Deserializes.
+*   **Nuance**: Using JSON is inefficient for bandwidth but excellent for debugging. Production version should switch to Protobuf.
+
+#### `PacketEntity.kt`
+Room Entity for storing packets (if needed).
+*   Not strictly used for transient transport, simplified for persistent logging.
 
 #### `Neighbor.kt`
-Data class representing a direct peer.
-*   Fields: `endpointId` (Google ID), `peerName` (User Device Name), `rssi`, `lastSeen`.
+Visual model for the UI.
+*   **Fields**: `endpointId` (Google Hash), `peerName` (User String), `rssi`, `lastSeen`.
 
-#### `AppDatabase.kt` / `LogDao.kt` / `LogEntry.kt`
-**Role**: Logging & Debugging Persistence.
-*   **Room Database**: Standard Android SQLite wrapper.
-*   **Logs**: Stores debugging logs (`TRACE`, `DEBUG`, `INFO`) persistently so they can be exported to CSV (`exportLogs()` in `MainActivity`) for post-mortem analysis.
+#### `AppDatabase.kt`
+Room Database definition.
+*   **Entities**: `LogEntry`, `PacketEntity`.
+*   **Version**: 1.
+
+#### `LogEntry.kt`
+*   **Entity**: `@Entity(tableName = "log_entries")`
+*   **Fields**: `timestamp`, `message`, `level` (INFO/ERROR), `logType` (SYSTEM/CHAT), `rssi`, `latencyMs`.
+
+#### `P2PState.kt`
+The UI State holder.
+*   **Fields**:
+    *   `isAdvertising`, `isDiscovering`: Booleans.
+    *   `connectedEndpoints`: List of Strings.
+    *   `logs`: List of `LogEntry` (Transient buffer for UI).
+    *   `knownPeers`: Map of peers found via neighbors.
 
 ---
 
-### 3.5 UI Package (`com.fyp.resilientp2p.ui`)
+### 2.4 Package: `com.fyp.resilientp2p.managers`
+
+#### `P2PManager.kt` (The Brain)
+**Lines**: ~800
+**Dependencies**: `ConnectionsClient`, `CoroutineScope`, `VoiceManager`.
+
+*   **Initialization**:
+    *   `STRATEGY = Strategy.P2P_CLUSTER`: Allows M-to-N connections.
+    *   `localUsername`: `Build.MODEL`.
+*   **Connection Lifecycle (`connectionLifecycleCallback`)**:
+    *   `onConnectionInitiated()`:
+        *   **Self-Check**: Reject if name == `localUsername`.
+        *   **Duplicate Logic**: If already connected to "User A", checks if the new connection is "Fresher". Uses ID comparison as tie-breaker. Prevents "Death Spirals".
+    *   `onConnectionResult()`:
+        *   Success: Adds to `neighbors` map. Sends `IDENTITY` packet.
+        *   Failure: Logs code.
+    *   `onDisconnected()`:
+        *   Removes from `neighbors`.
+        *   **Route Pruning**: Removes all routes in `routingTable` where `nextHop == disconnectedId`.
+*   **Payload Handling (`payloadCallback`)**:
+    *   `BYTES`: Parses via `Packet.fromBytes()`. Calls `handlePacket()`.
+    *   `STREAM`: Hands `InputStream` to `VoiceManager.startPlaying()`.
+*   **The Routing Engine (`handlePacket`)**:
+    1.  **Deduplication**: Checks `messageCache`. If seen? Return.
+    2.  **Route Learning**:
+        *   Calculates `Score = Packet.TTL`.
+        *   If `Score > routingScores[packet.sourceId]`:
+            *   Update `routingTable` -> `packet.sourceId` via `sourceEndpointId`.
+    3.  **Local Delivery**:
+        *   If `destId == Me` or `BROADCAST`: Show in UI (`_payloadEvents.emit`).
+    4.  **Forwarding**:
+        *   If `destId != Me` and `TTL > 0`: Call `forwardPacket`.
+*   **`forwardPacket(packet)`**:
+    *   Decrements TTL.
+    *   **Unicast**: If `destId` is in `routingTable` and the next hop is alive, send only to that hop.
+    *   **Flooding**: If route unknown (or Broadcast), send to *all* neighbors EXCEPT the one it came from (Split Horizon).
+    *   **8012 Handling**: Inside `onFailureListener`, if `e.message` contains "8012", effectively kill the link (`disconnectFromEndpoint`).
+*   **Audio**:
+    *   `startAudioStreaming()`: Calls `VoiceManager.startRecording()`, gets `ParcelFileDescriptor`, sends as `Payload.fromStream()`.
+
+#### `HeartbeatManager.kt`
+**Dependencies**: `P2PManager`.
+
+*   **Loop**: `startHeartbeatLoop()` runs every 8 seconds (configurable).
+*   **Action**:
+    *   Iterates `p2pManager.getNeighborsSnapshot()`.
+    *   Sends `PING` packet.
+*   **Check**:
+    *   Iterates `lastSeenMap`.
+    *   If `CurrentTime - LastSeen > 30000ms`, assumes dead.
+    *   Calls `p2pManager.disconnectFromEndpoint()`.
+*   **Design Rationale**: Google's API usually detects drops, but in "Click-to-Connect" clusters, the socket can hang open indefinitely if the radio is jammed. This forces a cleanup.
+
+#### `VoiceManager.kt`
+*   **Functions**:
+    *   `startRecording()`:
+        *   Creates `ParcelFileDescriptor.createPipe()`.
+        *   Launches a thread reading from `AudioRecord` and writing to `OutputStream`.
+        *   Returns the `ParcelFileDescriptor` (Read side) to be handed to Nearby Connections.
+    *   `startPlaying(inputStream)`:
+        *   Starts a thread reading from `inputStream` and writing to `AudioTrack`.
+
+---
+
+### 2.5 Package: `com.fyp.resilientp2p.service`
+
+#### `P2PService.kt`
+Foreground Service encapsulation.
+*   **Class**: `P2PService : Service`
+*   **Manifest**: Registered with `android:foregroundServiceType="connectedDevice"`.
+*   **`onStartCommand()`**:
+    *   Creates a `NotificationChannel` ("Mesh Service").
+    *   Builds a persistent `Notification` with content "Mesh Network Active".
+    *   Calls `startForeground(1, notification)`.
+*   **Binder**:
+    *   `LocalBinder` helper class returns the service instance.
+    *   Used by `MainActivity` to confirm the service is running, though logic is mostly static/singleton.
+
+---
+
+### 2.6 Package: `com.fyp.resilientp2p.transport`
+
+#### `MessageCache.kt`
+*   **Role**: Stores seen Packet IDs to prevent broadcast loops.
+*   **Implementation**: `ConcurrentHashMap<String, Long>`.
+*   **Cleanup**: (Optional) Could define a purge method to remove old IDs to save RAM.
+
+---
+
+### 2.7 Package: `com.fyp.resilientp2p.ui`
 
 #### `P2PComposables.kt`
-The entire visual interface.
+The Jetpack Compose UI definition.
 
-*   **`RadarView`**:
-    *   Uses a custom `Canvas` composable.
-    *   Draws the central user node.
-    *   Calculates `(x, y)` positions for neighbors using `cos/sin` functions to arrange them in a circle.
-    *   Draws lines (`drawLine`) between connected nodes.
-*   **`ChatScreen`**:
-    *   A `LazyColumn` displaying a history of `LogEntry` items where `type == CHAT`.
-    *   Differentiates between "Sent" (Align Right, Blue) and "Received" (Align Left, Gray).
-*   **`DashboardContent`**:
-    *   The main layout scaffolding (`Scaffold`).
-    *   Houses the `RadarView` on top and `LiveLog` / `Chat` on bottom.
+*   **`ResilientP2PApp` Composable**:
+    *   Setup `Scaffold`.
+    *   Top Bar: "Resilient Mesh".
+    *   Content: `DashboardContent`.
+*   **`DashboardContent` Composable**:
+    *   Layout: `Column`.
+    *   **Top Half**: `RadarView`.
+    *   **Bottom Half**: `ChatScreen`.
+*   **`RadarView` Composable**:
+    *   **Canvas**:
+        *   `center = size / 2`.
+        *   `drawCircle(Color.Blue)` for Me.
+        *   **Neighbors**: Loop through `state.connectedEndpoints`.
+        *   **Math**:
+            *   `angle = (360 / count) * index`
+            *   `x = center.x + radius * cos(rad(angle))`
+            *   `y = center.y + radius * sin(rad(angle))`
+        *   Draws lines to them.
+*   **`ChatScreen` Composable**:
+    *   `LazyColumn`: Renders `state.logs` filtering for `LogType.CHAT`.
+    *   `ChatBubble`: Custom box with rounded corners.
+*   **`DebugPanel`**:
+    *   (Hidden by default or overlay) Shows system logs (`LogType.SYSTEM`).
 
----
-
-## 4. Operation & Nuances
-
-### 4.1 "Always-On" Mesh Strategy
-Standard usage of Nearby Connections usually involves one device advertising and another discovering, then stopping once connected.
-**Our Approach**:
-*   To form a mesh, *everyone* must be detectable and able to detect others.
-*   We keep discovery running even after connection.
-*   **Constraint**: This uses significant battery. The app includes a "Low Power Mode" toggle (in Advanced Settings) that duty-cycles this behavior.
-
-### 4.2 Split Horizon & Loop Prevention
-*   **Split Horizon**: When forwarding a packet, we explicitly exclude the neighbor we received it from. `filter { it != excludeEndpointId }`.
-*   **Deduplication**: `P2PManager` maintains a `messageCache` of seen Packet IDs. If we have seen ID `X` before, we drop it. This effectively stops broadcast storms.
-
-### 4.3 Self-Poisoning
-A subtle bug identified during development involves "Self-Poisoning".
-*   If Node A broadcasts "I am A", Node B receives it and may echo it back to A.
-*   Node A must NOT add "Node A via Node B" to its routing table.
-*   **Fix**: `if (packet.sourceId == localUsername) return`.
+#### `theme/`
+*   `Color.kt`: Purple/Teal standard definitions.
+*   `Theme.kt`: `ResilientP2PTestbedTheme` wrapper.
 
 ---
 
-## 5. Known Limits
-
-1.  **Hop Count**: Practical limit of ~3-4 hops due to radio latency and packet loss accumulation.
-2.  **Bandwidth**: Each hop halves the effective throughput (Store-and-Forward delay). Voice is best used on 0-hop (Direct) or 1-hop connections.
-3.  **Connection Count**: The API limits connections to approx 4-7. We enforce a soft limit of 4 to ensure stability.
-4.  **Security**: Currently, packets are cleartext (JSON/Bytes). Encryption is a planned future upgrade.
+### 2.8 Package: `com.fyp.resilientp2p.utils`
+(Implicit) Helper functions found in other files, mostly standardized Kotlin extensions.
 
 ---
 
-**End of Technical Documentation**
+## 3. Protocol & Algorithms (For the Algorithm Team)
+
+### 3.1 The Routing Protocol
+We implement a **Distance Vector** variant.
+*   **Metric**: Hop Count (derived from `TTL`).
+*   **Table**: `HashMap<Dest, NextHop>`.
+*   **Updates**: Flood-based.
+    *   When a node receives a packet from Source `S` with `TTL=T`.
+    *   It knows that `S` is `(InitialTTL - T)` hops away via the current sender `N`.
+    *   It updates the table if this path is shorter than any known path.
+
+### 3.2 Stability Heuristics
+1.  **Duplicate Race**:
+    *   Code: `P2PManager.kt:150-180`.
+    *   If `A` connects to `B`, and `B` connects to `A` milliseconds later:
+    *   Normally, Nearby Connections might allow two sockets.
+    *   We enforce **Lexicographical Ordering** of Endpoint IDs to deterministically pick *one* connection and kill the other.
+2.  **Radio Stall (8012)**:
+    *   Code: `P2PManager.kt:forwardPacket`.
+    *   If `sendPayload` fails, we don't just log it. We assume the link is dead.
+
+---
+
+**End of Technical Bible**

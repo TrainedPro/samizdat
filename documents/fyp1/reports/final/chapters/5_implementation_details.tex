@@ -1,21 +1,39 @@
 \section{Mesh Routing Algorithm}
-The system implements a flooding-based routing protocol with Time-To-Live (TTL) limits to prevent broadcast storms.
-\begin{lstlisting}[language=Java, caption=Packet Forwarding Logic]
-fun forwardPacket(packet: Packet) {
-    if (packet.ttl <= 0) return
-    if (messageCache.hasSeen(packet.id)) return
-    
-    packet.ttl--
-    neighbors.forEach { peer ->
-        if (peer.id != packet.sourceId) {
-            send(peer, packet)
-        }
+The system has evolved from simple flooding to a \textbf{Metric-Based Routing} protocol. While it still uses flooding for discovery, it maintains a routing table optimized for stability.
+
+\subsection{Metric-Based Scoring}
+Routes are evaluated based on a score derived from the Time-To-Live (TTL). A higher TTL indicates fewer hops, resulting in a higher score.
+\begin{equation}
+    Score = TTL
+\end{equation}
+When a packet arrives, the router compares the new score with the existing route's score. The routing table is updated only if the new route is strictly better ($NewScore > CurrentScore$), preventing route flapping.
+
+\subsection{Self-Poisoning Prevention}
+To prevent loops where a node learns a route to itself via a neighbor, the system inspects the `sourceId` of incoming packets. If `packet.sourceId == localId`, the packet is dropped immediately, and the route is not updated.
+
+\begin{lstlisting}[language=Java, caption=Route Update Logic]
+if (packet.sourceId != localUsername) {
+    val newScore = packet.ttl
+    if (newScore > currentScore) {
+        routingTable.put(packet.sourceId, sourceEndpointId)
+        routingScores[packet.sourceId] = newScore
     }
 }
 \end{lstlisting}
 
+\section{State Management}
+The application state is managed by a reactive `P2PState` data class, exposed via `StateFlow`. This ensures UI consistency across the Composable hierarchy.
+
+Key state fields include:
+\begin{itemize}
+    \item \textbf{isHybridMode}: Toggles between pure P2P and Gateway-assisted modes.
+    \item \textbf{isLowPower}: Reduces discovery frequency to save battery.
+    \item \textbf{connectedEndpoints}: List of currently active physical connections.
+    \item \textbf{logs}: A rolling buffer of the last 100 log entries for on-device debugging.
+\end{itemize}
+
 \section{Audio Streaming}
-Audio is captured using `AudioRecord` at 16kHz sample rate (MONO) to balance quality and bandwidth. The raw PCM data is chunked into 1KB payloads and transmitted via the high-bandwidth channel (Wi-Fi Direct) established by Nearby Connections.
+Audio is captured using `AudioRecord` at 16kHz sample rate (MONO). The raw PCM data is chunked into payloads and transmitted via the high-bandwidth Wi-Fi Direct channel. The system supports both Unicast (1-to-1) and Broadcast (1-to-All) streaming.
 
 \section{Heartbeat Mechanism}
-To detect "zombie" connections (peers that are physically gone but logically connected), the `HeartbeatManager` sends a small ping payload every 5 seconds. If no packet is received from a peer for 30 seconds, the connection is terminated to free up slots.
+To detect "zombie" connections, the `HeartbeatManager` sends a ping every 5 seconds. If no packet is received for 15 seconds (reduced from 30s), the peer is marked as stale. Direct PINGs are used to verify physical link integrity independent of the mesh overlay.

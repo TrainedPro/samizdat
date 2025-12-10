@@ -2,24 +2,29 @@ package com.fyp.resilientp2p.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// Modern Dark / Cyberpunk Palette
-val NeonBlue = Color(0xFF2979FF)
-val NeonBlueDark = Color(0xFF1565C0)
-val NeonRed = Color(0xFFFF1744)
-val NeonGreen = Color(0xFF00E676)
-val NeonGreenDark = Color(0xFF00A856) // Darker for Light Mode
-val NeonRedDark = Color(0xFFD50000) // Darker for Light Mode
+// Professional / Technical Palette
+val TechBluePrimary = Color(0xFF1976D2) // Google Blue
+val TechBlueDark = Color(0xFF0D47A1) // Deep Blue for Dark Mode or Status
+val TechBlueContainer = Color(0xFFBBDEFB) // Very Light Blue for Containers
+val TechBlueOnContainer = Color(0xFF0D47A1) // Dark Blue Text on Container
 
+val TechTealSecondary = Color(0xFF00796B) // Teal
+val TechTealLight = Color(0xFF4DB6AC)
+val TechTealContainer = Color(0xFFB2DFDB) // Very Light Teal
+
+// Status Colors
+val StatusRed = Color(0xFFD32F2F)
+val StatusGreen = Color(0xFF388E3C)
+val StatusOrange = Color(0xFFF57C00) // Better visibility on white than Yellow
+val StatusGray = Color(0xFF757575)
+
+// Neutral / Backgrounds
+val LightBackground = Color(0xFFF5F5F5) // Off-white
+val LightSurface = Color(0xFFFFFFFF) // Pure White
+val LightSurfaceVariant = Color(0xFFE0E0E0) // Neutral Gray (No Purple Tint)
 val DarkBackground = Color(0xFF121212)
 val DarkSurface = Color(0xFF1E1E1E)
+
+// Text
+val TextBlack = Color(0xFF212121)
 val TextWhite = Color(0xFFEEEEEE)
-val TextGray = Color(0xFFB0B0B0)
-
-// Legacy Material Colors (Mapped to new palette where appropriate)
-val Purple80 = NeonBlue
-val PurpleGrey80 = TextGray
-val Pink80 = NeonRed
-
-val Purple40 = NeonBlueDark
-val PurpleGrey40 = Color(0xFF625b71)
-val Pink40 = Color(0xFF7D5260)

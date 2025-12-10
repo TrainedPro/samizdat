@@ -5,7 +5,7 @@ import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.os.ParcelFileDescriptor
 import android.os.Process
-import android.util.Log
+import com.fyp.resilientp2p.data.LogLevel
 import java.io.IOException
 import java.io.OutputStream
 
@@ -13,7 +13,11 @@ import java.io.OutputStream
  * When created, you must pass a [ParcelFileDescriptor]. Once [start] is called, the file descriptor
  * will be written to until [stop] is called.
  */
-class AudioRecorder(private val context: android.content.Context, file: ParcelFileDescriptor) {
+class AudioRecorder(
+        private val context: android.content.Context,
+        file: ParcelFileDescriptor,
+        private val log: (String, LogLevel) -> Unit
+) {
 
     companion object {
         private const val TAG = "AudioRecorder"
@@ -39,7 +43,7 @@ class AudioRecorder(private val context: android.content.Context, file: ParcelFi
     /** Starts recording audio. */
     fun start() {
         if (isRecording()) {
-            Log.w(TAG, "Already running")
+            log("[$TAG] Already running", LogLevel.WARN)
             return
         }
 
@@ -48,7 +52,7 @@ class AudioRecorder(private val context: android.content.Context, file: ParcelFi
                         android.Manifest.permission.RECORD_AUDIO
                 ) != android.content.pm.PackageManager.PERMISSION_GRANTED
         ) {
-            Log.e(TAG, "RECORD_AUDIO permission missing")
+            log("[$TAG] RECORD_AUDIO permission missing", LogLevel.ERROR)
             return
         }
 
@@ -56,7 +60,7 @@ class AudioRecorder(private val context: android.content.Context, file: ParcelFi
         thread = Thread {
             Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO)
 
-            val buffer = Buffer()
+            val buffer = Buffer(log)
             val record =
                     AudioRecord(
                             MediaRecorder.AudioSource.DEFAULT,
@@ -67,7 +71,7 @@ class AudioRecorder(private val context: android.content.Context, file: ParcelFi
                     )
 
             if (record.state != AudioRecord.STATE_INITIALIZED) {
-                Log.w(TAG, "Failed to start recording")
+                log("[$TAG] Failed to start recording", LogLevel.WARN)
                 isAlive = false
                 // The following lines were part of the user's instruction but refer to undefined
                 // variables
@@ -95,25 +99,25 @@ class AudioRecorder(private val context: android.content.Context, file: ParcelFi
                             outputStream.write(buffer.data, 0, len)
                             outputStream.flush()
                         } catch (e: IOException) {
-                            Log.e(TAG, "Error writing to output stream: ${e.message}", e)
+                            log("[$TAG] Error writing to output stream: ${e.message}", LogLevel.ERROR)
                             // Optionally, break the loop or handle the error further
                             break
                         }
                     } else {
-                        Log.w(TAG, "Unexpected length returned: $len")
+                        log("[$TAG] Unexpected length returned: $len", LogLevel.WARN)
                     }
                 }
             } catch (e: IOException) {
                 // This usually happens if the peer disconnects or the pipe breaks.
                 // We log as warning instead of error to reduce noise, as it's an expected condition
                 // during disconnects.
-                Log.w(TAG, "Audio stream ended/broke: ${e.message}")
+                log("[$TAG] Audio stream ended/broke: ${e.message}", LogLevel.WARN)
             } finally {
                 stopInternal()
                 try {
                     record.stop()
                 } catch (e: IllegalStateException) {
-                    Log.e(TAG, "Failed to stop AudioRecord", e)
+                    log("[$TAG] Failed to stop AudioRecord: ${e.message}", LogLevel.ERROR)
                 }
                 record.release()
             }
@@ -126,7 +130,7 @@ class AudioRecorder(private val context: android.content.Context, file: ParcelFi
         try {
             outputStream.close()
         } catch (e: IOException) {
-            Log.e(TAG, "Failed to close output stream", e)
+            log("[$TAG] Failed to close output stream: ${e.message}", LogLevel.ERROR)
         }
     }
 
@@ -138,12 +142,12 @@ class AudioRecorder(private val context: android.content.Context, file: ParcelFi
             // Wait max 1000ms for thread to die, then give up to avoid UI freeze
             thread?.join(1000)
         } catch (e: InterruptedException) {
-            Log.e(TAG, "Interrupted while joining AudioRecorder thread", e)
+            log("[$TAG] Interrupted while joining AudioRecorder thread: ${e.message}", LogLevel.ERROR)
             Thread.currentThread().interrupt()
         }
     }
 
-    private class Buffer : AudioBuffer() {
+    private class Buffer(log: (String, LogLevel) -> Unit) : AudioBuffer(log) {
         override fun validSize(size: Int): Boolean {
             return size != AudioRecord.ERROR && size != AudioRecord.ERROR_BAD_VALUE
         }

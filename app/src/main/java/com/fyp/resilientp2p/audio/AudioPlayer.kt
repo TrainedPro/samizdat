@@ -3,7 +3,7 @@ package com.fyp.resilientp2p.audio
 import android.media.AudioFormat
 import android.media.AudioTrack
 import android.os.Process
-import android.util.Log
+import com.fyp.resilientp2p.data.LogLevel
 import java.io.IOException
 import java.io.InputStream
 
@@ -11,7 +11,7 @@ import java.io.InputStream
  * A fire-once class. When created, you must pass a [InputStream]. Once [start] is called, the input
  * stream will be read from until either [stop] is called or the stream ends.
  */
-open class AudioPlayer(private val inputStream: InputStream) {
+open class AudioPlayer(private val inputStream: InputStream, private val log: (String, LogLevel) -> Unit) {
 
     companion object {
         private const val TAG = "AudioPlayer"
@@ -37,7 +37,7 @@ open class AudioPlayer(private val inputStream: InputStream) {
         thread = Thread {
             Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO)
 
-            val buffer = Buffer()
+            val buffer = Buffer(log)
             val audioTrack =
                     android.media.AudioTrack.Builder()
                             .setAudioAttributes(
@@ -67,7 +67,7 @@ open class AudioPlayer(private val inputStream: InputStream) {
                     audioTrack.write(data, 0, len)
                 }
             } catch (e: IOException) {
-                Log.e(TAG, "Exception with playing stream", e)
+                log("[$TAG] Exception with playing stream: ${e.message}", LogLevel.ERROR)
             } finally {
                 stopInternal()
                 audioTrack.release()
@@ -82,7 +82,7 @@ open class AudioPlayer(private val inputStream: InputStream) {
         try {
             inputStream.close()
         } catch (e: IOException) {
-            Log.e(TAG, "Failed to close input stream", e)
+            log("[$TAG] Failed to close input stream: ${e.message}", LogLevel.ERROR)
         }
     }
 
@@ -92,7 +92,7 @@ open class AudioPlayer(private val inputStream: InputStream) {
         try {
             thread?.join()
         } catch (e: InterruptedException) {
-            Log.e(TAG, "Interrupted while joining AudioRecorder thread", e)
+            log("[$TAG] Interrupted while joining AudioRecorder thread: ${e.message}", LogLevel.ERROR)
             Thread.currentThread().interrupt()
         }
     }
@@ -100,7 +100,7 @@ open class AudioPlayer(private val inputStream: InputStream) {
     /** The stream has now ended. */
     protected open fun onFinish() {}
 
-    private class Buffer : AudioBuffer() {
+    private class Buffer(log: (String, LogLevel) -> Unit) : AudioBuffer(log) {
         override fun validSize(size: Int): Boolean {
             return size != AudioTrack.ERROR && size != AudioTrack.ERROR_BAD_VALUE
         }

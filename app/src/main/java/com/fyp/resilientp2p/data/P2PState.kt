@@ -14,5 +14,7 @@ data class P2PState(
         val isMeshMaintenanceActive: Boolean = true,
         val isHybridMode: Boolean = false,
         val isLowPower: Boolean = false,
-        val logs: List<String> = emptyList()
+        val logs: List<LogEntry> = emptyList(),
+        val logLevel: LogLevel = LogLevel.INFO,
+        val localDeviceName: String = "Unknown"
 )

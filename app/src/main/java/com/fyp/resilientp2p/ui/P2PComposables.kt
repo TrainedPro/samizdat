@@ -4,15 +4,17 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.*
 import androidx.compose.material3.MaterialTheme.colorScheme
 import androidx.compose.runtime.*
@@ -27,6 +29,7 @@ import androidx.compose.ui.unit.sp
 import com.fyp.resilientp2p.data.RouteInfo
 import com.fyp.resilientp2p.managers.P2PManager
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ResilientP2PApp(p2pManager: P2PManager, onExportLogs: () -> Unit) {
         val state by p2pManager.state.collectAsState()
@@ -46,133 +49,192 @@ fun ResilientP2PApp(p2pManager: P2PManager, onExportLogs: () -> Unit) {
                 }
         }
 
-        // Chat State
+        // Dialog States
         var showChatDialog by remember { mutableStateOf(false) }
         var chatTargetId by remember { mutableStateOf<String?>(null) }
+        var showAdvancedOptions by remember { mutableStateOf(false) }
+        var showMenu by remember { mutableStateOf(false) }
 
         val isConnected = state.connectedEndpoints.isNotEmpty()
         val scrollState = rememberScrollState()
 
-        val activePeerId = state.connectedEndpoints.firstOrNull()
-
-        Column(
-                modifier =
-                        Modifier.fillMaxSize()
-                                .background(colorScheme.background)
-                                .statusBarsPadding()
-                                .padding(16.dp)
-                                .verticalScroll(scrollState)
-        ) {
-                // --- Header Section ---
-                DeviceStatusCard(
-                        deviceName = p2pManager.getLocalDeviceName(),
-                        connectionQuality = if (isConnected) (bandwidthInfo?.quality ?: 0) else 0
-                )
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // --- Controls Section ---
-                Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.Center
+        Scaffold(
+                topBar = {
+                        CenterAlignedTopAppBar(
+                                title = {
+                                        Text(
+                                                "Resilient Mesh",
+                                                fontWeight = FontWeight.Bold,
+                                                style = MaterialTheme.typography.titleLarge
+                                        )
+                                },
+                                colors =
+                                        TopAppBarDefaults.topAppBarColors(
+                                                containerColor = colorScheme.primaryContainer,
+                                                titleContentColor = colorScheme.onPrimaryContainer
+                                        ),
+                                actions = {
+                                        IconButton(onClick = { showMenu = !showMenu }) {
+                                                Icon(
+                                                        imageVector = Icons.Default.MoreVert,
+                                                        contentDescription = "Options"
+                                                )
+                                        }
+                                        DropdownMenu(
+                                                expanded = showMenu,
+                                                onDismissRequest = { showMenu = false }
+                                        ) {
+                                                DropdownMenuItem(
+                                                        text = { Text("Advanced Options") },
+                                                        onClick = {
+                                                                showMenu = false
+                                                                showAdvancedOptions = true
+                                                        }
+                                                )
+                                                DropdownMenuItem(
+                                                        text = { Text("Exit App") },
+                                                        onClick = {
+                                                                showMenu = false
+                                                                p2pManager.stop()
+                                                                kotlin.system.exitProcess(0)
+                                                        }
+                                                )
+                                        }
+                                }
+                        )
+                }
+        ) { innerPadding ->
+                Column(
+                        modifier =
+                                Modifier.fillMaxSize()
+                                        .background(colorScheme.background)
+                                        .padding(innerPadding)
+                                        .padding(16.dp)
+                                        .verticalScroll(scrollState)
                 ) {
-                        // Advertising Button
-                        Button(
-                                onClick = {
-                                        if (state.isAdvertising) {
-                                                p2pManager.stopAdvertising()
-                                        } else {
-                                                p2pManager.startAdvertising()
-                                        }
-                                },
-                                modifier = Modifier.weight(1f).height(56.dp).padding(end = 8.dp),
-                                colors =
-                                        ButtonDefaults.buttonColors(
-                                                containerColor =
-                                                        if (state.isAdvertising) colorScheme.error
-                                                        else colorScheme.primary
-                                        ),
-                                shape = RoundedCornerShape(12.dp),
-                                elevation = ButtonDefaults.buttonElevation(8.dp)
+                        // --- Header Section ---
+                        DeviceStatusCard(
+                                deviceName =
+                                        state.localDeviceName, // Use actual local name from state
+                                connectionQuality =
+                                        if (isConnected) (bandwidthInfo?.quality ?: 0) else 0
+                        )
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        // --- Controls Section ---
+                        Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.Center
                         ) {
-                                Text(
-                                        text =
-                                                if (state.isAdvertising) "Stop Adv."
-                                                else "Start Adv.",
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 14.sp
-                                )
+                                // Advertising Button
+                                Button(
+                                        onClick = {
+                                                if (state.isAdvertising) {
+                                                        p2pManager.stopAdvertising()
+                                                } else {
+                                                        p2pManager.startAdvertising()
+                                                }
+                                        },
+                                        modifier =
+                                                Modifier.weight(1f)
+                                                        .height(56.dp)
+                                                        .padding(end = 8.dp),
+                                        colors =
+                                                ButtonDefaults.buttonColors(
+                                                        containerColor =
+                                                                if (state.isAdvertising)
+                                                                        colorScheme.error
+                                                                else colorScheme.primary
+                                                ),
+                                        shape = RoundedCornerShape(12.dp),
+                                        elevation = ButtonDefaults.buttonElevation(8.dp)
+                                ) {
+                                        Text(
+                                                text =
+                                                        if (state.isAdvertising) "Stop Adv."
+                                                        else "Start Adv.",
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 14.sp
+                                        )
+                                }
+
+                                // Discovery Button
+                                Button(
+                                        onClick = {
+                                                if (state.isDiscovering) {
+                                                        p2pManager.stopDiscovery()
+                                                } else {
+                                                        p2pManager.startDiscovery()
+                                                }
+                                        },
+                                        modifier =
+                                                Modifier.weight(1f)
+                                                        .height(56.dp)
+                                                        .padding(start = 8.dp),
+                                        colors =
+                                                ButtonDefaults.buttonColors(
+                                                        containerColor =
+                                                                if (state.isDiscovering)
+                                                                        colorScheme.error
+                                                                else colorScheme.secondary
+                                                ),
+                                        shape = RoundedCornerShape(12.dp),
+                                        elevation = ButtonDefaults.buttonElevation(8.dp)
+                                ) {
+                                        Text(
+                                                text =
+                                                        if (state.isDiscovering) "Stop Disc."
+                                                        else "Start Disc.",
+                                                fontWeight = FontWeight.Bold,
+                                                fontSize = 14.sp
+                                        )
+                                }
                         }
 
-                        // Discovery Button
-                        Button(
-                                onClick = {
-                                        if (state.isDiscovering) {
-                                                p2pManager.stopDiscovery()
-                                        } else {
-                                                p2pManager.startDiscovery()
-                                        }
-                                },
-                                modifier = Modifier.weight(1f).height(56.dp).padding(start = 8.dp),
-                                colors =
-                                        ButtonDefaults.buttonColors(
-                                                containerColor =
-                                                        if (state.isDiscovering) colorScheme.error
-                                                        else colorScheme.secondary
-                                        ),
-                                shape = RoundedCornerShape(12.dp),
-                                elevation = ButtonDefaults.buttonElevation(8.dp)
-                        ) {
-                                Text(
-                                        text =
-                                                if (state.isDiscovering) "Stop Disc."
-                                                else "Start Disc.",
-                                        fontWeight = FontWeight.Bold,
-                                        fontSize = 14.sp
-                                )
+                        // Stop All Button (Conditional)
+                        val isBusy =
+                                state.isAdvertising ||
+                                        state.isDiscovering ||
+                                        state.connectedEndpoints.isNotEmpty()
+                        AnimatedVisibility(visible = isBusy) {
+                                Button(
+                                        onClick = { p2pManager.stopAll() },
+                                        modifier =
+                                                Modifier.fillMaxWidth()
+                                                        .padding(top = 12.dp)
+                                                        .height(40.dp),
+                                        colors =
+                                                ButtonDefaults.buttonColors(
+                                                        containerColor = colorScheme.errorContainer
+                                                ),
+                                        shape = RoundedCornerShape(8.dp)
+                                ) {
+                                        Text(
+                                                "STOP ALL ACTIVITY",
+                                                fontSize = 12.sp,
+                                                color = colorScheme.onErrorContainer
+                                        )
+                                }
                         }
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        // --- Dashboard & Logs ---
+                        DashboardContent(
+                                transferProgress = transferProgressEvent?.progress ?: 0,
+                                tracePath = tracePath,
+                                logs = state.logs,
+                                onExportLogs = onExportLogs,
+                                onClearLogs = { p2pManager.clearLogs() },
+                                knownPeers = state.knownPeers,
+                                connectedEndpoints = state.connectedEndpoints.toSet(),
+                                onPeerClick = { peerId ->
+                                        chatTargetId = peerId
+                                        showChatDialog = true
+                                }
+                        )
                 }
-
-                // Stop All Button (Conditional)
-                val isBusy =
-                        state.isAdvertising ||
-                                state.isDiscovering ||
-                                state.connectedEndpoints.isNotEmpty()
-                AnimatedVisibility(visible = isBusy) {
-                        Button(
-                                onClick = { p2pManager.stopAll() },
-                                modifier =
-                                        Modifier.fillMaxWidth().padding(top = 12.dp).height(40.dp),
-                                colors =
-                                        ButtonDefaults.buttonColors(
-                                                containerColor = colorScheme.errorContainer
-                                        ),
-                                shape = RoundedCornerShape(8.dp)
-                        ) {
-                                Text(
-                                        "STOP ALL ACTIVITY",
-                                        fontSize = 12.sp,
-                                        color = colorScheme.onErrorContainer
-                                )
-                        }
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // --- Dashboard & Logs ---
-                DashboardContent(
-                        transferProgress = transferProgressEvent?.progress ?: 0,
-                        tracePath = tracePath,
-                        logs = state.logs,
-                        onExportLogs = onExportLogs,
-                        onClearLogs = { p2pManager.clearLogs() },
-                        knownPeers = state.knownPeers,
-                        connectedEndpoints = state.connectedEndpoints.toSet(),
-                        onPeerClick = { peerId ->
-                                chatTargetId = peerId
-                                showChatDialog = true
-                        }
-                )
         }
 
         if (showChatDialog && chatTargetId != null) {
@@ -180,10 +242,6 @@ fun ResilientP2PApp(p2pManager: P2PManager, onExportLogs: () -> Unit) {
                         peerId = chatTargetId!!,
                         onDismiss = { showChatDialog = false },
                         onSend = { msg ->
-                                android.util.Log.d(
-                                        "P2PUI",
-                                        "ChatDialog: onSend clicked with message: $msg, target: $chatTargetId"
-                                )
                                 if (chatTargetId == "BROADCAST") {
                                         p2pManager.broadcastMessage(msg)
                                 } else {
@@ -200,6 +258,140 @@ fun ResilientP2PApp(p2pManager: P2PManager, onExportLogs: () -> Unit) {
                         onStopAudio = { p2pManager.stopAudioStreaming() }
                 )
         }
+
+        if (showAdvancedOptions) {
+                AdvancedOptionsDialog(
+                        state = state,
+                        onDismiss = { showAdvancedOptions = false },
+                        onSetHybrid = { p2pManager.setHybridMode(it) },
+                        onSetManual = { p2pManager.setManualConnection(it) },
+                        onSetLowPower = { p2pManager.setLowPower(it) },
+                        onSetLogLevel = { p2pManager.setLogLevel(it) }
+                )
+        }
+}
+
+@Composable
+fun AdvancedOptionsDialog(
+        state: com.fyp.resilientp2p.data.P2PState,
+        onDismiss: () -> Unit,
+        onSetHybrid: (Boolean) -> Unit,
+        onSetManual: (Boolean) -> Unit,
+        onSetLowPower: (Boolean) -> Unit,
+        onSetLogLevel: (com.fyp.resilientp2p.data.LogLevel) -> Unit
+) {
+        AlertDialog(
+                onDismissRequest = onDismiss,
+                title = { Text("Advanced Options") },
+                text = {
+                        Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                                // Log Level Dropdown
+                                Text(
+                                        "Log Level",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.primary
+                                )
+                                var expanded by remember { mutableStateOf(false) }
+                                Box(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+                                        OutlinedButton(
+                                                onClick = { expanded = true },
+                                                modifier = Modifier.fillMaxWidth()
+                                        ) { Text(state.logLevel.name) }
+                                        DropdownMenu(
+                                                expanded = expanded,
+                                                onDismissRequest = { expanded = false }
+                                        ) {
+                                                com.fyp.resilientp2p.data.LogLevel.values()
+                                                        .forEach { level ->
+                                                                // Filter mostly useful levels for
+                                                                // UI: INFO, DEBUG, TRACE
+                                                                // Or show all.
+                                                                if (level ==
+                                                                                com.fyp.resilientp2p
+                                                                                        .data
+                                                                                        .LogLevel
+                                                                                        .INFO ||
+                                                                                level ==
+                                                                                        com.fyp
+                                                                                                .resilientp2p
+                                                                                                .data
+                                                                                                .LogLevel
+                                                                                                .DEBUG ||
+                                                                                level ==
+                                                                                        com.fyp
+                                                                                                .resilientp2p
+                                                                                                .data
+                                                                                                .LogLevel
+                                                                                                .TRACE
+                                                                ) {
+                                                                        DropdownMenuItem(
+                                                                                text = {
+                                                                                        Text(
+                                                                                                level.name
+                                                                                        )
+                                                                                },
+                                                                                onClick = {
+                                                                                        onSetLogLevel(
+                                                                                                level
+                                                                                        )
+                                                                                        expanded =
+                                                                                                false
+                                                                                }
+                                                                        )
+                                                                }
+                                                        }
+                                        }
+                                }
+                                Text(
+                                        "Select 'TRACE' to see all traffic details.",
+                                        style = MaterialTheme.typography.bodySmall
+                                )
+
+                                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+
+                                // Toggles
+                                Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                                ) {
+                                        Text(
+                                                "Hybrid Mode (WiFi+BT)",
+                                                modifier = Modifier.weight(1f)
+                                        )
+                                        Switch(
+                                                checked = state.isHybridMode,
+                                                onCheckedChange = onSetHybrid
+                                        )
+                                }
+
+                                Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                                ) {
+                                        Text(
+                                                "Manual Connection Confirm",
+                                                modifier = Modifier.weight(1f)
+                                        )
+                                        Switch(
+                                                checked = state.isManualConnectionEnabled,
+                                                onCheckedChange = onSetManual
+                                        )
+                                }
+
+                                Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
+                                ) {
+                                        Text("Low Power Mode", modifier = Modifier.weight(1f))
+                                        Switch(
+                                                checked = state.isLowPower,
+                                                onCheckedChange = onSetLowPower
+                                        )
+                                }
+                        }
+                },
+                confirmButton = { TextButton(onClick = onDismiss) { Text("CLOSE") } }
+        )
 }
 
 @Composable
@@ -238,10 +430,12 @@ fun DeviceStatusCard(deviceName: String, connectionQuality: Int) {
                                                                 !active ->
                                                                         colorScheme.outlineVariant
                                                                 connectionQuality == 3 ->
-                                                                        colorScheme.secondary
+                                                                        com.fyp.resilientp2p.ui
+                                                                                .theme.StatusGreen
                                                                 connectionQuality == 2 ->
-                                                                        Color.Yellow
-                                                                else -> colorScheme.tertiary
+                                                                        com.fyp.resilientp2p.ui
+                                                                                .theme.StatusOrange
+                                                                else -> colorScheme.error
                                                         }
                                                 Box(
                                                         modifier =
@@ -265,7 +459,7 @@ fun DeviceStatusCard(deviceName: String, connectionQuality: Int) {
 fun DashboardContent(
         transferProgress: Int,
         tracePath: String,
-        logs: List<String>,
+        logs: List<com.fyp.resilientp2p.data.LogEntry>,
         onExportLogs: () -> Unit,
         onClearLogs: () -> Unit,
         knownPeers: Map<String, RouteInfo>,
@@ -361,8 +555,17 @@ fun MeshContactsSection(
                                                                         )
                                                                         .background(
                                                                                 if (isDirect)
-                                                                                        Color.Green
-                                                                                else Color.Cyan
+                                                                                        com.fyp
+                                                                                                .resilientp2p
+                                                                                                .ui
+                                                                                                .theme
+                                                                                                .StatusGreen
+                                                                                else
+                                                                                        com.fyp
+                                                                                                .resilientp2p
+                                                                                                .ui
+                                                                                                .theme
+                                                                                                .TechTealSecondary
                                                                         )
                                                 )
                                                 Spacer(modifier = Modifier.width(12.dp))
@@ -542,7 +745,11 @@ fun ChatDialog(
 }
 
 @Composable
-fun LogsSection(logs: List<String>, onExportLogs: () -> Unit, onClearLogs: () -> Unit) {
+fun LogsSection(
+        logs: List<com.fyp.resilientp2p.data.LogEntry>,
+        onExportLogs: () -> Unit,
+        onClearLogs: () -> Unit
+) {
         var isLogsExpanded by remember { mutableStateOf(false) }
 
         val logsHeight by
@@ -608,30 +815,98 @@ fun LogsSection(logs: List<String>, onExportLogs: () -> Unit, onClearLogs: () ->
                                 modifier =
                                         Modifier.fillMaxWidth()
                                                 .height(logsHeight)
-                                                .clip(RoundedCornerShape(8.dp))
                                                 .background(
-                                                        colorScheme.onSurfaceVariant.copy(
-                                                                alpha = 0.1f
-                                                        )
+                                                        Color.White, // Explicit White as requested
+                                                        RoundedCornerShape(8.dp)
+                                                )
+                                                .border(
+                                                        1.dp,
+                                                        Color.LightGray,
+                                                        RoundedCornerShape(8.dp)
                                                 )
                                                 .padding(8.dp)
                         ) {
-                                val listState = rememberLazyListState()
+                                LazyColumn(
+                                        reverseLayout = true,
+                                        modifier = Modifier.fillMaxSize()
+                                ) {
+                                        items(logs.reversed()) { entry ->
+                                                val color =
+                                                        when (entry.logType) {
+                                                                com.fyp.resilientp2p.data.LogType
+                                                                        .CHAT -> {
+                                                                        if (entry.message
+                                                                                        .startsWith(
+                                                                                                "[SENT]"
+                                                                                        )
+                                                                        )
+                                                                                com.fyp.resilientp2p
+                                                                                        .ui.theme
+                                                                                        .TechBluePrimary // Blue for Sent
+                                                                        else
+                                                                                com.fyp.resilientp2p
+                                                                                        .ui.theme
+                                                                                        .TechTealSecondary // Teal for Received
+                                                                }
+                                                                else ->
+                                                                        when (entry.level) {
+                                                                                com.fyp.resilientp2p
+                                                                                        .data
+                                                                                        .LogLevel
+                                                                                        .ERROR ->
+                                                                                        colorScheme
+                                                                                                .error
+                                                                                com.fyp.resilientp2p
+                                                                                        .data
+                                                                                        .LogLevel
+                                                                                        .WARN ->
+                                                                                        com.fyp
+                                                                                                .resilientp2p
+                                                                                                .ui
+                                                                                                .theme
+                                                                                                .StatusOrange
+                                                                                com.fyp.resilientp2p
+                                                                                        .data
+                                                                                        .LogLevel
+                                                                                        .INFO ->
+                                                                                        Color.Black // Black for System Info on White BG
+                                                                                com.fyp.resilientp2p
+                                                                                        .data
+                                                                                        .LogLevel
+                                                                                        .DEBUG ->
+                                                                                        com.fyp
+                                                                                                .resilientp2p
+                                                                                                .ui
+                                                                                                .theme
+                                                                                                .StatusGray
+                                                                                com.fyp.resilientp2p
+                                                                                        .data
+                                                                                        .LogLevel
+                                                                                        .TRACE ->
+                                                                                        Color.LightGray
+                                                                                else -> Color.Gray
+                                                                        }
+                                                        }
 
-                                LaunchedEffect(logs.size) {
-                                        if (logs.isNotEmpty()) {
-                                                listState.animateScrollToItem(logs.size - 1)
-                                        }
-                                }
+                                                // Format: HH:MM:SS [LEVEL] Message
+                                                // Chat: HH:MM:SS [CHAT] Message
+                                                val tag =
+                                                        if (entry.logType ==
+                                                                        com.fyp.resilientp2p.data
+                                                                                .LogType.CHAT
+                                                        ) {
+                                                                if (entry.peerId != null) "[${entry.peerId}]"
+                                                                else "[CHAT]"
+                                                        } else "[${entry.level.name}]"
 
-                                LazyColumn(state = listState) {
-                                        items(logs) { log ->
                                                 Text(
-                                                        text = "> $log",
-                                                        color = colorScheme.secondary,
+                                                        text =
+                                                                "${entry.formattedTimestamp} $tag ${entry.message}",
+                                                        color = color,
                                                         fontFamily = FontFamily.Monospace,
                                                         fontSize = 10.sp,
-                                                        lineHeight = 14.sp
+                                                        lineHeight = 12.sp,
+                                                        modifier = Modifier.padding(vertical = 1.dp)
                                                 )
                                         }
                                 }

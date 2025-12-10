@@ -152,4 +152,8 @@ data class Packet(
         result = 31 * result + sequenceNumber.hashCode()
         return result
     }
+
+    override fun toString(): String {
+        return "Packet(id=${id.take(8)}, type=$type, src=$sourceId, dest=$destId, ts=$timestamp)"
+    }
 }

@@ -5,7 +5,12 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 
-@Database(entities = [LogEntry::class, PacketEntity::class], version = 2, exportSchema = false)
+@Database(
+        entities = [LogEntry::class, PacketEntity::class],
+        version = 4,
+        exportSchema = false
+) // Bump version to 4 for LogEntry additions
+@androidx.room.TypeConverters(Converters::class)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun logDao(): LogDao
     abstract fun packetDao(): PacketDao
@@ -22,8 +27,9 @@ abstract class AppDatabase : RoomDatabase() {
                                                 AppDatabase::class.java,
                                                 "p2p_testbed_db"
                                         )
-                                        // .fallbackToDestructiveMigration() // REMOVED: Data loss
-                                        // risk
+                                        .fallbackToDestructiveMigration() // Enabled to handle
+                                        // schema changes
+                                        // (LogEntry fields)
                                         .build()
                         INSTANCE = instance
                         instance

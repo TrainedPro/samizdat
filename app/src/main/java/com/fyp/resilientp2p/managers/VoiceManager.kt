@@ -2,12 +2,12 @@ package com.fyp.resilientp2p.managers
 
 import android.content.Context
 import android.os.ParcelFileDescriptor
-import android.util.Log
 import com.fyp.resilientp2p.audio.AudioPlayer
 import com.fyp.resilientp2p.audio.AudioRecorder
+import com.fyp.resilientp2p.data.LogLevel
 import java.io.InputStream
 
-class VoiceManager(private val context: Context) {
+class VoiceManager(private val context: Context, private val log: (String, LogLevel) -> Unit) {
 
     private var audioRecorder: AudioRecorder? = null
     private var audioPlayer: AudioPlayer? = null
@@ -22,7 +22,7 @@ class VoiceManager(private val context: Context) {
      */
     fun startRecording(): ParcelFileDescriptor? {
         if (audioRecorder != null && audioRecorder!!.isRecording()) {
-            Log.w(TAG, "Already recording")
+            log("[$TAG] Already recording", LogLevel.WARN)
             return null
         }
 
@@ -31,13 +31,13 @@ class VoiceManager(private val context: Context) {
             val readSide = pipe[0]
             val writeSide = pipe[1]
 
-            audioRecorder = AudioRecorder(context, writeSide)
+            audioRecorder = AudioRecorder(context, writeSide, log)
             audioRecorder?.start()
 
-            Log.d(TAG, "AudioRecorder started successfully")
+            log("[$TAG] AudioRecorder started successfully", LogLevel.DEBUG)
             return readSide
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to create pipe or start recorder", e)
+            log("[$TAG] Failed to create pipe or start recorder: ${e.message}", LogLevel.ERROR)
             return null
         }
     }
@@ -52,7 +52,7 @@ class VoiceManager(private val context: Context) {
             stopPlaying()
         }
 
-        audioPlayer = AudioPlayer(inputStream)
+        audioPlayer = AudioPlayer(inputStream, log)
         audioPlayer?.start()
     }
 

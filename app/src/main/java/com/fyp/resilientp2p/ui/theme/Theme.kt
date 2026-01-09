@@ -74,7 +74,7 @@ fun ResilientP2PTestbedTheme(
         val view = LocalView.current
         if (!view.isInEditMode) {
                 SideEffect {
-                        val window = (view.context as Activity).window
+                        val window = (view.context as? Activity)?.window ?: return@SideEffect
                         if (Build.VERSION.SDK_INT < 35) {
                                 try {
                                         val method =

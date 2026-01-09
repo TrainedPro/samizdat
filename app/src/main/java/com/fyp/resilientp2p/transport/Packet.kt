@@ -31,50 +31,59 @@ data class Packet(
 ) {
     fun toBytes(): ByteArray {
         val baos = ByteArrayOutputStream()
-        val dos = DataOutputStream(baos)
+        DataOutputStream(baos).use { dos ->
+            // Helper to write large strings
+            fun writeString(str: String) {
+                val bytes = str.toByteArray(StandardCharsets.UTF_8)
+                dos.writeInt(bytes.size)
+                dos.write(bytes)
+            }
 
-        // Helper to write large strings
-        fun writeString(str: String) {
-            val bytes = str.toByteArray(StandardCharsets.UTF_8)
-            dos.writeInt(bytes.size)
-            dos.write(bytes)
+            // Optimize ID (UUID) -> String (UTF) for safety
+            writeString(id)
+
+            writeString(type.name)
+            dos.writeLong(timestamp)
+            writeString(sourceId)
+            writeString(destId)
+
+            dos.writeInt(payload.size)
+            if (payload.isNotEmpty()) {
+                dos.write(payload)
+            }
+
+            dos.writeInt(ttl)
+            dos.writeLong(sequenceNumber)
+
+            dos.writeInt(trace.size)
+            trace.forEach { hop ->
+                writeString(hop.peerId)
+                dos.writeInt(hop.rssi)
+            }
         }
-
-        // Optimize ID (UUID) -> String (UTF) for safety
-        writeString(id)
-
-        writeString(type.name)
-        dos.writeLong(timestamp)
-        writeString(sourceId)
-        writeString(destId)
-
-        dos.writeInt(payload.size)
-        if (payload.isNotEmpty()) {
-            dos.write(payload)
-        }
-
-        dos.writeInt(ttl)
-        dos.writeLong(sequenceNumber)
-
-        dos.writeInt(trace.size)
-        trace.forEach { hop ->
-            writeString(hop.peerId)
-            dos.writeInt(hop.rssi)
-        }
-
         return baos.toByteArray()
     }
 
     // Binary serialization only
 
     companion object {
-        fun fromBytes(bytes: ByteArray): Packet {
-            val bais = ByteArrayInputStream(bytes)
-            val dis = DataInputStream(bais)
+        private const val MAX_STRING_LENGTH = 1024 // 1KB max per string
+        private const val MAX_PAYLOAD_SIZE = 1 * 1024 * 1024 // 1MB max payload
+        private const val MAX_TRACE_SIZE = 256 // Max hops in trace
+        private const val MAX_TOTAL_PACKET_SIZE = 2 * 1024 * 1024 // 2MB aggregate limit
 
-            // Helper to read large strings
+        fun fromBytes(bytes: ByteArray): Packet {
+            // Aggregate size check to prevent OOM DoS
+            if (bytes.size > MAX_TOTAL_PACKET_SIZE) {
+                throw IllegalArgumentException("Packet too large: ${bytes.size} bytes")
+            }
+            return DataInputStream(ByteArrayInputStream(bytes)).use { dis ->
+            // Helper to read large strings with validation
             fun readString(): String {
                 val len = dis.readInt()
+                if (len < 0 || len > MAX_STRING_LENGTH || len > dis.available()) {
+                    throw IllegalArgumentException("Invalid string length: $len (available: ${dis.available()})")
+                }
                 val b = ByteArray(len)
                 dis.readFully(b)
                 return String(b, StandardCharsets.UTF_8)
@@ -82,22 +91,42 @@ data class Packet(
 
             // Deserialize ID (String)
             val id = readString()
+            if (id.isBlank()) {
+                throw IllegalArgumentException("Packet ID cannot be blank")
+            }
 
-            val type = PacketType.valueOf(readString())
+            val typeStr = readString()
+            val type =
+                    try {
+                        PacketType.valueOf(typeStr)
+                    } catch (e: IllegalArgumentException) {
+                        throw IllegalArgumentException("Unknown packet type: $typeStr")
+                    }
             val timestamp = dis.readLong()
             val sourceId = readString()
             val destId = readString()
-
+            if (sourceId.isBlank() || destId.isBlank()) {
+                throw IllegalArgumentException("Empty or blank sourceId or destId")
+            }
             val payloadSize = dis.readInt()
+            if (payloadSize < 0 || payloadSize > MAX_PAYLOAD_SIZE) {
+                throw IllegalArgumentException("Invalid payload size: $payloadSize")
+            }
             val payload = ByteArray(payloadSize)
             if (payloadSize > 0) {
                 dis.readFully(payload)
             }
 
             val ttl = dis.readInt()
+            if (ttl < 0 || ttl > 255) {
+                throw IllegalArgumentException("Invalid TTL: $ttl")
+            }
             val sequenceNumber = dis.readLong()
 
             val traceSize = dis.readInt()
+            if (traceSize < 0 || traceSize > MAX_TRACE_SIZE) {
+                throw IllegalArgumentException("Invalid trace size: $traceSize")
+            }
             val trace = ArrayList<Hop>(traceSize)
             for (i in 0 until traceSize) {
                 val peerId = readString()
@@ -105,7 +134,7 @@ data class Packet(
                 trace.add(Hop(peerId, rssi))
             }
 
-            return Packet(
+            Packet(
                     id = id,
                     type = type,
                     timestamp = timestamp,
@@ -116,6 +145,7 @@ data class Packet(
                     trace = trace,
                     sequenceNumber = sequenceNumber
             )
+            } // use
         }
 
         // Binary serialization only

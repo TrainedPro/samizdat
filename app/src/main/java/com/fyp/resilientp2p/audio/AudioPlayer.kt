@@ -33,6 +33,9 @@ open class AudioPlayer(private val inputStream: InputStream, private val log: (S
 
     /** Starts playing the stream. */
     fun start() {
+        if (isPlaying()) {
+            return
+        }
         isAlive = true
         thread = Thread {
             Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO)
@@ -58,13 +61,24 @@ open class AudioPlayer(private val inputStream: InputStream, private val log: (S
                             .setBufferSizeInBytes(buffer.size)
                             .setTransferMode(AudioTrack.MODE_STREAM)
                             .build()
+            // State check before play
+            if (audioTrack.state != AudioTrack.STATE_INITIALIZED) {
+                log("[$TAG] Failed to initialize AudioTrack", LogLevel.ERROR)
+                stopInternal()
+                audioTrack.release()
+                return@Thread
+            }
             audioTrack.play()
 
             var len: Int = 0
             try {
                 val data = buffer.data
                 while (isPlaying() && inputStream.read(data).also { len = it } > 0) {
-                    audioTrack.write(data, 0, len)
+                    val written = audioTrack.write(data, 0, len)
+                    if (written < 0) {
+                        log("[$TAG] AudioTrack.write error: $written", LogLevel.ERROR)
+                        break
+                    }
                 }
             } catch (e: IOException) {
                 log("[$TAG] Exception with playing stream: ${e.message}", LogLevel.ERROR)
@@ -89,12 +103,7 @@ open class AudioPlayer(private val inputStream: InputStream, private val log: (S
     /** Stops playing the stream. */
     fun stop() {
         stopInternal()
-        try {
-            thread?.join()
-        } catch (e: InterruptedException) {
-            log("[$TAG] Interrupted while joining AudioRecorder thread: ${e.message}", LogLevel.ERROR)
-            Thread.currentThread().interrupt()
-        }
+        // Non-blocking: let thread die naturally to avoid ANR
     }
 
     /** The stream has now ended. */

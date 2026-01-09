@@ -73,17 +73,8 @@ class AudioRecorder(
             if (record.state != AudioRecord.STATE_INITIALIZED) {
                 log("[$TAG] Failed to start recording", LogLevel.WARN)
                 isAlive = false
-                // The following lines were part of the user's instruction but refer to undefined
-                // variables
-                // (neighbors, sourceEndpointId, packet) in this context.
-                // To maintain syntactic correctness as per instructions, they are commented out.
-                // If these variables are meant to be defined elsewhere, please provide that
-                // context.
-                // neighbors[sourceEndpointId]?.let {
-                // it.lastSeen = System.currentTimeMillis()
-                // log("Updated lastSeen for $sourceEndpointId to ${it.lastSeen} (MsgType:
-                // ${packet.type})")
-                // }
+                stopInternal() // Close the stream to prevent leak
+                record.release() // Release AudioRecord to free native resources
                 return@Thread
             }
 
@@ -99,7 +90,10 @@ class AudioRecorder(
                             outputStream.write(buffer.data, 0, len)
                             outputStream.flush()
                         } catch (e: IOException) {
-                            log("[$TAG] Error writing to output stream: ${e.message}", LogLevel.ERROR)
+                            log(
+                                    "[$TAG] Error writing to output stream: ${e.message}",
+                                    LogLevel.ERROR
+                            )
                             // Optionally, break the loop or handle the error further
                             break
                         }
@@ -135,16 +129,12 @@ class AudioRecorder(
     }
 
     /** Stops recording audio. */
+    /** Stops recording audio. */
     fun stop() {
         stopInternal()
         thread?.interrupt() // Interrupt any blocking Read/Write
-        try {
-            // Wait max 1000ms for thread to die, then give up to avoid UI freeze
-            thread?.join(1000)
-        } catch (e: InterruptedException) {
-            log("[$TAG] Interrupted while joining AudioRecorder thread: ${e.message}", LogLevel.ERROR)
-            Thread.currentThread().interrupt()
-        }
+        // Non-blocking: let thread die naturally to avoid ANR
+        thread = null
     }
 
     private class Buffer(log: (String, LogLevel) -> Unit) : AudioBuffer(log) {

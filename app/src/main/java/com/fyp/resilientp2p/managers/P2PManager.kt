@@ -5,6 +5,7 @@ import android.util.Log
 import com.fyp.resilientp2p.data.Neighbor
 import com.fyp.resilientp2p.data.P2PState
 import com.fyp.resilientp2p.data.RouteInfo
+import com.fyp.resilientp2p.transport.MessageCache
 import com.fyp.resilientp2p.transport.Packet
 import com.fyp.resilientp2p.transport.PacketType
 import com.google.android.gms.nearby.Nearby
@@ -23,9 +24,12 @@ import com.google.android.gms.nearby.connection.PayloadCallback
 import com.google.android.gms.nearby.connection.PayloadTransferUpdate
 import com.google.android.gms.nearby.connection.Strategy
 import java.nio.charset.StandardCharsets
+import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -35,15 +39,25 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.isActive
 
 class P2PManager(private val context: Context) {
 
     private val connectionsClient: ConnectionsClient = Nearby.getConnectionsClient(context)
-    private val scope = CoroutineScope(Dispatchers.IO)
+    private var supervisorJob = SupervisorJob()
+    private var scope = CoroutineScope(Dispatchers.IO + supervisorJob)
+    private var routingJob: kotlinx.coroutines.Job? = null
 
     // Local Info
     // Use a unique name to prevent self-connection and manage duplicate links
-    private val localUsername = android.os.Build.MODEL
+    private val localUsername: String by lazy {
+        val prefs = context.getSharedPreferences("p2p_prefs", android.content.Context.MODE_PRIVATE)
+        prefs.getString("device_id", null) ?: run {
+            val newId = "${android.os.Build.MODEL}-${UUID.randomUUID().toString().take(8)}"
+            prefs.edit().putString("device_id", newId).apply()
+            newId
+        }
+    }
 
     // State
     private val _state = MutableStateFlow(P2PState(localDeviceName = localUsername))
@@ -63,9 +77,10 @@ class P2PManager(private val context: Context) {
     // Mesh Data
     private val neighbors = ConcurrentHashMap<String, Neighbor>() // endpointId -> Neighbor
     private val routingTable = ConcurrentHashMap<String, String>() // destId -> nextHopEndpointId
-    private val routingScores =
-            ConcurrentHashMap<String, Int>() // destId -> routeScore (Higher is better)
-    private val messageCache = ConcurrentHashMap<String, Long>() // packetId -> timestamp
+    private val routingScores = ConcurrentHashMap<String, Int>() // destId -> routeScore
+    private val routingLock = Any()
+    private val routeLastSeen = ConcurrentHashMap<String, Long>() // destId -> timestamp
+    private val messageCache = MessageCache(capacity = 2000) // 2000 items capacity
 
     // Configuration
     private val STRATEGY = Strategy.P2P_CLUSTER
@@ -73,6 +88,8 @@ class P2PManager(private val context: Context) {
     private val MAX_CONNECTIONS = 4
     private val STABILITY_WINDOW_MS = 15000L
 
+    // Track restartRadio job to prevent overlapping restarts
+    private var radioRestartJob: kotlinx.coroutines.Job? = null
     // Jobs
 
     // Optional Managers
@@ -94,13 +111,13 @@ class P2PManager(private val context: Context) {
 
                     // Update lastSeen for ANY activity (Bytes, Stream, File) to prevent Zombie
                     // detection during calls
-                    neighbors[endpointId]?.let { it.lastSeen = System.currentTimeMillis() }
+                    neighbors.computeIfPresent(endpointId) { _, neighbor -> neighbor.lastSeen.set(System.currentTimeMillis()); neighbor }
 
                     if (payload.type == Payload.Type.BYTES) {
                         try {
                             payload.asBytes()?.let { bytes ->
                                 val packet = Packet.fromBytes(bytes)
-                                handlePacket(packet, endpointId)
+                                try { handlePacket(packet, endpointId) } catch (e: Exception) { log("Error handling packet: ${e.message}", com.fyp.resilientp2p.data.LogLevel.ERROR) }
                             }
                         } catch (e: Exception) {
                             log("Error parsing packet from $endpointId: ${e.message}")
@@ -108,7 +125,18 @@ class P2PManager(private val context: Context) {
                     } else if (payload.type == Payload.Type.STREAM) {
                         log("Receiving audio stream from $endpointId")
                         payload.asStream()?.asInputStream()?.let { inputStream ->
-                            voiceManager?.startPlaying(inputStream)
+                            // TOCTOU FIX: Capture voiceManager reference locally
+                            val vm = voiceManager
+                            if (vm != null) {
+                                try {
+                                    vm.startPlaying(inputStream)
+                                } catch (e: Exception) {
+                                    inputStream.close()
+                                    log("Failed to start audio playback: ${e.message}")
+                                }
+                            } else {
+                                inputStream.close()  // Close if not used to prevent leak
+                            }
                         }
                     } else {
                         log("Unhandled Payload Type from $endpointId: ${payload.type}")
@@ -121,7 +149,7 @@ class P2PManager(private val context: Context) {
                 ) {
                     // Keep updating lastSeen during long transfers (like Audio Stream or Big File)
                     if (update.status == PayloadTransferUpdate.Status.IN_PROGRESS) {
-                        neighbors[endpointId]?.let { it.lastSeen = System.currentTimeMillis() }
+                        neighbors.computeIfPresent(endpointId) { _, neighbor -> neighbor.lastSeen.set(System.currentTimeMillis()); neighbor }
                     }
 
                     scope.launch {
@@ -144,6 +172,15 @@ class P2PManager(private val context: Context) {
                 override fun onConnectionInitiated(endpointId: String, info: ConnectionInfo) {
                     log("Connection Initiated: $endpointId (${info.endpointName})")
 
+                    // Limit Connections (synchronized to prevent TOCTOU race)
+                    synchronized(routingLock) {
+                        if (neighbors.size >= MAX_CONNECTIONS) {
+                            log("Max connections ($MAX_CONNECTIONS) reached. Rejecting $endpointId")
+                            connectionsClient.rejectConnection(endpointId)
+                            return
+                        }
+                    }
+
                     // Critical Self-Check
                     if (info.endpointName == localUsername) {
                         log("Refusing self-connection from $endpointId")
@@ -161,7 +198,7 @@ class P2PManager(private val context: Context) {
                         val existingNeighbor = neighbors[existingId]
                         val isAlive =
                                 existingNeighbor != null &&
-                                        (System.currentTimeMillis() - existingNeighbor.lastSeen <
+                                        (System.currentTimeMillis() - existingNeighbor.lastSeen.get() <
                                                 STABILITY_WINDOW_MS)
 
                         // Tie-Breaker Logic:
@@ -185,32 +222,41 @@ class P2PManager(private val context: Context) {
                         // Proactively cleanup the old "Zombie"
                         connectionsClient.disconnectFromEndpoint(existingId)
                         neighbors.remove(existingId)
-                        // Also clean routes immediately to prevent packets going to dead link
-                        val lostDestinations = routingTable.filterValues { it == existingId }.keys
-                        lostDestinations.forEach { dest ->
-                            routingTable.remove(dest)
-                            routingScores.remove(dest)
+                        // Also clean routes immediately - SYNCHRONIZED
+                        synchronized(routingLock) {
+                            val lostDestinations = routingTable.filterValues { it == existingId }.keys.toList()
+                            lostDestinations.forEach { dest ->
+                                routingTable.remove(dest)
+                                routingScores.remove(dest)
+                                routeLastSeen.remove(dest)
+                            }
                         }
                         updateConnectedEndpoints()
                         // Proceed to accept the new one below...
                     }
 
                     connectionsClient.acceptConnection(endpointId, payloadCallback)
-                    val newConnecting = _state.value.connectingEndpoints + endpointId
-                    updateState { it.copy(connectingEndpoints = newConnecting) }
+                    // ATOMIC UPDATE: Read-modify-write inside lambda
+                    updateState { it.copy(connectingEndpoints = it.connectingEndpoints + endpointId) }
                 }
 
                 override fun onConnectionResult(endpointId: String, result: ConnectionResolution) {
-                    val newConnecting = _state.value.connectingEndpoints - endpointId
-                    updateState { it.copy(connectingEndpoints = newConnecting) }
+                    // ATOMIC UPDATE: Read-modify-write inside lambda
+                    updateState { it.copy(connectingEndpoints = it.connectingEndpoints - endpointId) }
 
                     if (result.status.statusCode == ConnectionsStatusCodes.STATUS_OK) {
                         log("Connection Established: $endpointId")
 
-                        val existingName = neighbors[endpointId]?.peerName ?: "Unknown"
-                        val neighbor =
-                                Neighbor(endpointId, existingName, 0, System.currentTimeMillis())
-                        neighbors[endpointId] = neighbor
+                        // ATOMIC: Use compute() to avoid TOCTOU race
+                        // ATOMIC: Preserve existing neighbor, only create if new
+                        neighbors.compute(endpointId) { _, existing ->
+                            if (existing != null) {
+                                existing.lastSeen.set(System.currentTimeMillis())
+                                existing // Preserve existing neighbor with its name
+                            } else {
+                                Neighbor(endpointId, "Unknown", 0, System.currentTimeMillis())
+                            }
+                        }
                         updateConnectedEndpoints()
                         sendIdentityPacket(endpointId)
                     } else {
@@ -221,11 +267,14 @@ class P2PManager(private val context: Context) {
                 override fun onDisconnected(endpointId: String) {
                     log("Disconnected: $endpointId")
                     neighbors.remove(endpointId)
-                    // Remove all routes that went through this neighbor
-                    val lostDestinations = routingTable.filterValues { it == endpointId }.keys
-                    lostDestinations.forEach { dest ->
-                        routingTable.remove(dest)
-                        routingScores.remove(dest)
+                    // Remove all routes that went through this neighbor - SYNCHRONIZED
+                    synchronized(routingLock) {
+                        val lostDestinations = routingTable.filterValues { it == endpointId }.keys.toList()
+                        lostDestinations.forEach { dest ->
+                            routingTable.remove(dest)
+                            routingScores.remove(dest)
+                            routeLastSeen.remove(dest)
+                        }
                     }
                     updateConnectedEndpoints()
                 }
@@ -301,34 +350,28 @@ class P2PManager(private val context: Context) {
         // localDeviceName is already set in _state constructor
         // Re-order callbacks to avoid NPE if referenced in init (already done, but good to note)
 
-        // Listen for incoming payloads (PING/PONG)
-        scope.launch {
-            _payloadEvents.collect { _ ->
-                // The existing logic for handling payload events is in processPacket.
-            }
-        }
+
         voiceManager = VoiceManager(context) { msg, level -> log(msg, level) }
-        startAdvertising()
-        startDiscovery()
-        startRoutingUpdates()
+        // NOTE: startAdvertising/startDiscovery/startRoutingUpdates moved to start()
+        // Called from MainActivity after permissions are granted
     }
 
     private fun startRoutingUpdates() {
+        if (routingJob?.isActive == true) return
+        routingJob =
         scope.launch {
-            while (true) {
-                delay(8000)
+            while (isActive) {
+                delay(8000L + (0..2000).random().toLong())
 
                 try {
                     log(
                             "Broadcasting Periodic Routing Update (Identity)...",
                             com.fyp.resilientp2p.data.LogLevel.TRACE
                     )
-                    // Broadcast Identity to all neighbors.
-                    // This forces them to re-evaluate the route to 'Me'.
-                    // If they are a direct neighbor, they see TTL 3 (Score 3).
-                    // If indirect, they see TTL 2 (Score 2).
-                    // This creates a "Gradient" that pulls routes towards the most direct path.
-                    neighbors.keys.forEach { endpointId -> sendIdentityPacket(endpointId) }
+                    HashMap(neighbors).keys.forEach { endpointId -> sendIdentityPacket(endpointId) }
+
+                    // Maintenance
+                    pruneRoutes()
                 } catch (e: Exception) {
                     log(
                             "Error in Routing Update Loop: ${e.message}",
@@ -339,8 +382,29 @@ class P2PManager(private val context: Context) {
         }
     }
 
+    private fun pruneRoutes() {
+        synchronized(routingLock) {
+        val now = System.currentTimeMillis()
+        val staleThreshold = 60000L // 1 minute
+        // CRITICAL FIX: Operate atomically per key to avoid TOCTOU
+        routeLastSeen.entries.toList().forEach { (key, lastSeenTime) ->
+            if ((now - lastSeenTime) > staleThreshold) {
+                if (routeLastSeen.remove(key, lastSeenTime)) {
+                    routingTable.remove(key)
+                    routingScores.remove(key)
+                    log("Pruned stale route: $key", com.fyp.resilientp2p.data.LogLevel.DEBUG)
+                }
+            }
+        }
+        } // synchronized(routingLock)
+        updateConnectedEndpoints()
+    }
+
     fun start() {
         log("Starting P2PManager...")
+        startAdvertising()
+        startDiscovery()
+        startRoutingUpdates()
     }
 
     fun stop() {
@@ -349,20 +413,40 @@ class P2PManager(private val context: Context) {
 
     fun stopAll() {
         log("Stopping All Activity...")
+        // 1. Cancel coroutines FIRST to stop background work
+        routingJob?.cancel()
+        routingJob = null
+        supervisorJob.cancel()
+        
+        // 2. Recreate scope IMMEDIATELY to prevent old coroutines from accessing cleared data
+        supervisorJob = SupervisorJob()
+        scope = CoroutineScope(Dispatchers.IO + supervisorJob)
+        
+        // 3. Stop connections client
         connectionsClient.stopAllEndpoints()
-        neighbors.clear()
-        routingTable.clear()
-        routingScores.clear()
+        
+        // 4. Clear data atomically under lock
+        synchronized(routingLock) {
+            neighbors.clear()
+            routingTable.clear()
+            routingScores.clear()
+            routeLastSeen.clear()
+        }
+        
+        // 5. Reset state
         _state.value = P2PState(localDeviceName = localUsername)
-        // Note: We do not cancel the CoroutineScope here to allow for
-        // potential restart of P2PManager if required by the application lifecycle
-        // without destroying the entire app process.
     }
 
     // --- Nearby Connections Actions ---
 
     fun startAdvertising() {
-        val advertisingOptions = AdvertisingOptions.Builder().setStrategy(STRATEGY).build()
+        // Apply LowPower and Hybrid Logic
+        val advertisingOptions =
+                AdvertisingOptions.Builder()
+                        .setStrategy(STRATEGY)
+                        .setLowPower(_state.value.isLowPower)
+                        .build()
+
         connectionsClient
                 .startAdvertising(
                         localUsername,
@@ -387,7 +471,11 @@ class P2PManager(private val context: Context) {
     }
 
     fun startDiscovery() {
-        val discoveryOptions = DiscoveryOptions.Builder().setStrategy(STRATEGY).build()
+        val discoveryOptions =
+                DiscoveryOptions.Builder()
+                        .setStrategy(STRATEGY)
+                        .setLowPower(_state.value.isLowPower)
+                        .build()
         connectionsClient
                 .startDiscovery(SERVICE_ID, endpointDiscoveryCallback, discoveryOptions)
                 .addOnSuccessListener {
@@ -409,34 +497,34 @@ class P2PManager(private val context: Context) {
     // --- Packet Handling ---
 
     private fun handlePacket(packet: Packet, sourceEndpointId: String) {
-        if (messageCache.containsKey(packet.id)) return
-        messageCache[packet.id] = System.currentTimeMillis()
+        if (!messageCache.tryMarkSeen(packet.id)) return
 
         if (sourceEndpointId != "LOCAL") {
             // Update lastSeen for the direct neighbor to prevent zombie disconnection
-            neighbors[sourceEndpointId]?.let { it.lastSeen = System.currentTimeMillis() }
+            neighbors[sourceEndpointId]?.let { it.lastSeen.set(System.currentTimeMillis()) }
 
             // CRITICAL FIX: Do not learn route to Self via neighbor (Self-Poisoning)
             if (packet.sourceId != localUsername) {
                 // Dynamic Routing Logic (Extensible Scoring)
                 val newScore = calculateRouteScore(packet)
-                val currentScore = routingScores[packet.sourceId] ?: Int.MIN_VALUE
-
-                // STABILITY CHECK: Only update if the new route is STRICTLY better.
-                // Prevents flapping between equal routes and respects "Don't run too often /
-                // unnecessary updates"
-                if (newScore > currentScore) {
-                    val oldRoute = routingTable.put(packet.sourceId, sourceEndpointId)
-                    routingScores[packet.sourceId] = newScore
-
-                    if (oldRoute != sourceEndpointId) {
-                        log(
-                                "RoutingTable Updated: ${packet.sourceId} -> $sourceEndpointId (Score: $newScore, Prev: $currentScore)",
-                                com.fyp.resilientp2p.data.LogLevel.DEBUG
-                        )
+                
+                // CRITICAL FIX: Use synchronized for atomic update across all 3 maps
+                synchronized(routingLock) {
+                    val currentScore = routingScores[packet.sourceId] ?: Int.MIN_VALUE
+                    if (newScore > currentScore) {
+                        val oldRoute = routingTable[packet.sourceId]
+                        routingScores[packet.sourceId] = newScore
+                        routingTable[packet.sourceId] = sourceEndpointId
+                        routeLastSeen[packet.sourceId] = System.currentTimeMillis()
+                        if (oldRoute != sourceEndpointId) {
+                            log(
+                                    "RoutingTable Updated: ${packet.sourceId} -> $sourceEndpointId (Score: $newScore, Prev: $currentScore)",
+                                    com.fyp.resilientp2p.data.LogLevel.DEBUG
+                            )
+                        }
                     }
-                    updateConnectedEndpoints()
                 }
+                updateConnectedEndpoints()
             } else {
                 log(
                         "Refusing to add Self ('${packet.sourceId}') to routing table via $sourceEndpointId",
@@ -449,8 +537,12 @@ class P2PManager(private val context: Context) {
             processPacket(packet, sourceEndpointId)
         }
 
-        if (packet.destId != localUsername && packet.ttl > 0) {
-            forwardPacket(packet, sourceEndpointId)
+        if (packet.destId != localUsername) {
+            if (packet.ttl > 0) {
+                forwardPacket(packet, sourceEndpointId)
+            } else {
+                log("Packet ${packet.id} TTL exceeded, dropping. Dest: ${packet.destId}", com.fyp.resilientp2p.data.LogLevel.WARN)
+            }
         }
     }
 
@@ -477,19 +569,16 @@ class P2PManager(private val context: Context) {
                     return
                 }
 
-                val existing = neighbors[sourceEndpointId]
-                val newNeighbor =
-                        existing?.copy(
-                                peerName = packet.sourceId,
-                                lastSeen = System.currentTimeMillis()
-                        )
-                                ?: Neighbor(
-                                        sourceEndpointId,
-                                        packet.sourceId,
-                                        0,
-                                        System.currentTimeMillis()
-                                )
-                neighbors[sourceEndpointId] = newNeighbor
+                // ATOMIC IN-PLACE UPDATE: Mutate existing neighbor instead of replacing
+                neighbors.compute(sourceEndpointId) { _, existing ->
+                    if (existing != null) {
+                        existing.peerName = packet.sourceId
+                        existing.lastSeen.set(System.currentTimeMillis())
+                        existing
+                    } else {
+                        Neighbor(sourceEndpointId, packet.sourceId, 0, System.currentTimeMillis())
+                    }
+                }
                 updateConnectedEndpoints()
             }
             PacketType.PING -> {
@@ -519,7 +608,7 @@ class P2PManager(private val context: Context) {
     }
 
     private fun forwardPacket(packet: Packet, excludeEndpointId: String? = null) {
-        val nextHop = routingTable[packet.destId]
+        val nextHop = synchronized(routingLock) { routingTable[packet.destId] }
         val newPacket = packet.copy(ttl = packet.ttl - 1)
         val bytes =
                 try {
@@ -530,7 +619,7 @@ class P2PManager(private val context: Context) {
                 }
         val payload = Payload.fromBytes(bytes)
 
-        if (nextHop != null && neighbors.containsKey(nextHop)) {
+        if (nextHop != null && nextHop != excludeEndpointId && neighbors.containsKey(nextHop)) {
             connectionsClient.sendPayload(nextHop, payload).addOnFailureListener { e ->
                 log("Forward Packet Failed: ${e.message}")
                 if (e.message?.contains("8012") == true) {
@@ -619,24 +708,30 @@ class P2PManager(private val context: Context) {
         try {
             val bytes = packet.toBytes()
             connectionsClient.sendPayload(endpointId, Payload.fromBytes(bytes))
+            .addOnFailureListener { e -> log("Failed to send IDENTITY to $endpointId: ${e.message}") }
         } catch (e: Exception) {
             log("Error sending Direct PING to $endpointId: ${e.message}")
         }
     }
 
     fun sendFile(peerId: String, uri: android.net.Uri) {
-        try {
-            val pfd = context.contentResolver.openFileDescriptor(uri, "r")
-            if (pfd != null) {
-                val payload = Payload.fromFile(pfd)
-                connectionsClient.sendPayload(peerId, payload)
-                log("Sending file to $peerId")
-            } else {
-                log("Could not open file descriptor", com.fyp.resilientp2p.data.LogLevel.ERROR)
-            }
-        } catch (e: Exception) {
-            log("Error sending file: ${e.message}")
+        // Nearby Connections API takes ownership of PFD for FILE payloads
+        val pfd = context.contentResolver.openFileDescriptor(uri, "r")
+        if (pfd == null) {
+            log("Could not open file descriptor", com.fyp.resilientp2p.data.LogLevel.ERROR)
+            return
         }
+        val payload = try {
+            Payload.fromFile(pfd)
+        } catch (e: Exception) {
+            pfd.close()  // Safe - payload creation failed, API never got it
+            log("Error creating file payload: ${e.message}", com.fyp.resilientp2p.data.LogLevel.ERROR)
+            return
+        }
+        // After this point, Nearby API owns PFD - do NOT close in callbacks
+        connectionsClient.sendPayload(peerId, payload)
+            .addOnSuccessListener { log("File sent to $peerId") }
+            .addOnFailureListener { e -> log("File send failed: ${e.message}") }
     }
 
     fun startAudioStreaming(peerName: String) {
@@ -669,7 +764,11 @@ class P2PManager(private val context: Context) {
             connectionsClient
                     .sendPayload(targetEndpointIds, payload)
                     .addOnSuccessListener { log("Audio payload sent to $targetEndpointIds") }
-                    .addOnFailureListener { e -> log("Failed to send audio payload: ${e.message}") }
+                    .addOnFailureListener { e ->
+                        log("Failed to send audio payload: ${e.message}")
+                        voiceManager?.stopRecording()
+                        // Do NOT close pfd - Nearby API owns it after Payload.fromStream()
+                    }
         } else {
             log("Failed to start audio recording (returned null)")
         }
@@ -684,7 +783,7 @@ class P2PManager(private val context: Context) {
 
     fun disconnectFromEndpoint(endpointId: String) {
         connectionsClient.disconnectFromEndpoint(endpointId)
-        connectionLifecycleCallback.onDisconnected(endpointId)
+        // Note: Let the API callback handle cleanup - dont manually invoke
     }
 
     fun acceptConnection(endpointId: String) {
@@ -696,7 +795,9 @@ class P2PManager(private val context: Context) {
     }
 
     fun setHybridMode(enabled: Boolean) {
+        if (_state.value.isHybridMode == enabled) return
         updateState { it.copy(isHybridMode = enabled) }
+        restartRadio()
     }
 
     fun setManualConnection(enabled: Boolean) {
@@ -704,7 +805,30 @@ class P2PManager(private val context: Context) {
     }
 
     fun setLowPower(enabled: Boolean) {
+        if (_state.value.isLowPower == enabled) return
         updateState { it.copy(isLowPower = enabled) }
+        restartRadio()
+    }
+
+    private fun restartRadio() {
+        val wasAdvertising = _state.value.isAdvertising
+        val wasDiscovering = _state.value.isDiscovering
+
+        if (wasAdvertising) stopAdvertising()
+        if (wasDiscovering) stopDiscovery()
+
+        // Cancel any pending restart job and start new one
+        radioRestartJob?.cancel()
+        radioRestartJob = scope.launch {
+            if (wasAdvertising) {
+                delay(100)
+                startAdvertising()
+            }
+            if (wasDiscovering) {
+                delay(100)
+                startDiscovery()
+            }
+        }
     }
 
     fun clearLogs() {
@@ -724,10 +848,19 @@ class P2PManager(private val context: Context) {
     }
 
     private fun calculateRouteScore(packet: Packet): Int {
-        // Extensible Scoring Logic
-        // Current: Simple TTL (Hop Count). Higher TTL = Fewer Hops = Better.
-        // Future: could be (ttl * 10) - (rssi_penalty) etc.
-        return packet.ttl
+        // Higher score = better route. Base: TTL * 100 (more hops = lower TTL = worse)
+        // Cap TTL to prevent artificially boosted routes from malicious local sources
+        var score = minOf(packet.ttl, 10) * 100
+        
+        // Add RSSI bonus if available from trace (only if valid negative value)
+        packet.trace.lastOrNull()?.rssi?.let { rssi ->
+            if (rssi < 0) {
+                // RSSI is typically negative (e.g. -50 dBm is better than -80 dBm)
+                score += (rssi / 10)
+            }
+        }
+        
+        return score
     }
 
     private fun sendIdentityPacket(endpointId: String) {
@@ -742,6 +875,7 @@ class P2PManager(private val context: Context) {
                 )
         val bytes = packet.toBytes()
         connectionsClient.sendPayload(endpointId, Payload.fromBytes(bytes))
+            .addOnFailureListener { e -> log("Failed to send IDENTITY to $endpointId: ${e.message}") }
     }
 
     private fun updateState(update: (P2PState) -> P2PState) {
@@ -750,8 +884,9 @@ class P2PManager(private val context: Context) {
 
     private fun updateConnectedEndpoints() {
         val neighborList = neighbors.values.map { it.peerName }.toList()
-        val knownPeersMap =
-                routingTable.entries.associate { (dest, nextHop) -> dest to RouteInfo(nextHop, 1) }
+        val knownPeersMap = synchronized(routingLock) {
+            routingTable.entries.associate { (dest, nextHop) -> dest to RouteInfo(nextHop, 1) }
+        }
         updateState { it.copy(connectedEndpoints = neighborList, knownPeers = knownPeersMap) }
     }
 
@@ -786,8 +921,9 @@ class P2PManager(private val context: Context) {
                             logType = type,
                             peerId = peerId
                     )
-            val newLogs = (_state.value.logs + entry).takeLast(100)
-            updateState { it.copy(logs = newLogs) }
+            updateState { state -> 
+                state.copy(logs = (state.logs + entry).takeLast(100)) 
+            }
         }
     }
 }

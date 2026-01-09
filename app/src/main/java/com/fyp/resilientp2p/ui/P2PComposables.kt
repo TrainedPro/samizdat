@@ -33,6 +33,7 @@ import com.fyp.resilientp2p.managers.P2PManager
 @Composable
 fun ResilientP2PApp(p2pManager: P2PManager, onExportLogs: () -> Unit) {
         val state by p2pManager.state.collectAsState()
+        val context = androidx.compose.ui.platform.LocalContext.current
 
         // Derived State
         val transferProgressEvent by p2pManager.payloadProgressEvents.collectAsState(initial = null)
@@ -96,7 +97,7 @@ fun ResilientP2PApp(p2pManager: P2PManager, onExportLogs: () -> Unit) {
                                                         onClick = {
                                                                 showMenu = false
                                                                 p2pManager.stop()
-                                                                kotlin.system.exitProcess(0)
+                                                                (context as? android.app.Activity)?.finishAffinity()
                                                         }
                                                 )
                                         }
@@ -301,7 +302,7 @@ fun AdvancedOptionsDialog(
                                                 expanded = expanded,
                                                 onDismissRequest = { expanded = false }
                                         ) {
-                                                com.fyp.resilientp2p.data.LogLevel.values()
+                                                com.fyp.resilientp2p.data.LogLevel.entries
                                                         .forEach { level ->
                                                                 // Filter mostly useful levels for
                                                                 // UI: INFO, DEBUG, TRACE

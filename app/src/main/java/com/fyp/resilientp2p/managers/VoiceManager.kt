@@ -20,6 +20,7 @@ class VoiceManager(private val context: Context, private val log: (String, LogLe
      * Starts recording audio and returns a ParcelFileDescriptor for the read side of the pipe. The
      * P2PManager should send this PFD as a Payload.
      */
+    @Synchronized
     fun startRecording(): ParcelFileDescriptor? {
         if (audioRecorder != null && audioRecorder!!.isRecording()) {
             log("[$TAG] Already recording", LogLevel.WARN)
@@ -34,6 +35,16 @@ class VoiceManager(private val context: Context, private val log: (String, LogLe
             audioRecorder = AudioRecorder(context, writeSide, log)
             audioRecorder?.start()
 
+            // Check if recording actually started
+            if (audioRecorder?.isRecording() != true) {
+                log("[$TAG] AudioRecorder failed to start", LogLevel.WARN)
+                // AudioRecorder owns writeSide, call stop() to close it properly
+                audioRecorder?.stop()
+                audioRecorder = null
+                readSide.close()
+                return null
+            }
+
             log("[$TAG] AudioRecorder started successfully", LogLevel.DEBUG)
             return readSide
         } catch (e: Exception) {
@@ -42,20 +53,21 @@ class VoiceManager(private val context: Context, private val log: (String, LogLe
         }
     }
 
+    @Synchronized
     fun stopRecording() {
         audioRecorder?.stop()
         audioRecorder = null
     }
 
+    @Synchronized
     fun startPlaying(inputStream: InputStream) {
-        if (audioPlayer != null && audioPlayer!!.isPlaying()) {
-            stopPlaying()
-        }
-
+        // ALWAYS stop any existing player to avoid overlap (with try-catch for safety)
+        try { audioPlayer?.stop() } catch (e: Exception) { log("Error stopping previous player: ${e.message}", LogLevel.WARN) }
         audioPlayer = AudioPlayer(inputStream, log)
         audioPlayer?.start()
     }
 
+    @Synchronized
     fun stopPlaying() {
         audioPlayer?.stop()
         audioPlayer = null

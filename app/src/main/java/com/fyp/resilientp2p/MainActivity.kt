@@ -77,7 +77,16 @@ class MainActivity : AppCompatActivity() {
                     p2pManager.log("All permissions granted.")
                     startAndBindService()
                 } else {
-                    p2pManager.log("Critical permissions denied: $denied", LogLevel.ERROR)
+                    // Show user-friendly dialog for permission denial
+                    androidx.appcompat.app.AlertDialog.Builder(this@MainActivity)
+                        .setTitle("Permissions Required")
+                        .setMessage("This app requires all requested permissions to function. Please grant them to continue.")
+                        .setPositiveButton("Retry") { _, _ ->
+                            requestPermissions()
+                        }
+                        .setNegativeButton("Exit") { _, _ -> finish() }
+                        .setCancelable(false)
+                        .show()
                 }
             }
 
@@ -277,6 +286,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showAuthTokenDialog(token: String) {
+        // Capture endpoint ID at dialog creation time to avoid stale state
+        val endpointId = p2pManager.state.value.authenticatingEndpointId
         val authDialog =
                 AlertDialog.Builder(this)
                         .setTitle(R.string.security_check)
@@ -284,17 +295,13 @@ class MainActivity : AppCompatActivity() {
                         .setPositiveButton(R.string.accept) {
                                 dialog: android.content.DialogInterface,
                                 _: Int ->
-                            p2pManager.state.value.authenticatingEndpointId?.let { id ->
-                                p2pManager.acceptConnection(id)
-                            }
+                            endpointId?.let { id -> p2pManager.acceptConnection(id) }
                             dialog.dismiss()
                         }
                         .setNegativeButton(R.string.reject) {
                                 dialog: android.content.DialogInterface,
                                 _: Int ->
-                            p2pManager.state.value.authenticatingEndpointId?.let { id ->
-                                p2pManager.rejectConnection(id)
-                            }
+                            endpointId?.let { id -> p2pManager.rejectConnection(id) }
                             dialog.dismiss()
                         }
                         .setCancelable(false)
@@ -351,11 +358,16 @@ class MainActivity : AppCompatActivity() {
 
         p2pManager.log("Shutdown complete. Exiting app.", LogLevel.INFO)
 
-        // Give a moment for logs to be written
-        lifecycleScope.launch {
-            kotlinx.coroutines.delay(500)
-            finishAffinity() // Safer than killProcess
-        }
+        // Use Handler to avoid lifecycle issues with coroutine delay
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            if (!isFinishing && !isDestroyed) {
+                finishAffinity()
+            }
+        }, 500)
+    }
+
+    private fun requestPermissions() {
+        requestPermissionLauncher.launch(getRequiredPermissions())
     }
 
     private fun hasPermissions(permissions: Array<String>): Boolean {
@@ -396,15 +408,20 @@ class MainActivity : AppCompatActivity() {
         val powerManager = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
         if (!powerManager.isIgnoringBatteryOptimizations(packageName)) {
             val intent =
-                    Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+                    Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply { data = android.net.Uri.parse("package:$packageName") }
             startActivity(intent)
         }
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        // CRITICAL FIX: Cancel HeartbeatManager coroutines
         if (isBound) {
-            unbindService(connection)
+            try {
+                unbindService(connection)
+            } catch (e: IllegalArgumentException) {
+                // Service was not registered - can happen if binding not complete
+            }
             isBound = false
         }
     }

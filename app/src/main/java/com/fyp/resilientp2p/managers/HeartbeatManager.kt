@@ -4,22 +4,25 @@ import com.fyp.resilientp2p.data.LogLevel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 class HeartbeatManager(private val p2pManager: P2PManager) {
 
     companion object {
         private const val TAG = "HeartbeatManager"
-        private const val DEFAULT_INTERVAL_MS = 8000L
+        private const val DEFAULT_INTERVAL_MS = 5000L
         private const val DEFAULT_PAYLOAD_SIZE = 64
     }
 
     private var heartbeatJob: Job? = null
-    private val scope = CoroutineScope(Dispatchers.IO)
+    private val supervisorJob = SupervisorJob()
+    private val scope = CoroutineScope(Dispatchers.IO + supervisorJob)
 
     data class HeartbeatConfig(
             val intervalMs: Long = DEFAULT_INTERVAL_MS,
@@ -45,9 +48,9 @@ class HeartbeatManager(private val p2pManager: P2PManager) {
                 val newInterval =
                         when (info.quality) {
                             com.google.android.gms.nearby.connection.BandwidthInfo.Quality.LOW ->
-                                    5000L // Slow down
+                                    10000L // Slow down to save bandwidth
                             com.google.android.gms.nearby.connection.BandwidthInfo.Quality.HIGH ->
-                                    1000L // Speed up
+                                    2000L // Speed up for responsiveness
                             else -> currentInterval
                         }
 
@@ -63,7 +66,7 @@ class HeartbeatManager(private val p2pManager: P2PManager) {
 
         // Zombie Cleanup Task
         scope.launch {
-            while (true) {
+            while (isActive) {
                 delay(10000) // Check every 10 seconds
                 cleanupZombies()
             }
@@ -119,7 +122,7 @@ class HeartbeatManager(private val p2pManager: P2PManager) {
         )
         heartbeatJob =
                 scope.launch {
-                    while (true) {
+                    while (isActive) {
                         try {
                             sendPing(config.payloadSizeBytes)
                         } catch (e: Exception) {
@@ -128,6 +131,11 @@ class HeartbeatManager(private val p2pManager: P2PManager) {
                         delay(config.intervalMs)
                     }
                 }
+    }
+
+    fun destroy() {
+        log("Destroying HeartbeatManager", LogLevel.DEBUG)
+        supervisorJob.cancel()
     }
 
     private fun stopHeartbeat() {
@@ -165,8 +173,8 @@ class HeartbeatManager(private val p2pManager: P2PManager) {
         val now = System.currentTimeMillis()
         val neighbors = p2pManager.getNeighborsSnapshot()
         val currentConfig = _config.value
-        // Tolerated silence = 4 * interval (e.g. 5s * 4 = 20s)
-        val threshold = currentConfig.intervalMs * 4
+        // Tolerated silence = 3 * interval (e.g. 5s * 3 = 15s)
+        val threshold = currentConfig.intervalMs * 3
 
         log(
                 "Running cleanUpZombies on ${neighbors.size} neighbors. Threshold=${threshold}ms",
@@ -174,16 +182,20 @@ class HeartbeatManager(private val p2pManager: P2PManager) {
         )
 
         neighbors.forEach { (id, neighbor) ->
-            val diff = now - neighbor.lastSeen
+            val diff = now - neighbor.lastSeen.get()
             if (diff > threshold) {
-                log(
-                        "Zombie Detected: $id (Name: ${neighbor.peerName}). Last seen ${diff}ms ago. Threshold ${threshold}ms. Disconnecting... (Time: $now, Last: ${neighbor.lastSeen})",
-                        LogLevel.WARN
-                )
-                p2pManager.disconnectFromEndpoint(id)
+                // Double-check with live data to avoid false positives
+                val liveNeighbor = p2pManager.getNeighborsSnapshot()[id]
+                if (liveNeighbor != null && (now - liveNeighbor.lastSeen.get()) > threshold) {
+                    log(
+                            "Zombie Detected: $id (Name: ${neighbor.peerName}). Last seen ${diff}ms ago. Threshold ${threshold}ms. Disconnecting...",
+                            LogLevel.WARN
+                    )
+                    p2pManager.disconnectFromEndpoint(id)
+                }
             } else {
                 log(
-                        "Peer $id alive. Last seen ${diff}ms ago. (Last=${neighbor.lastSeen}, Now=$now)",
+                        "Peer $id alive. Last seen ${diff}ms ago.",
                         LogLevel.TRACE
                 )
             }

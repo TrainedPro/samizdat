@@ -19,4 +19,10 @@ class P2PApplication : Application() {
 
         heartbeatManager = HeartbeatManager(p2pManager)
     }
+
+    override fun onTerminate() {
+        super.onTerminate()
+        heartbeatManager.destroy()
+        p2pManager.stopAll()
+    }
 }

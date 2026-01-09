@@ -90,11 +90,16 @@ class AudioRecorder(
                             outputStream.write(buffer.data, 0, len)
                             outputStream.flush()
                         } catch (e: IOException) {
-                            log(
-                                    "[$TAG] Error writing to output stream: ${e.message}",
-                                    LogLevel.ERROR
-                            )
-                            // Optionally, break the loop or handle the error further
+                            if (!isAlive) {
+                                // Expected side-effect of stop() closing the stream
+                                log("[$TAG] Audio stream output closed during shutdown", LogLevel.INFO)
+                            } else {
+                                log(
+                                        "[$TAG] Error writing to output stream: ${e.message}",
+                                        LogLevel.ERROR
+                                )
+                            }
+                            // Always break on write error
                             break
                         }
                     } else {

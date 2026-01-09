@@ -9,7 +9,7 @@ abstract class AudioBuffer(private val log: (String, LogLevel) -> Unit) {
     }
 
     val size: Int
-    val sampleRate = 44100
+    val sampleRate = 16000
     val data: ByteArray
 
     init {

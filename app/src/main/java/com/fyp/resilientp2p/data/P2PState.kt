@@ -16,5 +16,6 @@ data class P2PState(
         val isLowPower: Boolean = false,
         val logs: List<LogEntry> = emptyList(),
         val logLevel: LogLevel = LogLevel.INFO,
-        val localDeviceName: String = "Unknown"
+        val localDeviceName: String = "Unknown",
+        val stats: NetworkStatsSnapshot = NetworkStatsSnapshot()
 )

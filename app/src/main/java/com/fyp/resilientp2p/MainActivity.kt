@@ -26,6 +26,7 @@ import com.fyp.resilientp2p.managers.P2PManager
 import com.fyp.resilientp2p.service.P2PService
 import com.fyp.resilientp2p.ui.ResilientP2PApp
 import com.fyp.resilientp2p.ui.theme.ResilientP2PTestbedTheme
+import com.fyp.resilientp2p.testing.TestRunner
 import com.fyp.resilientp2p.data.LogLevel
 import com.google.android.material.slider.Slider
 import java.io.File
@@ -43,6 +44,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var p2pManager: P2PManager
     private lateinit var heartbeatManager: HeartbeatManager
+    private lateinit var testRunner: TestRunner
 
     // Dynamic permission list generation
     private fun getRequiredPermissions(): Array<String> {
@@ -97,6 +99,7 @@ class MainActivity : AppCompatActivity() {
         val app = application as P2PApplication
         p2pManager = app.p2pManager
         heartbeatManager = app.heartbeatManager
+        testRunner = app.testRunner
 
         // Set Content to Pure Compose
         val composeView =
@@ -105,7 +108,8 @@ class MainActivity : AppCompatActivity() {
                         ResilientP2PTestbedTheme(darkTheme = false) {
                             ResilientP2PApp(
                                     p2pManager = p2pManager,
-                                    onExportLogs = { exportLogs() }
+                                    onExportLogs = { exportLogs() },
+                                    testRunner = testRunner
                             )
                         }
                     }
@@ -317,7 +321,7 @@ class MainActivity : AppCompatActivity() {
                 ?.setTextColor(android.graphics.Color.RED) // Red
     }
 
-    private fun showExitConfirmationDialog() {
+    fun showExitConfirmationDialog() {
         val exitDialog =
                 AlertDialog.Builder(this)
                         .setTitle(R.string.exit_application)
@@ -358,12 +362,13 @@ class MainActivity : AppCompatActivity() {
 
         p2pManager.log("Shutdown complete. Exiting app.", LogLevel.INFO)
 
-        // Use Handler to avoid lifecycle issues with coroutine delay
-        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+        // Use lifecycleScope — auto-cancels if Activity is destroyed, avoiding Handler leak
+        lifecycleScope.launch {
+            kotlinx.coroutines.delay(500)
             if (!isFinishing && !isDestroyed) {
                 finishAffinity()
             }
-        }, 500)
+        }
     }
 
     private fun requestPermissions() {
@@ -430,13 +435,54 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val database = (application as P2PApplication).database
-                val logs = database.logDao().getLogsSnapshot()
+                val logDao = database.logDao()
 
-                val fileName = "p2p_logs_${System.currentTimeMillis()}.csv"
+                // Cleanup: delete DB entries older than 3 days
+                val retentionMs = 3L * 24 * 60 * 60 * 1000
+                val cutoff = System.currentTimeMillis() - retentionMs
+                logDao.deleteOlderThan(cutoff)
+
+                // Cleanup: delete old CSV exports older than 3 days
+                getExternalFilesDir(null)?.listFiles()?.filter {
+                    it.name.startsWith("p2p_logs_") && it.name.endsWith(".csv") &&
+                    it.lastModified() < cutoff
+                }?.forEach { it.delete() }
+
+                val logs = logDao.getLogsSnapshot()
+
+                val appVersion = try {
+                    packageManager.getPackageInfo(packageName, 0).versionName ?: "unknown"
+                } catch (_: Exception) { "unknown" }
+
+                val deviceName = p2pManager.getLocalDeviceName().replace(Regex("[^a-zA-Z0-9_-]"), "_")
+                val dateStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+                val fileName = "p2p_logs_v${appVersion}_${deviceName}_${dateStamp}.csv"
                 val file = File(getExternalFilesDir(null), fileName)
 
+                // Get current stats snapshot for summary header
+                val stats = p2pManager.networkStats.snapshot(
+                    p2pManager.getNeighborsSnapshot().size,
+                    p2pManager.state.value.knownPeers.size
+                )
+
                 FileWriter(file).use { writer ->
-                    writer.append("ID,Timestamp,Type,PeerID,Message,RSSI,Latency,PayloadSize\n")
+                    // Write stats summary header
+                    writer.append("# ResilientP2P Log Export\n")
+                    writer.append("# App Version: $appVersion\n")
+                    writer.append("# Device: ${p2pManager.getLocalDeviceName()}\n")
+                    writer.append("# Export Time: ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())}\n")
+                    writer.append("# Uptime: ${stats.uptimeMs}ms\n")
+                    writer.append("# Battery: ${stats.batteryLevel}% (${stats.batteryTemperature}C)\n")
+                    writer.append("# Packets: sent=${stats.totalPacketsSent} recv=${stats.totalPacketsReceived} fwd=${stats.totalPacketsForwarded} drop=${stats.totalPacketsDropped}\n")
+                    writer.append("# Bytes: sent=${stats.totalBytesSent} recv=${stats.totalBytesReceived}\n")
+                    writer.append("# Connections: established=${stats.totalConnectionsEstablished} lost=${stats.totalConnectionsLost}\n")
+                    writer.append("# AvgRTT: ${stats.avgRttMs}ms\n")
+                    writer.append("# StoreForward: queued=${stats.storeForwardQueued} delivered=${stats.storeForwardDelivered}\n")
+                    writer.append("# Neighbors: ${stats.currentNeighborCount} Routes: ${stats.currentRouteCount}\n")
+                    writer.append("#\n")
+
+                    // CSV header
+                    writer.append("ID,Timestamp,Level,Type,PeerID,Message,RSSI,LatencyMs,PayloadSizeBytes\n")
                     val dateFormat =
                             SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.getDefault())
 
@@ -444,6 +490,7 @@ class MainActivity : AppCompatActivity() {
                         val date = dateFormat.format(Date(log.timestamp))
                         writer.append("${log.id},")
                         writer.append("$date,")
+                        writer.append("${log.level},")
                         writer.append("${log.logType},")
                         writer.append("${log.peerId ?: ""},")
                         writer.append("\"${log.message.replace("\"", "\"\"")}\",")
@@ -460,7 +507,7 @@ class MainActivity : AppCompatActivity() {
                                     Toast.LENGTH_LONG
                             )
                             .show()
-                    p2pManager.log(getString(R.string.logs_saved_log))
+                    p2pManager.log("LOGS_EXPORTED path='${file.absolutePath}' entries=${logs.size}")
                 }
             } catch (e: Exception) {
                 withContext(Dispatchers.Main) {

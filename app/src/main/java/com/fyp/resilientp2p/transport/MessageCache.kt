@@ -29,23 +29,6 @@ class MessageCache(private val capacity: Int = 1000) {
         return previous == null
     }
 
-    /**
-     * @deprecated Use tryMarkSeen() for atomic check-and-mark
-     */
-    fun hasSeen(packetId: String): Boolean {
-        return cache.containsKey(packetId)
-    }
-
-    /**
-     * @deprecated Use tryMarkSeen() for atomic check-and-mark
-     */
-    fun markSeen(packetId: String) {
-        cache[packetId] = System.currentTimeMillis()
-        if (cache.size > capacity) {
-            evictOldEntries()
-        }
-    }
-
     private fun evictOldEntries() {
         // Use lock to prevent multiple concurrent evictions
         if (!cleanupLock.compareAndSet(false, true)) return
@@ -54,11 +37,16 @@ class MessageCache(private val capacity: Int = 1000) {
             // Use removeIf for atomic removal based on condition
             cache.entries.removeIf { now - it.value > ttl }
             
-            // If still over capacity, remove oldest 25% (better than clear())
+            // If still over capacity, remove ~25% via random sampling (O(n) vs O(n log n) sort)
             if (cache.size > capacity) {
-                val sortedEntries = cache.entries.sortedBy { it.value }
-                val toRemove = sortedEntries.take(capacity / 4)
-                toRemove.forEach { cache.remove(it.key, it.value) } // Atomic conditional remove
+                val toRemove = capacity / 4
+                var removed = 0
+                val iter = cache.entries.iterator()
+                while (iter.hasNext() && removed < toRemove) {
+                    iter.next()
+                    iter.remove()
+                    removed++
+                }
             }
         } finally {
             cleanupLock.set(false)
@@ -67,10 +55,5 @@ class MessageCache(private val capacity: Int = 1000) {
 
     fun clear() {
         cache.clear()
-    }
-
-    fun cleanup(ttlMs: Long) {
-        val now = System.currentTimeMillis()
-        cache.entries.removeIf { now - it.value > ttlMs }
     }
 }

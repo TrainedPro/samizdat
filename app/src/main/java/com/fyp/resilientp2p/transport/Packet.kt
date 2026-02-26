@@ -13,7 +13,12 @@ enum class PacketType {
     ACK,
     DATA,
     GOSSIP,
-    IDENTITY
+    IDENTITY,
+    AUDIO_DATA,        // Chunked audio payload for multi-hop streaming
+    AUDIO_CONTROL,     // Start/stop audio session signals
+    ROUTE_ANNOUNCE,    // Periodic route table advertisement
+    STORE_FORWARD,     // Store-and-forward delivery attempt
+    FILE_META          // File transfer metadata (filename, MIME, payloadId)
 }
 
 data class Hop(val peerId: String, val rssi: Int)
@@ -25,7 +30,7 @@ data class Packet(
         val sourceId: String,
         val destId: String,
         val payload: ByteArray = ByteArray(0),
-        val ttl: Int = 3,
+        val ttl: Int = DEFAULT_TTL,
         val trace: List<Hop> = emptyList(),
         val sequenceNumber: Long = 0
 ) {
@@ -67,7 +72,8 @@ data class Packet(
     // Binary serialization only
 
     companion object {
-        private const val MAX_STRING_LENGTH = 1024 // 1KB max per string
+        const val DEFAULT_TTL = 5 // Support up to 5-hop meshes
+        private const val MAX_STRING_LENGTH = 256 // 256B max per string (device names/UUIDs are short)
         private const val MAX_PAYLOAD_SIZE = 1 * 1024 * 1024 // 1MB max payload
         private const val MAX_TRACE_SIZE = 256 // Max hops in trace
         private const val MAX_TOTAL_PACKET_SIZE = 2 * 1024 * 1024 // 2MB aggregate limit

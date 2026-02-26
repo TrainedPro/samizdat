@@ -11,7 +11,11 @@ import java.io.InputStream
  * A fire-once class. When created, you must pass a [InputStream]. Once [start] is called, the input
  * stream will be read from until either [stop] is called or the stream ends.
  */
-open class AudioPlayer(private val inputStream: InputStream, private val log: (String, LogLevel) -> Unit) {
+open class AudioPlayer(
+        private val inputStream: InputStream,
+        private val log: (String, LogLevel) -> Unit,
+        private val peerRttMs: Long = -1  // -1 = unknown, use default
+) {
 
     companion object {
         private const val TAG = "AudioPlayer"
@@ -73,6 +77,37 @@ open class AudioPlayer(private val inputStream: InputStream, private val log: (S
             var len: Int = 0
             try {
                 val data = buffer.data
+
+                // --- Adaptive Jitter Buffer: pre-fill before playback ---
+                // At 8kHz mono 16-bit PCM = 16000 bytes/sec.
+                // Scale buffer size based on measured peer RTT:
+                //   RTT unknown → 200ms default
+                //   RTT < 50ms  → 100ms minimum
+                //   RTT > 300ms → 500ms cap
+                //   Otherwise   → RTT * 1.5
+                val jitterMs = when {
+                    peerRttMs <= 0 -> 200L   // unknown RTT, safe default
+                    peerRttMs < 50 -> 100L   // very low latency link
+                    peerRttMs > 300 -> 500L  // high latency, cap to avoid delay
+                    else -> (peerRttMs * 3) / 2  // 1.5x RTT
+                }
+                val jitterBytes = ((buffer.sampleRate * 2 * jitterMs) / 1000).toInt()
+                val jitterBuf = java.io.ByteArrayOutputStream(jitterBytes)
+                var jitterFilled = 0
+                while (isPlaying() && jitterFilled < jitterBytes) {
+                    val toRead = minOf(data.size, jitterBytes - jitterFilled)
+                    val n = inputStream.read(data, 0, toRead)
+                    if (n <= 0) break
+                    jitterBuf.write(data, 0, n)
+                    jitterFilled += n
+                }
+                if (jitterFilled > 0) {
+                    val prefill = jitterBuf.toByteArray()
+                    audioTrack.write(prefill, 0, prefill.size)
+                    log("[$TAG] Jitter buffer pre-filled ${prefill.size} bytes (${jitterMs}ms, peerRtt=${if (peerRttMs > 0) "${peerRttMs}ms" else "unknown"})", LogLevel.DEBUG)
+                }
+
+                // --- Normal streaming loop ---
                 while (isPlaying() && inputStream.read(data).also { len = it } > 0) {
                     val written = audioTrack.write(data, 0, len)
                     if (written < 0) {

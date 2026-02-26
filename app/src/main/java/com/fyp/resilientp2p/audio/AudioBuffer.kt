@@ -9,7 +9,7 @@ abstract class AudioBuffer(private val log: (String, LogLevel) -> Unit) {
     }
 
     val size: Int
-    val sampleRate = 16000
+    val sampleRate = 8000  // Telephone-quality; halves bandwidth from 32KB/s to 16KB/s
     val data: ByteArray
 
     init {

@@ -15,4 +15,7 @@ interface LogDao {
     suspend fun getLogsSnapshot(): List<LogEntry>
 
     @Query("DELETE FROM logs") suspend fun deleteAll()
+
+    @Query("DELETE FROM logs WHERE timestamp < :cutoff")
+    suspend fun deleteOlderThan(cutoff: Long)
 }

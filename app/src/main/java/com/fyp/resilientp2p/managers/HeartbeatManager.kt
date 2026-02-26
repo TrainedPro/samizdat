@@ -15,7 +15,6 @@ import kotlinx.coroutines.launch
 class HeartbeatManager(private val p2pManager: P2PManager) {
 
     companion object {
-        private const val TAG = "HeartbeatManager"
         private const val DEFAULT_INTERVAL_MS = 5000L
         private const val DEFAULT_PAYLOAD_SIZE = 64
     }
@@ -173,22 +172,32 @@ class HeartbeatManager(private val p2pManager: P2PManager) {
         val now = System.currentTimeMillis()
         val neighbors = p2pManager.getNeighborsSnapshot()
         val currentConfig = _config.value
-        // Tolerated silence = 3 * interval (e.g. 5s * 3 = 15s)
-        val threshold = currentConfig.intervalMs * 3
+        // Tolerated silence = 6 * interval, with a MINIMUM of 45 seconds.
+        // Previous threshold (3x = 15s) was far too aggressive — Bluetooth can stall
+        // for 10-20s under normal conditions when bandwidth is contested.
+        val threshold = maxOf(currentConfig.intervalMs * 6, 45_000L)
 
         log(
-                "Running cleanUpZombies on ${neighbors.size} neighbors. Threshold=${threshold}ms",
+                "ZOMBIE_CHECK neighbors=${neighbors.size} threshold=${threshold}ms interval=${currentConfig.intervalMs}ms",
                 LogLevel.TRACE
         )
 
         neighbors.forEach { (id, neighbor) ->
             val diff = now - neighbor.lastSeen.get()
+            
+            // Exempt endpoints with active transfers (audio streaming, file transfer)
+            if (p2pManager.activeTransferEndpoints.containsKey(id)) {
+                log("Peer $id exempt from zombie check (active transfer).", LogLevel.TRACE)
+                return@forEach
+            }
+            
             if (diff > threshold) {
                 // Double-check with live data to avoid false positives
                 val liveNeighbor = p2pManager.getNeighborsSnapshot()[id]
                 if (liveNeighbor != null && (now - liveNeighbor.lastSeen.get()) > threshold) {
                     log(
-                            "Zombie Detected: $id (Name: ${neighbor.peerName}). Last seen ${diff}ms ago. Threshold ${threshold}ms. Disconnecting...",
+                            "ZOMBIE_DETECTED endpoint=$id peerName='${neighbor.peerName}' " +
+                            "lastSeen=${diff}ms threshold=${threshold}ms. Disconnecting...",
                             LogLevel.WARN
                     )
                     p2pManager.disconnectFromEndpoint(id)
@@ -209,21 +218,18 @@ class HeartbeatManager(private val p2pManager: P2PManager) {
                 if (buffer.remaining() >= 8) {
                     val originTimestamp = buffer.long
                     val rtt = System.currentTimeMillis() - originTimestamp
-                    log("RTT to $endpointId: ${rtt}ms", LogLevel.TRACE)
+                    val peerName = p2pManager.getNeighborsSnapshot()[endpointId]?.peerName ?: endpointId
+                    // Feed RTT to NetworkStats for metrics tracking
+                    p2pManager.networkStats.recordRtt(peerName, rtt)
+                    log("RTT endpoint=$endpointId peerName='$peerName' rtt=${rtt}ms", LogLevel.TRACE)
                 }
             } catch (e: Exception) {
-                log("Error parsing PONG payload: ${e.message}", LogLevel.ERROR)
+                log("PONG_PARSE_ERROR endpoint=$endpointId error='${e.message}'", LogLevel.ERROR)
             }
         }
     }
 
     private fun log(msg: String, level: LogLevel = LogLevel.INFO) {
-        // Map string string to Enum
-        // val level = try {
-        //    com.fyp.resilientp2p.data.LogLevel.valueOf(levelVal)
-        // } catch (e: Exception) {
-        //    com.fyp.resilientp2p.data.LogLevel.INFO
-        // }
         p2pManager.log(msg, level)
     }
 }

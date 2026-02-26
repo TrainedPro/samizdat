@@ -37,12 +37,21 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
+    }
+
+    // Allow test_mode property: ./gradlew assembleDebug -Ptest_mode=true
+    val isTestMode = project.findProperty("test_mode")?.toString()?.toBoolean() ?: false
+
+    defaultConfig {
+        buildConfigField("boolean", "TEST_MODE", isTestMode.toString())
     }
 }
 
 dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
+    implementation(libs.androidx.lifecycle.process)
     implementation(libs.androidx.activity.compose)
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)

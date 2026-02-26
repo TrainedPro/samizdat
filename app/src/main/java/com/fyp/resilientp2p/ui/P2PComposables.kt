@@ -26,14 +26,29 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.fyp.resilientp2p.BuildConfig
 import com.fyp.resilientp2p.data.RouteInfo
+import com.fyp.resilientp2p.data.PeerStatsSnapshot
+import com.fyp.resilientp2p.data.NetworkStatsSnapshot
 import com.fyp.resilientp2p.managers.P2PManager
+import com.fyp.resilientp2p.testing.TestRunner
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ResilientP2PApp(p2pManager: P2PManager, onExportLogs: () -> Unit) {
+fun ResilientP2PApp(p2pManager: P2PManager, onExportLogs: () -> Unit, testRunner: TestRunner? = null) {
         val state by p2pManager.state.collectAsState()
         val context = androidx.compose.ui.platform.LocalContext.current
+
+        // Test mode state
+        var showTestMode by remember { mutableStateOf(false) }
+
+        // Auto-launch test mode when compiled with TEST_MODE=true
+        LaunchedEffect(Unit) {
+                if (BuildConfig.TEST_MODE && testRunner != null) {
+                        showTestMode = true
+                        testRunner.runTests(autoStart = true)
+                }
+        }
 
         // Derived State
         val transferProgressEvent by p2pManager.payloadProgressEvents.collectAsState(initial = null)
@@ -55,6 +70,18 @@ fun ResilientP2PApp(p2pManager: P2PManager, onExportLogs: () -> Unit) {
         var chatTargetId by remember { mutableStateOf<String?>(null) }
         var showAdvancedOptions by remember { mutableStateOf(false) }
         var showMenu by remember { mutableStateOf(false) }
+
+        // Received file notifications
+        val receivedFile by p2pManager.receivedFileEvents.collectAsState(initial = null)
+        LaunchedEffect(receivedFile) {
+                receivedFile?.let { event ->
+                        android.widget.Toast.makeText(
+                                context,
+                                "📥 File from ${event.senderName}: ${event.fileName}",
+                                android.widget.Toast.LENGTH_LONG
+                        ).show()
+                }
+        }
 
         val isConnected = state.connectedEndpoints.isNotEmpty()
         val scrollState = rememberScrollState()
@@ -92,12 +119,27 @@ fun ResilientP2PApp(p2pManager: P2PManager, onExportLogs: () -> Unit) {
                                                                 showAdvancedOptions = true
                                                         }
                                                 )
+                                                if (testRunner != null) {
+                                                        DropdownMenuItem(
+                                                                text = { Text("🧪 Run Tests") },
+                                                                onClick = {
+                                                                        showMenu = false
+                                                                        showTestMode = true
+                                                                }
+                                                        )
+                                                }
                                                 DropdownMenuItem(
                                                         text = { Text("Exit App") },
                                                         onClick = {
                                                                 showMenu = false
-                                                                p2pManager.stop()
-                                                                (context as? android.app.Activity)?.finishAffinity()
+                                                                // Delegate to Activity's graceful shutdown
+                                                                // instead of calling stop() + finishAffinity() directly
+                                                                (context as? com.fyp.resilientp2p.MainActivity)
+                                                                        ?.showExitConfirmationDialog()
+                                                                        ?: run {
+                                                                                p2pManager.stop()
+                                                                                (context as? android.app.Activity)?.finishAffinity()
+                                                                        }
                                                         }
                                                 )
                                         }
@@ -226,6 +268,7 @@ fun ResilientP2PApp(p2pManager: P2PManager, onExportLogs: () -> Unit) {
                                 transferProgress = transferProgressEvent?.progress ?: 0,
                                 tracePath = tracePath,
                                 logs = state.logs,
+                                stats = state.stats,
                                 onExportLogs = onExportLogs,
                                 onClearLogs = { p2pManager.clearLogs() },
                                 knownPeers = state.knownPeers,
@@ -256,7 +299,8 @@ fun ResilientP2PApp(p2pManager: P2PManager, onExportLogs: () -> Unit) {
                                 p2pManager.sendPing(chatTargetId!!, buffer.array())
                         },
                         onStartAudio = { p2pManager.startAudioStreaming(chatTargetId!!) },
-                        onStopAudio = { p2pManager.stopAudioStreaming() }
+                        onStopAudio = { p2pManager.stopAudioStreaming() },
+                        onSendFile = { uri -> p2pManager.sendFile(chatTargetId!!, uri) }
                 )
         }
 
@@ -268,6 +312,14 @@ fun ResilientP2PApp(p2pManager: P2PManager, onExportLogs: () -> Unit) {
                         onSetManual = { p2pManager.setManualConnection(it) },
                         onSetLowPower = { p2pManager.setLowPower(it) },
                         onSetLogLevel = { p2pManager.setLogLevel(it) }
+                )
+        }
+
+        // Test mode overlay
+        if (showTestMode && testRunner != null) {
+                TestModeScreen(
+                        testRunner = testRunner,
+                        onDismiss = { showTestMode = false }
                 )
         }
 }
@@ -461,6 +513,7 @@ fun DashboardContent(
         transferProgress: Int,
         tracePath: String,
         logs: List<com.fyp.resilientp2p.data.LogEntry>,
+        stats: NetworkStatsSnapshot,
         onExportLogs: () -> Unit,
         onClearLogs: () -> Unit,
         knownPeers: Map<String, RouteInfo>,
@@ -476,8 +529,14 @@ fun DashboardContent(
                 MeshContactsSection(
                         knownPeers = knownPeers,
                         connectedEndpoints = connectedEndpoints,
+                        peerStats = stats.peerStats,
                         onPeerClick = onPeerClick
                 )
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // --- Network Stats Section ---
+                NetworkStatsSection(stats = stats)
 
                 Spacer(modifier = Modifier.height(16.dp))
 
@@ -493,6 +552,7 @@ fun DashboardContent(
 fun MeshContactsSection(
         knownPeers: Map<String, RouteInfo>,
         connectedEndpoints: Set<String>,
+        peerStats: Map<String, PeerStatsSnapshot>,
         onPeerClick: (String) -> Unit
 ) {
         Card(
@@ -536,6 +596,7 @@ fun MeshContactsSection(
                                 allPeers.forEach { peerId ->
                                         val isDirect = connectedEndpoints.contains(peerId)
                                         val route = knownPeers[peerId]
+                                        val stats = peerStats[peerId]
 
                                         Row(
                                                 modifier =
@@ -571,12 +632,13 @@ fun MeshContactsSection(
                                                 )
                                                 Spacer(modifier = Modifier.width(12.dp))
 
-                                                Column {
+                                                Column(modifier = Modifier.weight(1f)) {
                                                         Text(
                                                                 text = peerId,
                                                                 fontWeight = FontWeight.Bold,
                                                                 color = colorScheme.onSurface
                                                         )
+                                                        // Connection type
                                                         val status =
                                                                 if (isDirect) "Direct Connection"
                                                                 else
@@ -588,8 +650,26 @@ fun MeshContactsSection(
                                                                                 .bodySmall,
                                                                 color = colorScheme.onSurfaceVariant
                                                         )
+                                                        // Per-peer stats row
+                                                        if (stats != null) {
+                                                                val rttText = if (stats.lastRttMs >= 0) "${stats.lastRttMs}ms" else "--"
+                                                                val connDuration = if (stats.connectedSinceMs > 0) {
+                                                                        val dur = System.currentTimeMillis() - stats.connectedSinceMs
+                                                                        when {
+                                                                                dur < 60_000 -> "${dur / 1000}s"
+                                                                                dur < 3_600_000 -> "${dur / 60_000}m${(dur % 60_000) / 1000}s"
+                                                                                else -> "${dur / 3_600_000}h${(dur % 3_600_000) / 60_000}m"
+                                                                        }
+                                                                } else "--"
+                                                                val traffic = formatTrafficCompact(stats.bytesSent + stats.bytesReceived)
+                                                                Text(
+                                                                        text = "RTT: $rttText  |  Up: $connDuration  |  Traffic: $traffic",
+                                                                        style = MaterialTheme.typography.labelSmall,
+                                                                        color = colorScheme.onSurfaceVariant,
+                                                                        fontFamily = FontFamily.Monospace
+                                                                )
+                                                        }
                                                 }
-                                                Spacer(modifier = Modifier.weight(1f))
                                                 Text(
                                                         "Chat",
                                                         color = colorScheme.primary,
@@ -608,6 +688,12 @@ fun MeshContactsSection(
         }
 }
 
+private fun formatTrafficCompact(bytes: Long): String = when {
+        bytes < 1024 -> "${bytes}B"
+        bytes < 1024 * 1024 -> "${bytes / 1024}KB"
+        else -> "${"%,.1f".format(bytes / (1024.0 * 1024.0))}MB"
+}
+
 @Composable
 fun ChatDialog(
         peerId: String,
@@ -615,7 +701,8 @@ fun ChatDialog(
         onSend: (String) -> Unit,
         onPing: () -> Unit,
         onStartAudio: () -> Unit,
-        onStopAudio: () -> Unit
+        onStopAudio: () -> Unit,
+        onSendFile: (android.net.Uri) -> Unit = {}
 ) {
         var message by remember { mutableStateOf("") }
         val context = androidx.compose.ui.platform.LocalContext.current
@@ -637,6 +724,38 @@ fun ChatDialog(
                                 android.widget.Toast.makeText(
                                                 context,
                                                 "Audio permission required",
+                                                android.widget.Toast.LENGTH_SHORT
+                                        )
+                                        .show()
+                        }
+                }
+
+        // Image picker (gallery images)
+        val imagePickerLauncher =
+                rememberLauncherForActivityResult(
+                        androidx.activity.result.contract.ActivityResultContracts.GetContent()
+                ) { uri: android.net.Uri? ->
+                        uri?.let {
+                                onSendFile(it)
+                                android.widget.Toast.makeText(
+                                                context,
+                                                "Sending image...",
+                                                android.widget.Toast.LENGTH_SHORT
+                                        )
+                                        .show()
+                        }
+                }
+
+        // General file picker
+        val filePickerLauncher =
+                rememberLauncherForActivityResult(
+                        androidx.activity.result.contract.ActivityResultContracts.GetContent()
+                ) { uri: android.net.Uri? ->
+                        uri?.let {
+                                onSendFile(it)
+                                android.widget.Toast.makeText(
+                                                context,
+                                                "Sending file...",
                                                 android.widget.Toast.LENGTH_SHORT
                                         )
                                         .show()
@@ -735,7 +854,17 @@ fun ChatDialog(
                                                 )
                                 ) { Text(if (isPressed) "🎤" else "PTT") }
 
-                                Spacer(modifier = Modifier.width(8.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+
+                                // Image picker button
+                                TextButton(onClick = { imagePickerLauncher.launch("image/*") }) {
+                                        Text("📷")
+                                }
+
+                                // File picker button
+                                TextButton(onClick = { filePickerLauncher.launch("*/*") }) {
+                                        Text("📎")
+                                }
 
                                 TextButton(onClick = onPing) { Text("PING") }
 
@@ -743,6 +872,130 @@ fun ChatDialog(
                         }
                 }
         )
+}
+
+@Composable
+fun NetworkStatsSection(stats: NetworkStatsSnapshot) {
+        var isExpanded by remember { mutableStateOf(false) }
+        
+        Card(
+                colors = CardDefaults.cardColors(containerColor = colorScheme.surfaceVariant),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth().clickable { isExpanded = !isExpanded }
+        ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                        Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                        ) {
+                                Text(
+                                        text = "\uD83D\uDCCA Network Stats",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = colorScheme.onSurface
+                                )
+                                Text(
+                                        text = if (isExpanded) "▲" else "▼",
+                                        color = colorScheme.onSurfaceVariant,
+                                        fontSize = 12.sp
+                                )
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        // Always-visible summary row
+                        Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                                StatChip(label = "Battery", value = if (stats.batteryLevel >= 0) "${stats.batteryLevel}%" else "N/A")
+                                StatChip(label = "Neighbors", value = "${stats.currentNeighborCount}")
+                                StatChip(label = "Routes", value = "${stats.currentRouteCount}")
+                                StatChip(label = "RTT", value = if (stats.avgRttMs > 0) "${stats.avgRttMs}ms" else "-")
+                        }
+
+                        AnimatedVisibility(visible = isExpanded) {
+                                Column(modifier = Modifier.padding(top = 12.dp)) {
+                                        val uptimeStr = formatStatsDuration(stats.uptimeMs)
+                                        StatsRow("Uptime", uptimeStr)
+                                        StatsRow("Battery Temp", "${stats.batteryTemperature}\u00B0C")
+                                        
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Text("Traffic", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = colorScheme.primary)
+                                        StatsRow("Packets Sent", "${stats.totalPacketsSent}")
+                                        StatsRow("Packets Received", "${stats.totalPacketsReceived}")
+                                        StatsRow("Packets Forwarded", "${stats.totalPacketsForwarded}")
+                                        StatsRow("Packets Dropped", "${stats.totalPacketsDropped}")
+                                        StatsRow("Bytes Sent", formatStatsBytes(stats.totalBytesSent))
+                                        StatsRow("Bytes Received", formatStatsBytes(stats.totalBytesReceived))
+                                        
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Text("Connections", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = colorScheme.primary)
+                                        StatsRow("Total Established", "${stats.totalConnectionsEstablished}")
+                                        StatsRow("Total Lost", "${stats.totalConnectionsLost}")
+                                        
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        Text("Store & Forward", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = colorScheme.primary)
+                                        StatsRow("Queued", "${stats.storeForwardQueued}")
+                                        StatsRow("Delivered", "${stats.storeForwardDelivered}")
+                                        
+                                        if (stats.peerStats.isNotEmpty()) {
+                                                Spacer(modifier = Modifier.height(8.dp))
+                                                Text("Per-Peer", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = colorScheme.primary)
+                                                stats.peerStats.forEach { (name, peer) ->
+                                                        val rttStr = if (peer.lastRttMs >= 0) "${peer.lastRttMs}ms" else "-"
+                                                        Text(
+                                                                text = "$name  RTT=$rttStr  \u2191${peer.packetsSent}\u2193${peer.packetsReceived}  dc=${peer.disconnectCount}",
+                                                                fontSize = 11.sp,
+                                                                fontFamily = FontFamily.Monospace,
+                                                                color = colorScheme.onSurfaceVariant,
+                                                                modifier = Modifier.padding(vertical = 1.dp)
+                                                        )
+                                                }
+                                        }
+                                }
+                        }
+                }
+        }
+}
+
+@Composable
+private fun StatChip(label: String, value: String) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(text = value, fontWeight = FontWeight.Bold, fontSize = 16.sp, color = colorScheme.primary)
+                Text(text = label, fontSize = 10.sp, color = colorScheme.onSurfaceVariant)
+        }
+}
+
+@Composable
+private fun StatsRow(label: String, value: String) {
+        Row(
+                modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+                horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+                Text(text = label, fontSize = 12.sp, color = colorScheme.onSurfaceVariant)
+                Text(text = value, fontSize = 12.sp, fontWeight = FontWeight.Medium, fontFamily = FontFamily.Monospace, color = colorScheme.onSurface)
+        }
+}
+
+private fun formatStatsDuration(ms: Long): String {
+        val seconds = ms / 1000
+        val minutes = seconds / 60
+        val hours = minutes / 60
+        return when {
+                hours > 0 -> "${hours}h ${minutes % 60}m ${seconds % 60}s"
+                minutes > 0 -> "${minutes}m ${seconds % 60}s"
+                else -> "${seconds}s"
+        }
+}
+
+private fun formatStatsBytes(bytes: Long): String {
+        return when {
+                bytes >= 1_048_576 -> String.format("%.1f MB", bytes / 1_048_576.0)
+                bytes >= 1024 -> String.format("%.1f KB", bytes / 1024.0)
+                else -> "$bytes B"
+        }
 }
 
 @Composable
@@ -885,6 +1138,15 @@ fun LogsSection(
                                                                                         .LogLevel
                                                                                         .TRACE ->
                                                                                         Color.LightGray
+                                                                                com.fyp.resilientp2p
+                                                                                        .data
+                                                                                        .LogLevel
+                                                                                        .METRIC ->
+                                                                                        com.fyp
+                                                                                                .resilientp2p
+                                                                                                .ui
+                                                                                                .theme
+                                                                                                .TechTealSecondary
                                                                                 else -> Color.Gray
                                                                         }
                                                         }

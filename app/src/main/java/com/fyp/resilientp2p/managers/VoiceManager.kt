@@ -60,10 +60,10 @@ class VoiceManager(private val context: Context, private val log: (String, LogLe
     }
 
     @Synchronized
-    fun startPlaying(inputStream: InputStream) {
+    fun startPlaying(inputStream: InputStream, peerRttMs: Long = -1) {
         // ALWAYS stop any existing player to avoid overlap (with try-catch for safety)
         try { audioPlayer?.stop() } catch (e: Exception) { log("Error stopping previous player: ${e.message}", LogLevel.WARN) }
-        audioPlayer = AudioPlayer(inputStream, log)
+        audioPlayer = AudioPlayer(inputStream, log, peerRttMs)
         audioPlayer?.start()
     }
 

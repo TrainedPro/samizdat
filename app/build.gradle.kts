@@ -87,6 +87,9 @@ dependencies {
     implementation(libs.androidx.room.ktx)
     ksp(libs.androidx.room.compiler)
 
+    // Coil (image loading for chat thumbnails)
+    implementation(libs.coil.compose)
+
     // UWB
 
 }

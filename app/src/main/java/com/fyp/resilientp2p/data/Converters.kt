@@ -23,4 +23,14 @@ class Converters {
     } catch (e: Exception) {
         LogType.SYSTEM
     }
+
+    @TypeConverter
+    fun fromMessageType(value: MessageType): String = value.name
+
+    @TypeConverter
+    fun toMessageType(value: String): MessageType = try {
+        MessageType.valueOf(value)
+    } catch (e: Exception) {
+        MessageType.TEXT
+    }
 }

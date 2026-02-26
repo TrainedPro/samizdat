@@ -27,15 +27,19 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.fyp.resilientp2p.BuildConfig
+import com.fyp.resilientp2p.data.ChatDao
+import com.fyp.resilientp2p.data.ChatMessage
+import com.fyp.resilientp2p.data.MessageType
 import com.fyp.resilientp2p.data.RouteInfo
 import com.fyp.resilientp2p.data.PeerStatsSnapshot
 import com.fyp.resilientp2p.data.NetworkStatsSnapshot
 import com.fyp.resilientp2p.managers.P2PManager
 import com.fyp.resilientp2p.testing.TestRunner
+import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ResilientP2PApp(p2pManager: P2PManager, onExportLogs: () -> Unit, testRunner: TestRunner? = null) {
+fun ResilientP2PApp(p2pManager: P2PManager, onExportLogs: () -> Unit, testRunner: TestRunner? = null, chatDao: ChatDao? = null) {
         val state by p2pManager.state.collectAsState()
         val context = androidx.compose.ui.platform.LocalContext.current
 
@@ -282,14 +286,81 @@ fun ResilientP2PApp(p2pManager: P2PManager, onExportLogs: () -> Unit, testRunner
         }
 
         if (showChatDialog && chatTargetId != null) {
-                ChatDialog(
+                val scope = rememberCoroutineScope()
+                val isBroadcast = chatTargetId == "BROADCAST"
+
+                // Collect chat messages from Room
+                val chatMessages by remember(chatTargetId) {
+                        if (chatDao != null) {
+                                if (isBroadcast) chatDao.getBroadcastMessages()
+                                else chatDao.getMessagesForPeer(chatTargetId!!)
+                        } else {
+                                kotlinx.coroutines.flow.flowOf(emptyList<ChatMessage>())
+                        }
+                }.collectAsState(initial = emptyList())
+
+                // Persist incoming messages for this peer
+                LaunchedEffect(latestPayload, chatTargetId) {
+                        latestPayload?.let { event ->
+                                val pkt = event.packet
+                                if (pkt.type == com.fyp.resilientp2p.transport.PacketType.DATA && chatDao != null) {
+                                        val text = String(pkt.payload, java.nio.charset.StandardCharsets.UTF_8)
+                                        if (!text.startsWith("__TEST__")) {
+                                                val senderName = pkt.sourceId
+                                                // Only persist if this message is relevant to current chat
+                                                if (isBroadcast || senderName == chatTargetId) {
+                                                        chatDao.insert(ChatMessage(
+                                                                peerId = senderName,
+                                                                isOutgoing = false,
+                                                                type = MessageType.TEXT,
+                                                                text = text,
+                                                                isBroadcast = isBroadcast
+                                                        ))
+                                                }
+                                        }
+                                }
+                        }
+                }
+
+                // Persist received files
+                LaunchedEffect(receivedFile, chatTargetId) {
+                        receivedFile?.let { event ->
+                                if (chatDao != null) {
+                                        val msgType = if (event.mimeType.startsWith("image/")) MessageType.IMAGE else MessageType.FILE
+                                        chatDao.insert(ChatMessage(
+                                                peerId = event.senderName,
+                                                isOutgoing = false,
+                                                type = msgType,
+                                                fileName = event.fileName,
+                                                filePath = event.file.absolutePath,
+                                                mimeType = event.mimeType,
+                                                fileSize = event.file.length(),
+                                                transferProgress = -1
+                                        ))
+                                }
+                        }
+                }
+
+                ChatScreen(
                         peerId = chatTargetId!!,
-                        onDismiss = { showChatDialog = false },
-                        onSend = { msg ->
-                                if (chatTargetId == "BROADCAST") {
+                        messages = chatMessages,
+                        onSendText = { msg ->
+                                if (isBroadcast) {
                                         p2pManager.broadcastMessage(msg)
                                 } else {
                                         p2pManager.sendData(chatTargetId!!, msg)
+                                }
+                                // Persist outgoing message
+                                if (chatDao != null) {
+                                        scope.launch {
+                                                chatDao.insert(ChatMessage(
+                                                        peerId = chatTargetId!!,
+                                                        isOutgoing = true,
+                                                        type = MessageType.TEXT,
+                                                        text = msg,
+                                                        isBroadcast = isBroadcast
+                                                ))
+                                        }
                                 }
                         },
                         onPing = {
@@ -300,7 +371,33 @@ fun ResilientP2PApp(p2pManager: P2PManager, onExportLogs: () -> Unit, testRunner
                         },
                         onStartAudio = { p2pManager.startAudioStreaming(chatTargetId!!) },
                         onStopAudio = { p2pManager.stopAudioStreaming() },
-                        onSendFile = { uri -> p2pManager.sendFile(chatTargetId!!, uri) }
+                        onSendFile = { uri ->
+                                p2pManager.sendFile(chatTargetId!!, uri)
+                                // Persist outgoing file message
+                                if (chatDao != null) {
+                                        scope.launch {
+                                                val cr = context.contentResolver
+                                                val name = cr.query(uri, null, null, null, null)?.use { c ->
+                                                        if (c.moveToFirst()) {
+                                                                val idx = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                                                                if (idx >= 0) c.getString(idx) else null
+                                                        } else null
+                                                } ?: uri.lastPathSegment ?: "file"
+                                                val mime = cr.getType(uri) ?: "application/octet-stream"
+                                                val msgType = if (mime.startsWith("image/")) MessageType.IMAGE else MessageType.FILE
+                                                chatDao.insert(ChatMessage(
+                                                        peerId = chatTargetId!!,
+                                                        isOutgoing = true,
+                                                        type = msgType,
+                                                        fileName = name,
+                                                        mimeType = mime,
+                                                        transferProgress = 0,
+                                                        isBroadcast = false
+                                                ))
+                                        }
+                                }
+                        },
+                        onBack = { showChatDialog = false }
                 )
         }
 
@@ -693,187 +790,6 @@ private fun formatTrafficCompact(bytes: Long): String = when {
         bytes < 1024 * 1024 -> "${bytes / 1024}KB"
         else -> "${"%,.1f".format(bytes / (1024.0 * 1024.0))}MB"
 }
-
-@Composable
-fun ChatDialog(
-        peerId: String,
-        onDismiss: () -> Unit,
-        onSend: (String) -> Unit,
-        onPing: () -> Unit,
-        onStartAudio: () -> Unit,
-        onStopAudio: () -> Unit,
-        onSendFile: (android.net.Uri) -> Unit = {}
-) {
-        var message by remember { mutableStateOf("") }
-        val context = androidx.compose.ui.platform.LocalContext.current
-        val isBroadcast = peerId == "BROADCAST"
-
-        val permissionLauncher =
-                rememberLauncherForActivityResult(
-                        androidx.activity.result.contract.ActivityResultContracts
-                                .RequestPermission()
-                ) { isGranted ->
-                        if (isGranted) {
-                                android.widget.Toast.makeText(
-                                                context,
-                                                "Permission granted. Hold to talk.",
-                                                android.widget.Toast.LENGTH_SHORT
-                                        )
-                                        .show()
-                        } else {
-                                android.widget.Toast.makeText(
-                                                context,
-                                                "Audio permission required",
-                                                android.widget.Toast.LENGTH_SHORT
-                                        )
-                                        .show()
-                        }
-                }
-
-        // Image picker (gallery images)
-        val imagePickerLauncher =
-                rememberLauncherForActivityResult(
-                        androidx.activity.result.contract.ActivityResultContracts.GetContent()
-                ) { uri: android.net.Uri? ->
-                        uri?.let {
-                                onSendFile(it)
-                                android.widget.Toast.makeText(
-                                                context,
-                                                "Sending image...",
-                                                android.widget.Toast.LENGTH_SHORT
-                                        )
-                                        .show()
-                        }
-                }
-
-        // General file picker
-        val filePickerLauncher =
-                rememberLauncherForActivityResult(
-                        androidx.activity.result.contract.ActivityResultContracts.GetContent()
-                ) { uri: android.net.Uri? ->
-                        uri?.let {
-                                onSendFile(it)
-                                android.widget.Toast.makeText(
-                                                context,
-                                                "Sending file...",
-                                                android.widget.Toast.LENGTH_SHORT
-                                        )
-                                        .show()
-                        }
-                }
-
-        AlertDialog(
-                onDismissRequest = onDismiss,
-                title = {
-                        Text(
-                                text =
-                                        if (isBroadcast) "Broadcast Message"
-                                        else "Chat with $peerId",
-                                style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.Bold,
-                                color =
-                                        if (isBroadcast) MaterialTheme.colorScheme.secondary
-                                        else MaterialTheme.colorScheme.primary
-                        )
-                },
-                text = {
-                        Column(modifier = Modifier.fillMaxWidth()) {
-                                // Status Text
-                                Text(
-                                        text =
-                                                if (isBroadcast) "Sending to ALL connected peers."
-                                                else "Direct secure channel.",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.padding(bottom = 8.dp)
-                                )
-
-                                OutlinedTextField(
-                                        value = message,
-                                        onValueChange = { message = it },
-                                        label = { Text("Message") },
-                                        modifier = Modifier.fillMaxWidth(),
-                                        maxLines = 3
-                                )
-                        }
-                },
-                confirmButton = {
-                        Button(
-                                onClick = {
-                                        if (message.isNotBlank()) {
-                                                onSend(message)
-                                                onDismiss()
-                                        }
-                                },
-                                enabled = message.isNotBlank()
-                        ) { Text("SEND") }
-                },
-                dismissButton = {
-                        Row {
-                                // Push-to-Talk Button
-                                val interactionSource = remember {
-                                        androidx.compose.foundation.interaction
-                                                .MutableInteractionSource()
-                                }
-                                val isPressed by interactionSource.collectIsPressedAsState()
-
-                                LaunchedEffect(isPressed) {
-                                        if (isPressed) {
-                                                if (androidx.core.content.ContextCompat
-                                                                .checkSelfPermission(
-                                                                        context,
-                                                                        android.Manifest.permission
-                                                                                .RECORD_AUDIO
-                                                                ) ==
-                                                                android.content.pm.PackageManager
-                                                                        .PERMISSION_GRANTED
-                                                ) {
-                                                        onStartAudio()
-                                                } else {
-                                                        permissionLauncher.launch(
-                                                                android.Manifest.permission
-                                                                        .RECORD_AUDIO
-                                                        )
-                                                }
-                                        } else {
-                                                onStopAudio()
-                                        }
-                                }
-
-                                Button(
-                                        onClick = {},
-                                        interactionSource = interactionSource,
-                                        colors =
-                                                ButtonDefaults.buttonColors(
-                                                        containerColor =
-                                                                if (isPressed) Color.Red
-                                                                else
-                                                                        MaterialTheme.colorScheme
-                                                                                .tertiary
-                                                )
-                                ) { Text(if (isPressed) "🎤" else "PTT") }
-
-                                Spacer(modifier = Modifier.width(4.dp))
-
-                                // Image picker button
-                                TextButton(onClick = { imagePickerLauncher.launch("image/*") }) {
-                                        Text("📷")
-                                }
-
-                                // File picker button
-                                TextButton(onClick = { filePickerLauncher.launch("*/*") }) {
-                                        Text("📎")
-                                }
-
-                                TextButton(onClick = onPing) { Text("PING") }
-
-                                TextButton(onClick = onDismiss) { Text("CLOSE") }
-                        }
-                }
-        )
-}
-
 @Composable
 fun NetworkStatsSection(stats: NetworkStatsSnapshot) {
         var isExpanded by remember { mutableStateOf(false) }

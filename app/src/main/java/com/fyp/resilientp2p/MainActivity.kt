@@ -109,7 +109,8 @@ class MainActivity : AppCompatActivity() {
                             ResilientP2PApp(
                                     p2pManager = p2pManager,
                                     onExportLogs = { exportLogs() },
-                                    testRunner = testRunner
+                                    testRunner = testRunner,
+                                    chatDao = (application as P2PApplication).database.chatDao()
                             )
                         }
                     }

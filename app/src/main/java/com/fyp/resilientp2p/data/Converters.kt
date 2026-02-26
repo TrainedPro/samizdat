@@ -33,4 +33,14 @@ class Converters {
     } catch (e: Exception) {
         MessageType.TEXT
     }
+
+    @TypeConverter
+    fun fromTelemetryEventType(value: TelemetryEventType): String = value.name
+
+    @TypeConverter
+    fun toTelemetryEventType(value: String): TelemetryEventType = try {
+        TelemetryEventType.valueOf(value)
+    } catch (e: Exception) {
+        TelemetryEventType.STATS_SNAPSHOT
+    }
 }

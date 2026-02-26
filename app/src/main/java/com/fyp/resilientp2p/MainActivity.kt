@@ -110,7 +110,8 @@ class MainActivity : AppCompatActivity() {
                                     p2pManager = p2pManager,
                                     onExportLogs = { exportLogs() },
                                     testRunner = testRunner,
-                                    chatDao = (application as P2PApplication).database.chatDao()
+                                    chatDao = (application as P2PApplication).database.chatDao(),
+                                    telemetryManager = (application as P2PApplication).telemetryManager
                             )
                         }
                     }

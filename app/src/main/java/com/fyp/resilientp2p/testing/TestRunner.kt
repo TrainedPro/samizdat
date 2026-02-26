@@ -33,7 +33,9 @@ import java.util.concurrent.CopyOnWriteArrayList
  */
 class TestRunner(
     private val context: Context,
-    private val p2pManager: P2PManager
+    private val p2pManager: P2PManager,
+    /** Optional callback to upload test results to cloud telemetry */
+    var onTestResultsReady: ((String) -> Unit)? = null
 ) {
     companion object {
         private const val TAG = "TestRunner"
@@ -180,6 +182,13 @@ class TestRunner(
                 )
 
                 exportResults(runResult)
+
+                // Upload test results to cloud telemetry if available
+                try {
+                    onTestResultsReady?.invoke(runResult.toJson().toString())
+                } catch (e: Exception) {
+                    tlog("Failed to send results to telemetry: ${e.message}")
+                }
 
                 val summary = "Complete: ${runResult.passedCount}/${runResult.results.size} passed (${totalDuration / 1000}s)"
                 tlog("═══════════════════════════════════════════════════")

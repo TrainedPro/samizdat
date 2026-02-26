@@ -34,12 +34,14 @@ import com.fyp.resilientp2p.data.RouteInfo
 import com.fyp.resilientp2p.data.PeerStatsSnapshot
 import com.fyp.resilientp2p.data.NetworkStatsSnapshot
 import com.fyp.resilientp2p.managers.P2PManager
+import com.fyp.resilientp2p.managers.TelemetryManager
+import com.fyp.resilientp2p.managers.TelemetryStatus
 import com.fyp.resilientp2p.testing.TestRunner
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ResilientP2PApp(p2pManager: P2PManager, onExportLogs: () -> Unit, testRunner: TestRunner? = null, chatDao: ChatDao? = null) {
+fun ResilientP2PApp(p2pManager: P2PManager, onExportLogs: () -> Unit, testRunner: TestRunner? = null, chatDao: ChatDao? = null, telemetryManager: TelemetryManager? = null) {
         val state by p2pManager.state.collectAsState()
         val context = androidx.compose.ui.platform.LocalContext.current
 
@@ -280,7 +282,8 @@ fun ResilientP2PApp(p2pManager: P2PManager, onExportLogs: () -> Unit, testRunner
                                 onPeerClick = { peerId ->
                                         chatTargetId = peerId
                                         showChatDialog = true
-                                }
+                                },
+                                telemetryManager = telemetryManager
                         )
                 }
         }
@@ -615,7 +618,8 @@ fun DashboardContent(
         onClearLogs: () -> Unit,
         knownPeers: Map<String, RouteInfo>,
         connectedEndpoints: Set<String>,
-        onPeerClick: (String) -> Unit
+        onPeerClick: (String) -> Unit,
+        telemetryManager: TelemetryManager? = null
 ) {
         Column(modifier = Modifier.fillMaxWidth()) {
                 // --- Radar Section ---
@@ -636,6 +640,12 @@ fun DashboardContent(
                 NetworkStatsSection(stats = stats)
 
                 Spacer(modifier = Modifier.height(16.dp))
+
+                // --- Telemetry Section ---
+                if (telemetryManager != null) {
+                        TelemetrySection(telemetryManager = telemetryManager)
+                        Spacer(modifier = Modifier.height(16.dp))
+                }
 
                 // --- Logs Section ---
                 LogsSection(logs, onExportLogs, onClearLogs)
@@ -1087,6 +1097,127 @@ fun LogsSection(
                                                         lineHeight = 12.sp,
                                                         modifier = Modifier.padding(vertical = 1.dp)
                                                 )
+                                        }
+                                }
+                        }
+                }
+        }
+}
+
+@Composable
+fun TelemetrySection(telemetryManager: TelemetryManager) {
+        var isExpanded by remember { mutableStateOf(false) }
+        var status by remember { mutableStateOf<TelemetryStatus?>(null) }
+        val scope = rememberCoroutineScope()
+
+        LaunchedEffect(isExpanded) {
+                status = telemetryManager.getStatus()
+        }
+
+        Card(
+                colors = CardDefaults.cardColors(containerColor = colorScheme.surfaceVariant),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth().clickable { isExpanded = !isExpanded }
+        ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                        Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                        ) {
+                                Text(
+                                        text = "\u2601 Cloud Telemetry",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.Bold,
+                                        color = colorScheme.onSurface
+                                )
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                                text = if (telemetryManager.isEnabled) "\u2705" else "\u274C",
+                                                fontSize = 14.sp
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                                text = if (isExpanded) "\u25B2" else "\u25BC",
+                                                color = colorScheme.onSurfaceVariant,
+                                                fontSize = 12.sp
+                                        )
+                                }
+                        }
+
+                        status?.let { s ->
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                        StatChip(label = "Pending", value = "${s.pendingEvents}")
+                                        StatChip(label = "Total", value = "${s.totalEvents}")
+                                        StatChip(
+                                                label = "Upload",
+                                                value = if (telemetryManager.hasInternet()) "Online" else "Offline"
+                                        )
+                                }
+                        }
+
+                        AnimatedVisibility(visible = isExpanded) {
+                                Column(modifier = Modifier.padding(top = 12.dp)) {
+                                        status?.let { s ->
+                                                StatsRow("Enabled", if (s.enabled) "Yes" else "No")
+                                                StatsRow("WiFi Only", if (s.wifiOnly) "Yes" else "No")
+                                                StatsRow("Device Registered", if (s.deviceRegistered) "Yes" else "No")
+                                                StatsRow("Pending Events", "${s.pendingEvents}")
+                                                StatsRow("Total Events", "${s.totalEvents}")
+                                                if (s.lastSnapshotTime > 0) {
+                                                        val ago = (System.currentTimeMillis() - s.lastSnapshotTime) / 1000
+                                                        StatsRow("Last Snapshot", "${ago}s ago")
+                                                }
+                                                StatsRow(
+                                                        "Firebase",
+                                                        if (com.fyp.resilientp2p.managers.TelemetryUploadWorker.isFirebaseConfigured)
+                                                                "Configured" else "Not configured (local export)"
+                                                )
+                                        }
+
+                                        Spacer(modifier = Modifier.height(8.dp))
+
+                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                                OutlinedButton(
+                                                        onClick = {
+                                                                telemetryManager.isEnabled = !telemetryManager.isEnabled
+                                                                scope.launch { status = telemetryManager.getStatus() }
+                                                        },
+                                                        modifier = Modifier.weight(1f)
+                                                ) {
+                                                        Text(
+                                                                if (telemetryManager.isEnabled) "Disable" else "Enable",
+                                                                fontSize = 11.sp
+                                                        )
+                                                }
+                                                OutlinedButton(
+                                                        onClick = {
+                                                                telemetryManager.forceSnapshot()
+                                                                scope.launch {
+                                                                        kotlinx.coroutines.delay(500)
+                                                                        status = telemetryManager.getStatus()
+                                                                }
+                                                        },
+                                                        modifier = Modifier.weight(1f)
+                                                ) {
+                                                        Text("Snapshot Now", fontSize = 11.sp)
+                                                }
+                                                OutlinedButton(
+                                                        onClick = {
+                                                                telemetryManager.wifiOnlyUpload = !telemetryManager.wifiOnlyUpload
+                                                                scope.launch { status = telemetryManager.getStatus() }
+                                                        },
+                                                        modifier = Modifier.weight(1f)
+                                                ) {
+                                                        Text(
+                                                                if (telemetryManager.wifiOnlyUpload) "Any Net" else "WiFi Only",
+                                                                fontSize = 11.sp
+                                                        )
+                                                }
                                         }
                                 }
                         }

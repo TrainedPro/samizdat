@@ -1,0 +1,498 @@
+package com.fyp.resilientp2p.managers
+
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.os.Build
+import android.util.Log
+import androidx.work.*
+import com.fyp.resilientp2p.data.*
+import kotlinx.coroutines.*
+import org.json.JSONArray
+import org.json.JSONObject
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
+
+/**
+ * Cloud telemetry manager for the Samizdat mesh network.
+ *
+ * Collects periodic stats snapshots, routing table state, connection events, and error logs.
+ * Queues them in Room DB as [TelemetryEvent] rows. [TelemetryUploadWorker] handles the
+ * actual upload to Firebase/Firestore on a periodic WorkManager schedule.
+ *
+ * **What gets uploaded:** aggregated stats, connection events, error/warn logs, test results.
+ * **What does NOT get uploaded:** chat content, audio, file payloads, raw packets (privacy).
+ *
+ * **Anti-flooding safeguards:**
+ * - Rate limit: Max 1 snapshot per 5 minutes even if polled faster
+ * - Batch size cap: Max 100 events per upload
+ * - DB hard cap: 5,000 events max, FIFO eviction
+ * - Circuit breaker: exponential backoff on consecutive upload failures
+ * - WiFi-only option (configurable)
+ */
+class TelemetryManager(
+    private val context: Context,
+    private val telemetryDao: TelemetryDao,
+    private val logDao: LogDao,
+    private val p2pManager: P2PManager
+) {
+    companion object {
+        private const val TAG = "TelemetryManager"
+        private const val PREFS_NAME = "telemetry_prefs"
+        private const val KEY_DEVICE_REGISTERED = "device_registered"
+        private const val KEY_LAST_SNAPSHOT_TIME = "last_snapshot_time"
+        private const val KEY_LAST_LOG_UPLOAD_TIME = "last_log_upload_time"
+        private const val KEY_TELEMETRY_ENABLED = "telemetry_enabled"
+        private const val KEY_WIFI_ONLY = "wifi_only_upload"
+
+        /** Minimum interval between stats snapshots (5 minutes) */
+        const val SNAPSHOT_INTERVAL_MS = 5 * 60 * 1000L
+
+        /** WorkManager periodic upload interval (15 minutes) */
+        const val UPLOAD_INTERVAL_MINUTES = 15L
+
+        /** Max events per upload batch */
+        const val MAX_BATCH_SIZE = 100
+
+        /** Max total events in DB before FIFO eviction */
+        const val MAX_DB_EVENTS = 5000
+
+        /** Retention period for uploaded events before cleanup (24 hours) */
+        const val UPLOADED_RETENTION_MS = 24 * 60 * 60 * 1000L
+
+        /** Max upload attempts before discarding an event */
+        const val MAX_UPLOAD_ATTEMPTS = 10
+
+        /** Stats snapshot retention in cloud (30 days) */
+        const val STATS_RETENTION_DAYS = 30
+
+        /** Routing snapshot retention in cloud (7 days) */
+        const val ROUTING_RETENTION_DAYS = 7
+
+        private const val UPLOAD_WORK_NAME = "telemetry_upload"
+    }
+
+    private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val isRunning = AtomicBoolean(false)
+    private var snapshotJob: Job? = null
+
+    // Rate limiting
+    private val lastSnapshotTime = AtomicLong(prefs.getLong(KEY_LAST_SNAPSHOT_TIME, 0))
+
+    /** The unique device ID used for telemetry (same as P2P identity) */
+    val deviceId: String
+        get() = p2pManager.state.value.localDeviceName
+
+    /** Whether telemetry collection is enabled */
+    var isEnabled: Boolean
+        get() = prefs.getBoolean(KEY_TELEMETRY_ENABLED, true)
+        set(value) {
+            prefs.edit().putBoolean(KEY_TELEMETRY_ENABLED, value).apply()
+            if (value) start() else stop()
+        }
+
+    /** Whether uploads should only happen on WiFi */
+    var wifiOnlyUpload: Boolean
+        get() = prefs.getBoolean(KEY_WIFI_ONLY, false)
+        set(value) {
+            prefs.edit().putBoolean(KEY_WIFI_ONLY, value).apply()
+            // Re-schedule upload worker with updated constraints
+            schedulePeriodicUpload()
+        }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Lifecycle
+    // ─────────────────────────────────────────────────────────────────
+
+    /**
+     * Start telemetry collection. Called from [P2PApplication.onCreate].
+     * Registers device if first launch, starts periodic snapshot collection,
+     * and schedules the WorkManager upload worker.
+     */
+    fun start() {
+        if (!isEnabled) {
+            Log.i(TAG, "Telemetry disabled, skipping start")
+            return
+        }
+        if (isRunning.getAndSet(true)) return
+
+        Log.i(TAG, "Starting telemetry for device=$deviceId")
+
+        scope.launch {
+            // Register device on first launch
+            if (!prefs.getBoolean(KEY_DEVICE_REGISTERED, false)) {
+                registerDevice()
+            }
+
+            // Enforce DB size limits
+            telemetryDao.enforceMaxCount(MAX_DB_EVENTS)
+            telemetryDao.deleteFailed(MAX_UPLOAD_ATTEMPTS)
+        }
+
+        // Start periodic stats collection
+        startSnapshotCollection()
+
+        // Schedule periodic upload via WorkManager
+        schedulePeriodicUpload()
+    }
+
+    /** Stop telemetry collection. Does NOT cancel pending uploads. */
+    fun stop() {
+        isRunning.set(false)
+        snapshotJob?.cancel()
+        snapshotJob = null
+        Log.i(TAG, "Telemetry collection stopped")
+    }
+
+    /** Full shutdown — cancels everything including scope */
+    fun destroy() {
+        stop()
+        scope.cancel()
+        WorkManager.getInstance(context).cancelUniqueWork(UPLOAD_WORK_NAME)
+        Log.i(TAG, "TelemetryManager destroyed")
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Device Registration (one-time)
+    // ─────────────────────────────────────────────────────────────────
+
+    private suspend fun registerDevice() {
+        val payload = JSONObject().apply {
+            put("deviceId", deviceId)
+            put("model", Build.MODEL)
+            put("manufacturer", Build.MANUFACTURER)
+            put("androidVersion", Build.VERSION.RELEASE)
+            put("sdkVersion", Build.VERSION.SDK_INT)
+            put("appVersion", getAppVersion())
+            put("registeredAt", System.currentTimeMillis())
+        }
+
+        telemetryDao.insert(
+            TelemetryEvent(
+                deviceId = deviceId,
+                eventType = TelemetryEventType.DEVICE_REGISTRATION,
+                payload = payload.toString()
+            )
+        )
+        prefs.edit().putBoolean(KEY_DEVICE_REGISTERED, true).apply()
+        Log.i(TAG, "Device registered: $deviceId")
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Periodic Stats Snapshot
+    // ─────────────────────────────────────────────────────────────────
+
+    private fun startSnapshotCollection() {
+        snapshotJob?.cancel()
+        snapshotJob = scope.launch {
+            while (isActive) {
+                delay(SNAPSHOT_INTERVAL_MS)
+                if (isEnabled) {
+                    collectStatsSnapshot()
+                    collectRoutingSnapshot()
+                    collectErrorLogs()
+                    cleanupOldEvents()
+                }
+            }
+        }
+    }
+
+    /** Collect a stats snapshot and queue it for upload */
+    private suspend fun collectStatsSnapshot() {
+        val now = System.currentTimeMillis()
+        val last = lastSnapshotTime.get()
+
+        // Rate limit: skip if less than SNAPSHOT_INTERVAL_MS since last
+        if (now - last < SNAPSHOT_INTERVAL_MS - 5000) return
+
+        lastSnapshotTime.set(now)
+        prefs.edit().putLong(KEY_LAST_SNAPSHOT_TIME, now).apply()
+
+        val state = p2pManager.state.value
+        val stats = state.stats
+
+        val payload = JSONObject().apply {
+            put("deviceId", deviceId)
+            put("timestamp", now)
+            put("uptimeMs", stats.uptimeMs)
+            put("batteryLevel", stats.batteryLevel)
+            put("batteryTemperature", stats.batteryTemperature.toDouble())
+            put("totalBytesSent", stats.totalBytesSent)
+            put("totalBytesReceived", stats.totalBytesReceived)
+            put("totalPacketsSent", stats.totalPacketsSent)
+            put("totalPacketsReceived", stats.totalPacketsReceived)
+            put("totalPacketsForwarded", stats.totalPacketsForwarded)
+            put("totalPacketsDropped", stats.totalPacketsDropped)
+            put("totalConnectionsEstablished", stats.totalConnectionsEstablished)
+            put("totalConnectionsLost", stats.totalConnectionsLost)
+            put("currentNeighborCount", stats.currentNeighborCount)
+            put("currentRouteCount", stats.currentRouteCount)
+            put("avgRttMs", stats.avgRttMs)
+            put("storeForwardQueued", stats.storeForwardQueued)
+            put("storeForwardDelivered", stats.storeForwardDelivered)
+            put("isAdvertising", state.isAdvertising)
+            put("isDiscovering", state.isDiscovering)
+            put("connectedEndpointCount", state.connectedEndpoints.size)
+
+            // Per-peer stats
+            val peersArray = JSONArray()
+            stats.peerStats.forEach { (name, peer) ->
+                peersArray.put(JSONObject().apply {
+                    put("peerName", name)
+                    put("lastRttMs", peer.lastRttMs)
+                    put("bytesSent", peer.bytesSent)
+                    put("bytesReceived", peer.bytesReceived)
+                    put("packetsSent", peer.packetsSent)
+                    put("packetsReceived", peer.packetsReceived)
+                    put("disconnectCount", peer.disconnectCount)
+                })
+            }
+            put("peerStats", peersArray)
+        }
+
+        telemetryDao.insert(
+            TelemetryEvent(
+                deviceId = deviceId,
+                eventType = TelemetryEventType.STATS_SNAPSHOT,
+                payload = payload.toString()
+            )
+        )
+        Log.d(TAG, "Stats snapshot collected (neighbors=${stats.currentNeighborCount}, routes=${stats.currentRouteCount})")
+    }
+
+    /** Collect routing table snapshot */
+    private suspend fun collectRoutingSnapshot() {
+        val state = p2pManager.state.value
+        if (state.knownPeers.isEmpty()) return
+
+        val payload = JSONObject().apply {
+            put("deviceId", deviceId)
+            put("timestamp", System.currentTimeMillis())
+            val routesArray = JSONArray()
+            state.knownPeers.forEach { (dest, info) ->
+                routesArray.put(JSONObject().apply {
+                    put("destination", dest)
+                    put("nextHop", info.nextHop)
+                    put("hopCount", info.hopCount)
+                })
+            }
+            put("routes", routesArray)
+            put("routeCount", state.knownPeers.size)
+        }
+
+        telemetryDao.insert(
+            TelemetryEvent(
+                deviceId = deviceId,
+                eventType = TelemetryEventType.ROUTING_SNAPSHOT,
+                payload = payload.toString()
+            )
+        )
+    }
+
+    /** Collect ERROR and WARN logs since last upload */
+    private suspend fun collectErrorLogs() {
+        val lastUploadTime = prefs.getLong(KEY_LAST_LOG_UPLOAD_TIME, 0)
+        val logs = logDao.getLogsSnapshot()
+            .filter { it.level == LogLevel.ERROR || it.level == LogLevel.WARN }
+            .filter { it.timestamp > lastUploadTime }
+            .take(MAX_BATCH_SIZE) // Cap batch size
+
+        if (logs.isEmpty()) return
+
+        val payload = JSONObject().apply {
+            put("deviceId", deviceId)
+            put("timestamp", System.currentTimeMillis())
+            val logsArray = JSONArray()
+            logs.forEach { entry ->
+                logsArray.put(JSONObject().apply {
+                    put("timestamp", entry.timestamp)
+                    put("level", entry.level.name)
+                    put("type", entry.logType.name)
+                    put("message", entry.message.take(256)) // Truncate for bandwidth
+                    entry.peerId?.let { put("peerId", it) }
+                    entry.latencyMs?.let { put("latencyMs", it) }
+                })
+            }
+            put("logs", logsArray)
+            put("logCount", logs.size)
+        }
+
+        telemetryDao.insert(
+            TelemetryEvent(
+                deviceId = deviceId,
+                eventType = TelemetryEventType.ERROR_LOG,
+                payload = payload.toString()
+            )
+        )
+
+        prefs.edit().putLong(KEY_LAST_LOG_UPLOAD_TIME, System.currentTimeMillis()).apply()
+        Log.d(TAG, "Collected ${logs.size} error/warn logs for upload")
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Event Recording (called by P2PManager / other components)
+    // ─────────────────────────────────────────────────────────────────
+
+    /** Record a connection event (peer connected or disconnected) */
+    fun recordConnectionEvent(peerId: String, connected: Boolean, endpointId: String? = null) {
+        if (!isEnabled) return
+        scope.launch {
+            val payload = JSONObject().apply {
+                put("deviceId", deviceId)
+                put("timestamp", System.currentTimeMillis())
+                put("peerId", peerId)
+                put("event", if (connected) "CONNECTED" else "DISCONNECTED")
+                endpointId?.let { put("endpointId", it) }
+            }
+            telemetryDao.insert(
+                TelemetryEvent(
+                    deviceId = deviceId,
+                    eventType = TelemetryEventType.CONNECTION_EVENT,
+                    payload = payload.toString()
+                )
+            )
+        }
+    }
+
+    /** Record a store-and-forward delivery report */
+    fun recordStoreForwardDelivery(messageId: String, destId: String, queuedAt: Long, deliveredAt: Long) {
+        if (!isEnabled) return
+        scope.launch {
+            val payload = JSONObject().apply {
+                put("deviceId", deviceId)
+                put("timestamp", deliveredAt)
+                put("messageId", messageId)
+                put("destId", destId)
+                put("queuedAt", queuedAt)
+                put("deliveredAt", deliveredAt)
+                put("deliveryTimeMs", deliveredAt - queuedAt)
+            }
+            telemetryDao.insert(
+                TelemetryEvent(
+                    deviceId = deviceId,
+                    eventType = TelemetryEventType.STORE_FORWARD_REPORT,
+                    payload = payload.toString()
+                )
+            )
+        }
+    }
+
+    /** Record test mode results */
+    fun recordTestResults(resultsJson: String) {
+        if (!isEnabled) return
+        scope.launch {
+            telemetryDao.insert(
+                TelemetryEvent(
+                    deviceId = deviceId,
+                    eventType = TelemetryEventType.TEST_RESULT,
+                    payload = resultsJson
+                )
+            )
+            Log.i(TAG, "Test results queued for upload")
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // WorkManager Scheduling
+    // ─────────────────────────────────────────────────────────────────
+
+    private fun schedulePeriodicUpload() {
+        val constraints = Constraints.Builder()
+            .setRequiredNetworkType(
+                if (wifiOnlyUpload) NetworkType.UNMETERED else NetworkType.CONNECTED
+            )
+            .build()
+
+        val uploadRequest = PeriodicWorkRequestBuilder<TelemetryUploadWorker>(
+            UPLOAD_INTERVAL_MINUTES, TimeUnit.MINUTES
+        )
+            .setConstraints(constraints)
+            .setInitialDelay(1, TimeUnit.MINUTES) // Small initial delay
+            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 5, TimeUnit.MINUTES)
+            .build()
+
+        WorkManager.getInstance(context).enqueueUniquePeriodicWork(
+            UPLOAD_WORK_NAME,
+            ExistingPeriodicWorkPolicy.UPDATE,
+            uploadRequest
+        )
+        Log.i(TAG, "Scheduled periodic upload every ${UPLOAD_INTERVAL_MINUTES}min (wifiOnly=$wifiOnlyUpload)")
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Cleanup
+    // ─────────────────────────────────────────────────────────────────
+
+    private suspend fun cleanupOldEvents() {
+        // Delete uploaded events older than retention
+        val cutoff = System.currentTimeMillis() - UPLOADED_RETENTION_MS
+        telemetryDao.deleteOlderThan(cutoff)
+
+        // Delete events that failed too many times
+        telemetryDao.deleteFailed(MAX_UPLOAD_ATTEMPTS)
+
+        // Enforce hard DB cap
+        telemetryDao.enforceMaxCount(MAX_DB_EVENTS)
+
+        val remaining = telemetryDao.getTotalCount()
+        val pending = telemetryDao.getPendingCount()
+        Log.d(TAG, "Cleanup complete: $remaining total events, $pending pending upload")
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Manual Trigger (for debugging / test mode)
+    // ─────────────────────────────────────────────────────────────────
+
+    /** Force an immediate snapshot + upload attempt (for testing) */
+    fun forceSnapshot() {
+        scope.launch {
+            collectStatsSnapshot()
+            collectRoutingSnapshot()
+            collectErrorLogs()
+        }
+    }
+
+    /** Get telemetry status for UI display */
+    suspend fun getStatus(): TelemetryStatus {
+        return TelemetryStatus(
+            enabled = isEnabled,
+            wifiOnly = wifiOnlyUpload,
+            pendingEvents = telemetryDao.getPendingCount(),
+            totalEvents = telemetryDao.getTotalCount(),
+            lastSnapshotTime = lastSnapshotTime.get(),
+            deviceRegistered = prefs.getBoolean(KEY_DEVICE_REGISTERED, false)
+        )
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // Helpers
+    // ─────────────────────────────────────────────────────────────────
+
+    private fun getAppVersion(): String {
+        return try {
+            context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "1.0"
+        } catch (e: Exception) {
+            "1.0"
+        }
+    }
+
+    /** Check if device currently has internet connectivity */
+    fun hasInternet(): Boolean {
+        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val network = cm.activeNetwork ?: return false
+        val caps = cm.getNetworkCapabilities(network) ?: return false
+        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+    }
+}
+
+data class TelemetryStatus(
+    val enabled: Boolean,
+    val wifiOnly: Boolean,
+    val pendingEvents: Int,
+    val totalEvents: Int,
+    val lastSnapshotTime: Long,
+    val deviceRegistered: Boolean
+)

@@ -90,6 +90,9 @@ dependencies {
     // Coil (image loading for chat thumbnails)
     implementation(libs.coil.compose)
 
+    // WorkManager (periodic telemetry upload)
+    implementation(libs.androidx.work.runtime)
+
     // UWB
 
 }

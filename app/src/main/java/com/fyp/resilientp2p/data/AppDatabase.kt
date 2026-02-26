@@ -6,8 +6,8 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 
 @Database(
-        entities = [LogEntry::class, PacketEntity::class, ChatMessage::class],
-        version = 5,
+        entities = [LogEntry::class, PacketEntity::class, ChatMessage::class, TelemetryEvent::class],
+        version = 6,
         exportSchema = false
 )
 @androidx.room.TypeConverters(Converters::class)
@@ -15,6 +15,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun logDao(): LogDao
     abstract fun packetDao(): PacketDao
     abstract fun chatDao(): ChatDao
+    abstract fun telemetryDao(): TelemetryDao
 
     companion object {
         @Volatile private var INSTANCE: AppDatabase? = null

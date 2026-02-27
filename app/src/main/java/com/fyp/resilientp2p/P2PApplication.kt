@@ -10,6 +10,9 @@ import com.fyp.resilientp2p.managers.HeartbeatManager
 import com.fyp.resilientp2p.managers.InternetGatewayManager
 import com.fyp.resilientp2p.managers.P2PManager
 import com.fyp.resilientp2p.managers.TelemetryManager
+import com.fyp.resilientp2p.security.PeerBlacklist
+import com.fyp.resilientp2p.security.RateLimiter
+import com.fyp.resilientp2p.security.SecurityManager
 import com.fyp.resilientp2p.testing.TestRunner
 
 /**
@@ -40,6 +43,15 @@ class P2PApplication : Application() {
     /** Emergency broadcast and SOS beacon management. */
     lateinit var emergencyManager: EmergencyManager
         private set
+    /** ECDH + AES-256-GCM end-to-end encryption and HMAC packet integrity. */
+    lateinit var securityManager: SecurityManager
+        private set
+    /** Per-peer sliding-window rate limiter (DoS defence). */
+    lateinit var rateLimiter: RateLimiter
+        private set
+    /** Persistent peer blacklist with auto-ban on violation threshold. */
+    lateinit var peerBlacklist: PeerBlacklist
+        private set
 
     /** Whether this build was compiled with test mode enabled. */
     val isTestMode: Boolean
@@ -56,9 +68,17 @@ class P2PApplication : Application() {
         internetGatewayManager = InternetGatewayManager(this, p2pManager)
         emergencyManager = EmergencyManager(this, p2pManager)
 
+        // Security managers
+        securityManager = SecurityManager()
+        rateLimiter = RateLimiter()
+        peerBlacklist = PeerBlacklist(this)
+
         // Wire cross-references
         p2pManager.internetGatewayManager = internetGatewayManager
         p2pManager.emergencyManager = emergencyManager
+        p2pManager.securityManager = securityManager
+        p2pManager.rateLimiter = rateLimiter
+        p2pManager.peerBlacklist = peerBlacklist
 
         // Start managers
         telemetryManager.start()

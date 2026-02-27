@@ -323,16 +323,18 @@ class P2PManager(
                                 val meta = pendingFileMetadata.remove(payloadId)
                                 scope.launch {
                                     try {
-                                        // Nearby API stores received files as <payloadId> in filesDir
-                                        @Suppress("DEPRECATION")
-                                        val receivedFile = filePayload.asFile()?.asJavaFile()
-                                            ?: java.io.File(context.filesDir, payloadId.toString())
-                                        if (receivedFile.exists()) {
-                                            val targetName = meta?.fileName ?: "received_${payloadId}"
-                                            val receivedDir = java.io.File(context.filesDir, "received_files")
-                                            receivedDir.mkdirs()
-                                            val targetFile = java.io.File(receivedDir, targetName)
-                                            receivedFile.renameTo(targetFile)
+                                        // Read received file via ParcelFileDescriptor (non-deprecated API)
+                                        val pfd = filePayload.asFile()?.asParcelFileDescriptor()
+                                        val targetName = meta?.fileName ?: "received_${payloadId}"
+                                        val receivedDir = java.io.File(context.filesDir, "received_files")
+                                        receivedDir.mkdirs()
+                                        val targetFile = java.io.File(receivedDir, targetName)
+                                        if (pfd != null) {
+                                            android.os.ParcelFileDescriptor.AutoCloseInputStream(pfd).use { input ->
+                                                targetFile.outputStream().use { output ->
+                                                    input.copyTo(output)
+                                                }
+                                            }
                                             val senderName = meta?.senderName ?: peerName
                                             val mimeType = meta?.mimeType ?: "application/octet-stream"
                                             log(
@@ -344,7 +346,7 @@ class P2PManager(
                                                 ReceivedFileEvent(senderName, targetName, mimeType, targetFile)
                                             )
                                         } else {
-                                            log("FILE_RECEIVE_ERROR payloadId=$payloadId reason=FILE_NOT_FOUND",
+                                            log("FILE_RECEIVE_ERROR payloadId=$payloadId reason=NO_FILE_DESCRIPTOR",
                                                 com.fyp.resilientp2p.data.LogLevel.ERROR, peerId = peerName)
                                         }
                                     } catch (e: Exception) {

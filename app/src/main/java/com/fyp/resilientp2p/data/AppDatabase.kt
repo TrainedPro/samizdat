@@ -51,7 +51,6 @@ abstract class AppDatabase : RoomDatabase() {
     companion object {
         @Volatile private var INSTANCE: AppDatabase? = null
 
-        @Suppress("DEPRECATION")
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE
                     ?: synchronized(this) {
@@ -61,7 +60,7 @@ abstract class AppDatabase : RoomDatabase() {
                                                 AppDatabase::class.java,
                                                 "p2p_testbed_db"
                                         )
-                                        .fallbackToDestructiveMigration()
+                                        .fallbackToDestructiveMigration(dropAllTables = true)
                                         .build()
                         INSTANCE = instance
                         instance

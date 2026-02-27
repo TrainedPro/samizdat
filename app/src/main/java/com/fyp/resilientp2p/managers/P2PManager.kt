@@ -158,6 +158,14 @@ class P2PManager(
     /** Emergency broadcast manager. Set by [P2PApplication]. */
     var emergencyManager: EmergencyManager? = null
 
+    // Security (optional — enabled on feature/security branch)
+    /** End-to-end encryption and HMAC integrity manager. Set by [P2PApplication]. */
+    var securityManager: com.fyp.resilientp2p.security.SecurityManager? = null
+    /** Per-peer rate limiter. Set by [P2PApplication]. */
+    var rateLimiter: com.fyp.resilientp2p.security.RateLimiter? = null
+    /** Persistent peer blacklist. Set by [P2PApplication]. */
+    var peerBlacklist: com.fyp.resilientp2p.security.PeerBlacklist? = null
+
     // File transfer metadata: payloadId -> FileMetadata (set by FILE_META packet, consumed on transfer complete)
     data class FileMetadata(val fileName: String, val mimeType: String, val fileSize: Long, val senderName: String)
     private val pendingFileMetadata = ConcurrentHashMap<Long, FileMetadata>()
@@ -205,6 +213,38 @@ class P2PManager(
                         try {
                             payload.asBytes()?.let { bytes ->
                                 val packet = Packet.fromBytes(bytes)
+
+                                // --- Security checks ---
+                                // 1. Blacklist check
+                                if (peerBlacklist?.isBlacklisted(packet.sourceId) == true) {
+                                    log("BLOCKED_BLACKLISTED from=${packet.sourceId}",
+                                        com.fyp.resilientp2p.data.LogLevel.WARN, peerId = peerName)
+                                    return
+                                }
+                                // 2. Rate limiting
+                                val limiter = rateLimiter
+                                if (limiter != null && !limiter.allowPacket(packet.sourceId)) {
+                                    peerBlacklist?.recordViolation(packet.sourceId)
+                                    log("RATE_LIMITED from=${packet.sourceId}",
+                                        com.fyp.resilientp2p.data.LogLevel.WARN, peerId = peerName)
+                                    return
+                                }
+                                // 3. HMAC verification (if security enabled and key exists)
+                                val security = securityManager
+                                if (security != null && security.hasKeyForPeer(packet.sourceId)) {
+                                    // Last HMAC_SIZE bytes are the HMAC
+                                    if (packet.payload.size > com.fyp.resilientp2p.security.SecurityManager.HMAC_SIZE) {
+                                        val dataBytes = packet.payload.copyOfRange(0, packet.payload.size - com.fyp.resilientp2p.security.SecurityManager.HMAC_SIZE)
+                                        val hmacBytes = packet.payload.copyOfRange(packet.payload.size - com.fyp.resilientp2p.security.SecurityManager.HMAC_SIZE, packet.payload.size)
+                                        if (!security.verifyHmac(packet.sourceId, dataBytes, hmacBytes)) {
+                                            log("HMAC_INVALID from=${packet.sourceId} — dropping packet",
+                                                com.fyp.resilientp2p.data.LogLevel.WARN, peerId = peerName)
+                                            peerBlacklist?.recordViolation(packet.sourceId)
+                                            return
+                                        }
+                                    }
+                                }
+
                                 try { handlePacket(packet, endpointId) } catch (e: Exception) {
                                     log("PACKET_HANDLE_ERROR from=$endpointId($peerName) error='${e.message}' " +
                                         "stackTrace='${e.stackTrace.take(3).joinToString(" -> ")}'",
@@ -506,6 +546,9 @@ class P2PManager(
                             com.fyp.resilientp2p.data.LogLevel.WARN,
                             peerId = peerName
                     )
+
+                    // Purge security keys for the disconnected peer
+                    securityManager?.removePeerKeys(peerName)
 
                     updateConnectedEndpoints()
                     
@@ -1202,6 +1245,19 @@ class P2PManager(
                     return
                 }
 
+                // --- ECDH key exchange: register peer public key if present ---
+                if (packet.payload.isNotEmpty()) {
+                    try {
+                        val peerPubKeyBase64 = String(packet.payload, java.nio.charset.StandardCharsets.UTF_8)
+                        securityManager?.registerPeerKey(packet.sourceId, peerPubKeyBase64)
+                        log("SECURITY_KEY_EXCHANGED peer='${packet.sourceId}'",
+                            com.fyp.resilientp2p.data.LogLevel.DEBUG, peerId = packet.sourceId)
+                    } catch (e: Exception) {
+                        log("SECURITY_KEY_EXCHANGE_FAILED peer='${packet.sourceId}' error='${e.message}'",
+                            com.fyp.resilientp2p.data.LogLevel.WARN, peerId = packet.sourceId)
+                    }
+                }
+
                 // ATOMIC IN-PLACE UPDATE: Mutate existing neighbor instead of replacing
                 neighbors.compute(sourceEndpointId) { _, existing ->
                     if (existing != null) {
@@ -1771,13 +1827,17 @@ class P2PManager(
     }
 
     private fun sendIdentityPacket(endpointId: String) {
+        // Embed our ECDH public key in the IDENTITY payload for key exchange
+        val pubKeyPayload = securityManager?.getPublicKeyBase64()
+            ?.toByteArray(java.nio.charset.StandardCharsets.UTF_8) ?: ByteArray(0)
+
         val packet =
                 Packet(
                         id = java.util.UUID.randomUUID().toString(),
                         type = PacketType.IDENTITY,
                         sourceId = localUsername,
                         destId = "BROADCAST",
-                        payload = ByteArray(0),
+                        payload = pubKeyPayload,
                         timestamp = System.currentTimeMillis(),
                         ttl = 0 // CRITICAL: Never forward — IDENTITY is point-to-point only
                 )

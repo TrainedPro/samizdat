@@ -43,19 +43,12 @@ class TelemetryUploadWorker(
         private const val KEY_CONSECUTIVE_FAILURES = "consecutive_failures"
 
         /**
-         * Firebase project configuration.
-         * Set these to enable cloud upload. Leave empty for local-only export.
-         *
-         * To get these values:
-         * 1. Go to https://console.firebase.google.com
-         * 2. Create a project (or use existing)
-         * 3. Add an Android app with package name "com.fyp.resilientp2p"
-         * 4. Get the project ID from Project Settings
-         * 5. Get the Web API Key from Project Settings > General
-         * 6. Enable Firestore in the Firebase console
+         * Firebase project configuration — injected from BuildConfig.
+         * Keys are stored in local.properties (gitignored) and never committed.
+         * Leave empty in local.properties for local-only JSON export.
          */
-        var FIREBASE_PROJECT_ID = ""
-        var FIREBASE_API_KEY = ""
+        val FIREBASE_PROJECT_ID: String = com.fyp.resilientp2p.BuildConfig.FIREBASE_PROJECT_ID
+        val FIREBASE_API_KEY: String = com.fyp.resilientp2p.BuildConfig.FIREBASE_API_KEY
 
         /** Minimum interval between uploads (5 minutes) */
         private const val MIN_UPLOAD_INTERVAL_MS = 5 * 60 * 1000L

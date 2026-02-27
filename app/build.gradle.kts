@@ -1,8 +1,16 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.ksp)
+}
+
+// Read local.properties for secrets (Firebase keys, etc.)
+val localProperties = Properties()
+rootProject.file("local.properties").let { f ->
+    if (f.exists()) f.inputStream().use { localProperties.load(it) }
 }
 
 android {
@@ -11,6 +19,10 @@ android {
 
     // Allow test_mode property: ./gradlew assembleDebug -Ptest_mode=true
     val isTestMode = project.findProperty("test_mode")?.toString()?.toBoolean() ?: false
+
+    // Firebase config from local.properties (never committed)
+    val firebaseProjectId = localProperties.getProperty("FIREBASE_PROJECT_ID", "")
+    val firebaseApiKey = localProperties.getProperty("FIREBASE_API_KEY", "")
 
     defaultConfig {
         applicationId = "com.fyp.resilientp2p"
@@ -21,6 +33,8 @@ android {
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("boolean", "TEST_MODE", isTestMode.toString())
+        buildConfigField("String", "FIREBASE_PROJECT_ID", "\"$firebaseProjectId\"")
+        buildConfigField("String", "FIREBASE_API_KEY", "\"$firebaseApiKey\"")
     }
 
     buildTypes {

@@ -130,7 +130,10 @@ class MainActivity : AppCompatActivity() {
                                     testRunner = testRunner,
                                     chatDao = (application as P2PApplication).database.chatDao(),
                                     telemetryManager = (application as P2PApplication).telemetryManager,
-                                    emergencyManager = (application as P2PApplication).emergencyManager
+                                    emergencyManager = (application as P2PApplication).emergencyManager,
+                                    chatGroupDao = (application as P2PApplication).database.chatGroupDao(),
+                                    groupMessageDao = (application as P2PApplication).database.groupMessageDao(),
+                                    locationEstimator = (application as P2PApplication).locationEstimator
                             )
                         }
                     }

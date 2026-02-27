@@ -166,6 +166,16 @@ class P2PManager(
     /** Persistent peer blacklist. Set by [P2PApplication]. */
     var peerBlacklist: com.fyp.resilientp2p.security.PeerBlacklist? = null
 
+    // Phase 4 manager references
+    /** RTT-based trilateration engine. Set by [P2PApplication]. */
+    var locationEstimator: LocationEstimator? = null
+    /** DTN encounter logger. Set by [P2PApplication]. */
+    var encounterLogger: EncounterLogger? = null
+    /** Content-addressable file sharing manager. Set by [P2PApplication]. */
+    var fileShareManager: FileShareManager? = null
+    /** Group message handler callback — set to a lambda that persists and distributes. */
+    var groupMessageHandler: ((com.fyp.resilientp2p.transport.Packet) -> Unit)? = null
+
     // File transfer metadata: payloadId -> FileMetadata (set by FILE_META packet, consumed on transfer complete)
     data class FileMetadata(val fileName: String, val mimeType: String, val fileSize: Long, val senderName: String)
     private val pendingFileMetadata = ConcurrentHashMap<Long, FileMetadata>()
@@ -501,6 +511,9 @@ class P2PManager(
                         updateConnectedEndpoints()
                         sendIdentityPacket(endpointId)
 
+                        // DTN encounter logging
+                        encounterLogger?.onPeerConnected(localUsername, peerName)
+
                         // Trigger store-forward delivery attempt for newly connected peer
                         triggerStoreForwardDelivery(endpointId)
                     } else {
@@ -551,6 +564,9 @@ class P2PManager(
                     securityManager?.removePeerKeys(peerName)
 
                     updateConnectedEndpoints()
+
+                    // DTN encounter logging  
+                    encounterLogger?.onPeerDisconnected(peerName)
                     
                     // Queue for reconnection if they had a valid name
                     if (peerName != "Unknown" && peerName.isNotBlank()) {
@@ -1302,6 +1318,8 @@ class P2PManager(
                         val buffer = java.nio.ByteBuffer.wrap(packet.payload)
                         val originTimestamp = buffer.long
                         val rtt = System.currentTimeMillis() - originTimestamp
+                        // Feed RTT to location estimator for trilateration
+                        locationEstimator?.recordRtt(packet.sourceId, rtt.toDouble())
                         log(
                                 "PONG_RECEIVED from='${packet.sourceId}' rtt=${rtt}ms",
                                 com.fyp.resilientp2p.data.LogLevel.DEBUG,
@@ -1411,6 +1429,37 @@ class P2PManager(
                 )
                 emergencyManager?.handleEmergencyPacket(packet)
                 updateState { it.copy(emergencyCount = it.emergencyCount + 1) }
+            }
+
+            // --- Phase 4 packet types ---
+
+            PacketType.GROUP_MESSAGE -> {
+                // Route to group chat handler
+                groupMessageHandler?.invoke(packet)
+            }
+            PacketType.FILE_ANNOUNCE -> {
+                fileShareManager?.handleFileAnnounce(packet)
+            }
+            PacketType.FILE_REQUEST -> {
+                fileShareManager?.handleFileRequest(packet)
+            }
+            PacketType.FILE_CHUNK -> {
+                fileShareManager?.handleFileChunk(packet)
+            }
+            PacketType.ENCOUNTER_LOG -> {
+                // Log receipt of DTN encounter broadcast — informational
+                log(
+                    "ENCOUNTER_LOG from='${packet.sourceId}': ${String(packet.payload, StandardCharsets.UTF_8).take(100)}",
+                    com.fyp.resilientp2p.data.LogLevel.DEBUG,
+                    peerId = packet.sourceId
+                )
+            }
+            PacketType.LOCATION_PING -> {
+                // Trilateration timing — handled via PONG RTT measurement
+                locationEstimator?.recordRtt(
+                    packet.sourceId,
+                    (System.currentTimeMillis() - packet.timestamp).toDouble()
+                )
             }
             else -> {}
         }

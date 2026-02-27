@@ -25,6 +25,11 @@ Use it as a reference when tuning, extending, or reviewing the system.
 13. [Testing](#13-testing)
 14. [Security (future — feature/security)](#14-security)
 15. [UI & Compose](#15-ui--compose)
+16. [Trilateration & Radar View (Phase 4)](#16-trilateration--radar-view-phase-4)
+17. [Chat Groups / Channels (Phase 4)](#17-chat-groups--channels-phase-4)
+18. [DTN & Encounter Logging (Phase 4)](#18-dtn--encounter-logging-phase-4)
+19. [Distributed File Sharing (Phase 4)](#19-distributed-file-sharing-phase-4)
+20. [On-Device Health Dashboard (Phase 4)](#20-on-device-health-dashboard-phase-4)
 
 ---
 
@@ -619,3 +624,209 @@ FIREBASE_PROJECT_ID=samizdat
 
 - **Reason:** Keeps secrets out of version control. Each developer must add their
   own keys. The build fails gracefully (empty strings) if keys are missing.
+
+---
+
+## 16. Trilateration & Radar View (Phase 4)
+
+### RTT-Based Distance Estimation
+
+- **File:** `LocationEstimator.kt`
+- **Formula:** `distance = (rttMs / 1000.0) × c / 2` where `c = 3 × 10⁸ m/s`
+- **Decision:** Use round-trip time from PING/PONG packets to estimate distance.
+- **Reason:** Nearby Connections does not expose RSSI or BLE ranging primitives.
+  RTT is the only available latency signal. While it includes processing delay and
+  is therefore inaccurate for absolute distances, it provides *relative* ordering
+  that is sufficient for a rough radar display.
+
+### EMA Smoothing
+
+- **Constant:** `EMA_ALPHA = 0.3`
+- **Formula:** `smoothed = α × new + (1 − α) × previous`
+- **Reason:** Raw RTT is noisy (Wi-Fi scheduling jitter, GC pauses). An exponential
+  moving average with α = 0.3 balances responsiveness vs. stability. Higher α would
+  react faster but produce jumpy positions; lower α would lag behind movement.
+
+### Minimum Anchors for Trilateration
+
+- **Constant:** `MIN_ANCHORS = 3`
+- **Decision:** 2D trilateration requires at least 3 non-collinear anchor points.
+  If fewer than 3 anchors are available the estimator returns `null`.
+- **Reason:** With 2 anchors there are 2 possible solutions (ambiguity), with 1
+  anchor only a circle of possibilities. 3 anchors yield a unique intersection.
+
+### Auto-Assign Anchors
+
+- **Decision:** The first 2 peers with known positions are automatically placed at
+  `(0, 0)` and `(d₁₂, 0)` respectively where `d₁₂` is the estimated distance
+  between them.
+- **Reason:** Absolute positioning is impossible without GPS. A local coordinate
+  frame anchored to the first two peers gives a consistent relative layout for the
+  radar view.
+
+### Linearised Least-Squares Solver
+
+- **Decision:** Subtract the last anchor equation from all others to obtain a
+  linear system `Ax = b`, then solve via 2×2 matrix inversion.
+- **Reason:** Full non-linear least-squares (Levenberg-Marquardt) is overkill for
+  3–5 anchor points and hard to tune for convergence. The linearised approach is
+  O(n) and always produces a result (unless anchors are exactly collinear, in which
+  case the determinant is zero and we return `null`).
+
+### Radar View Rendering
+
+- **File:** `RadarView.kt`
+- **Decision:** Custom Canvas composable with concentric range rings and peer dots.
+  Refreshes every **1 000 ms**.
+- **Reason:** Compose Canvas is hardware-accelerated and avoids the complexity of a
+  3rd-party mapping library. A 1 s refresh matches the PING interval and gives a
+  smooth-enough animation without battery drain.
+
+---
+
+## 17. Chat Groups / Channels (Phase 4)
+
+### Group Membership Model
+
+- **File:** `ChatGroup.kt`
+- **Decision:** Members stored as a comma-separated string column in Room, with
+  helper methods `memberSet()`, `withMember()`, `withoutMember()`.
+- **Reason:** Room does not support `Set<String>` columns without a TypeConverter.
+  A simple CSV string avoids converter boilerplate and is trivially serialisable in
+  packets. Groups are expected to be small (≤ 20 members).
+
+### Packet Format — GROUP_MESSAGE
+
+- **PacketType:** `GROUP_MESSAGE` (ordinal 16)
+- **Payload (send):** `MSG|<groupId>|<senderName>|<messageText>`
+- **Payload (create):** `CREATE|<groupId>|<groupName>|<creatorName>`
+- **TTL:** `DEFAULT_TTL` (5 hops), **Routing:** `BROADCAST`
+- **Reason:** BROADCAST ensures all mesh nodes receive group messages regardless of
+  routing topology. The `MSG|CREATE` prefix lets the receiver distinguish between
+  message delivery and group creation with a single packet type, keeping the enum
+  small.
+
+### Deduplication
+
+- **File:** `GroupMessageDao.kt`
+- **Decision:** `packetId` column carries a `@Index(unique = true)`, and insert uses
+  `OnConflictStrategy.IGNORE`.
+- **Reason:** BROADCAST packets may arrive multiple times via different mesh paths.
+  The unique index silently drops duplicates without error handling in application
+  code.
+
+### Auto-Group Registration
+
+- **Decision:** When a GROUP_MESSAGE arrives referencing a `groupId` not in the
+  local database, the handler automatically creates the group with that ID.
+- **Reason:** In a decentralised mesh there is no central group registry. Peers may
+  receive a message before the CREATE packet (due to packet reordering or late
+  join). Auto-registration ensures messages are never silently dropped.
+
+---
+
+## 18. DTN & Encounter Logging (Phase 4)
+
+### Encounter Lifecycle
+
+- **File:** `EncounterLogger.kt`
+- **Decision:** `onPeerConnected()` records start time; `onPeerDisconnected()`
+  computes duration, packet count, and byte count, then persists via `EncounterDao`.
+- **Reason:** DTN analysis requires knowing *when* and *how long* two nodes were in
+  contact. The connect/disconnect hooks in `P2PManager` are the canonical signals.
+
+### Default vs. DTN-Extended TTL
+
+| Mode | Constant | Value | Reason |
+|------|----------|-------|--------|
+| Normal | `DEFAULT_TTL_MS` | 2 hours | Messages older than 2 h are stale in a real-time mesh. |
+| DTN | `DTN_EXTENDED_TTL_MS` | 7 days | Delay-tolerant mode for disaster / field scenarios where peers may not meet for days. |
+
+- **Toggle:** `isDtnMode` boolean, flipped at runtime.
+- **Reason:** A single toggle lets the mesh operator switch between low-latency
+  and high-resilience modes without restarting the app.
+
+### Flush Cooldown
+
+- **Constant:** `FLUSH_COOLDOWN_MS = 10 minutes`
+- **Decision:** After a store-forward flush is triggered on peer connection, further
+  flushes to the same peer are suppressed for 10 minutes.
+- **Reason:** Prevents a flood of duplicate packets when a peer rapidly
+  disconnects/reconnects (e.g. moving in and out of range).
+
+---
+
+## 19. Distributed File Sharing (Phase 4)
+
+### Content-Addressable Storage
+
+- **File:** `FileShareManager.kt`
+- **Decision:** Files are identified by their SHA-256 hash.
+- **Reason:** Content-addressing deduplicates identical files regardless of filename,
+  enables integrity verification on receipt, and makes the announce/request protocol
+  stateless — any peer holding the file can serve it.
+
+### Chunk Size
+
+- **Constant:** `CHUNK_SIZE = 32 768` bytes (32 KB)
+- **Reason:** Nearby Connections payloads should stay under ~64 KB for reliable
+  delivery over Bluetooth. 32 KB leaves headroom for packet headers and base64
+  overhead while keeping the number of chunks reasonable for typical files (a 10 MB
+  file = ~320 chunks).
+
+### Three-Packet Protocol
+
+| Step | Packet | Payload | Direction |
+|------|--------|---------|-----------|
+| 1 | `FILE_ANNOUNCE` | `sha256\|fileName\|mimeType\|fileSize\|chunkSize\|totalChunks` | Sender → Mesh |
+| 2 | `FILE_REQUEST` | `sha256\|startChunk\|endChunk` | Requester → Mesh |
+| 3 | `FILE_CHUNK` | `sha256\|chunkIndex\|base64data` | Holder → Requester |
+
+- **Routing:** All three use BROADCAST.
+- **Reason:** BROADCAST propagation means any peer holding chunks can respond to a
+  request, enabling swarming. A dedicated UNICAST optimisation is deferred.
+
+### Chunk Reassembly
+
+- **Decision:** `RandomAccessFile.seek(chunkIndex × chunkSize)` writes each chunk
+  directly to its correct offset.
+- **Reason:** Chunks may arrive out of order in a mesh network. Random-access writes
+  avoid the need for a reassembly buffer or sorted merge step. The
+  `downloadedChunks` counter in Room tracks completeness.
+
+---
+
+## 20. On-Device Health Dashboard (Phase 4)
+
+### Topology Graph
+
+- **File:** `HealthDashboard.kt`
+- **Decision:** Canvas node-link diagram. Local node at centre (green), peers
+  radially at equal angles (cyan), edges as white lines.
+- **Reason:** Gives operators instant visibility into mesh connectivity. Canvas
+  avoids a graph-layout library dependency. Radial layout is O(n) and avoids
+  force-directed simulation costs.
+
+### Stat Cards
+
+- **Decision:** 8 summary cards: Peers, Sent, Received, Forwarded, Dropped,
+  Store-Forward Queued, Lost, Battery.
+- **Reason:** These are the key health indicators that a field operator needs at a
+  glance. All values come from `NetworkStats` which is already maintained by
+  `P2PManager`.
+
+### Peer Stats Table
+
+- **Decision:** Per-peer table with columns: Name, Sent, Received, RTT, Loss %.
+- **Reason:** Allows identification of individual weak links (high RTT or loss)
+  that the topology graph cannot surface.
+
+### Packet Loss Heatmap
+
+- **Decision:** Canvas grid where each cell represents a peer, coloured from
+  green (0 % loss) through yellow (50 %) to red (100 %).
+- **Colour formula:** Linear interpolation in RGB: `green → yellow` for 0–0.5,
+  `yellow → red` for 0.5–1.0.
+- **Reason:** Heatmaps give rapid visual triage — red cells need attention. The
+  two-segment linear interpolation avoids perceptual non-uniformity of HSL while
+  remaining simple to implement.

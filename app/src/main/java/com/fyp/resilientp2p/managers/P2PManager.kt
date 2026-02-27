@@ -49,6 +49,17 @@ import android.content.IntentFilter
 import android.os.BatteryManager
 import com.fyp.resilientp2p.data.NetworkStats
 
+/**
+ * Core mesh networking engine managing peer discovery, connection lifecycle,
+ * packet routing, store-and-forward, and file/audio transfers via Google Nearby Connections.
+ *
+ * Uses P2P_CLUSTER strategy with max 4 simultaneous connections. Implements distance-vector
+ * routing with poison reverse, automatic reconnection, and zombie endpoint detection.
+ *
+ * @param context Application context for Nearby Connections and system services
+ * @param logDao Optional Room DAO for persistent structured logging
+ * @param packetDao Optional Room DAO for store-and-forward packet persistence
+ */
 class P2PManager(
     private val context: Context,
     private val logDao: LogDao? = null,
@@ -140,6 +151,12 @@ class P2PManager(
 
     // Endpoints with active transfers (exempt from zombie detection)
     val activeTransferEndpoints = ConcurrentHashMap<String, Long>() // endpointId -> startTime
+
+    // External manager references (set by P2PApplication after construction)
+    /** Internet gateway manager for cross-mesh relay. Set by [P2PApplication]. */
+    var internetGatewayManager: InternetGatewayManager? = null
+    /** Emergency broadcast manager. Set by [P2PApplication]. */
+    var emergencyManager: EmergencyManager? = null
 
     // File transfer metadata: payloadId -> FileMetadata (set by FILE_META packet, consumed on transfer complete)
     data class FileMetadata(val fileName: String, val mimeType: String, val fileSize: Long, val senderName: String)
@@ -1123,6 +1140,18 @@ class P2PManager(
             processPacket(packet, sourceEndpointId)
         }
 
+        // EMERGENCY packets: always process locally AND flood to all neighbors
+        if (packet.type == PacketType.EMERGENCY) {
+            if (packet.destId != localUsername && packet.destId != "BROADCAST") {
+                processPacket(packet, sourceEndpointId)
+            }
+            // Always flood emergency regardless of destination (entire mesh must see it)
+            if (packet.ttl > 0) {
+                forwardPacket(packet, sourceEndpointId)
+            }
+            return
+        }
+
         if (packet.destId != localUsername) {
             if (packet.ttl > 0) {
                 forwardPacket(packet, sourceEndpointId)
@@ -1317,6 +1346,16 @@ class P2PManager(
                         com.fyp.resilientp2p.data.LogLevel.ERROR, peerId = packet.sourceId)
                 }
             }
+            PacketType.EMERGENCY -> {
+                // Emergency broadcast — forward to EmergencyManager for UI alert
+                log(
+                    "\u26a0\ufe0f EMERGENCY from='${packet.sourceId}': ${String(packet.payload, StandardCharsets.UTF_8).take(100)}",
+                    com.fyp.resilientp2p.data.LogLevel.WARN,
+                    peerId = packet.sourceId
+                )
+                emergencyManager?.handleEmergencyPacket(packet)
+                updateState { it.copy(emergencyCount = it.emergencyCount + 1) }
+            }
             else -> {}
         }
     }
@@ -1373,14 +1412,31 @@ class P2PManager(
                     }
                 }
             } else {
-                // No neighbors at all — queue for store-and-forward
+                // No neighbors at all — queue for store-and-forward or try cloud relay
                 if (newPacket.type == PacketType.DATA || newPacket.type == PacketType.STORE_FORWARD) {
-                    log(
-                            "PACKET_QUEUED_SF id=${packet.id.take(8)} dest='${packet.destId}' " +
-                            "reason=NO_ROUTE_NO_NEIGHBORS type=${newPacket.type}",
-                            com.fyp.resilientp2p.data.LogLevel.INFO
-                    )
-                    queueForStoreForward(newPacket)
+                    // Try internet gateway relay if available
+                    val gateway = internetGatewayManager
+                    if (gateway != null && gateway.hasInternet.value && newPacket.type == PacketType.DATA) {
+                        scope.launch {
+                            val payloadStr = String(newPacket.payload, StandardCharsets.UTF_8)
+                            val relayed = gateway.relayToCloud(newPacket.destId, newPacket.sourceId, payloadStr, newPacket.id)
+                            if (relayed) {
+                                log("PACKET_RELAYED_CLOUD id=${packet.id.take(8)} dest='${packet.destId}'",
+                                    com.fyp.resilientp2p.data.LogLevel.INFO)
+                            } else {
+                                log("RELAY_FAILED_FALLBACK_SF id=${packet.id.take(8)} dest='${packet.destId}'",
+                                    com.fyp.resilientp2p.data.LogLevel.INFO)
+                                queueForStoreForward(newPacket)
+                            }
+                        }
+                    } else {
+                        log(
+                                "PACKET_QUEUED_SF id=${packet.id.take(8)} dest='${packet.destId}' " +
+                                "reason=NO_ROUTE_NO_NEIGHBORS type=${newPacket.type}",
+                                com.fyp.resilientp2p.data.LogLevel.INFO
+                        )
+                        queueForStoreForward(newPacket)
+                    }
                 } else {
                     log("PACKET_DROPPED id=${packet.id.take(8)} dest='${packet.destId}' reason=NO_ROUTE type=${packet.type}",
                             com.fyp.resilientp2p.data.LogLevel.WARN)
@@ -1476,6 +1532,17 @@ class P2PManager(
         } catch (e: Exception) {
             log("PING_SEND_ERROR endpoint=$endpointId error='${e.message}'", com.fyp.resilientp2p.data.LogLevel.ERROR)
         }
+    }
+
+    /**
+     * Inject a pre-built packet into the mesh routing pipeline.
+     * Used by [EmergencyManager] and [InternetGatewayManager] to send packets
+     * without going through the public sendData/sendPing APIs.
+     *
+     * @param packet The packet to inject (will be processed as if from LOCAL)
+     */
+    fun injectPacket(packet: Packet) {
+        handlePacket(packet, "LOCAL")
     }
 
     fun sendFile(peerName: String, uri: android.net.Uri) {
@@ -1725,8 +1792,13 @@ class P2PManager(
         // This prevents count-to-infinity and speeds convergence on link failure.
         val neighborsSnapshot = HashMap(neighbors)
 
+        // Check if this device is an internet gateway
+        val isGateway = internetGatewayManager?.shouldAdvertiseGateway() == true
+        // Update state for UI
+        updateState { it.copy(isGateway = isGateway, hasInternet = internetGatewayManager?.hasInternet?.value == true) }
+
         neighborsSnapshot.keys.forEach { endpointId ->
-            val routeData = synchronized(routingLock) {
+            var routeData = synchronized(routingLock) {
                 routingScores.entries
                     .filter { it.key != localUsername } // Don't advertise self
                     .joinToString(",") { (dest, score) ->
@@ -1738,6 +1810,14 @@ class P2PManager(
                             "$dest:$score"
                         }
                     }
+            }
+            // Append __GATEWAY__ flag if this device has internet access
+            if (isGateway) {
+                routeData = if (routeData.isBlank()) {
+                    "${InternetGatewayManager.GATEWAY_FLAG}:1"
+                } else {
+                    "$routeData,${InternetGatewayManager.GATEWAY_FLAG}:1"
+                }
             }
             if (routeData.isBlank()) return@forEach
 

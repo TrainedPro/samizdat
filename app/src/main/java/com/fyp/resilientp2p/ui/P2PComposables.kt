@@ -40,9 +40,28 @@ import com.fyp.resilientp2p.testing.TestRunner
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
+/**
+ * Root composable for the Samizdat meshnetwork UI.
+ *
+ * Renders the full-screen Scaffold including:
+ * - Connection status header (advertising/discovering toggles)
+ * - Gateway status card (green) when internet is available
+ * - Emergency alerts banner (red) with last 3 alerts and SOS toggle
+ * - Peer list with chat, file-send, and voice-call actions
+ * - Network stats dashboard
+ * - Log viewer with level filter and export
+ * - Test mode entry point
+ *
+ * @param p2pManager Core mesh engine providing [P2PState] via StateFlow.
+ * @param onExportLogs Callback to trigger CSV log export from the host Activity.
+ * @param testRunner Optional automated test suite runner.
+ * @param chatDao Optional Room DAO for chat message persistence.
+ * @param telemetryManager Optional cloud telemetry manager (controls upload toggle).
+ * @param emergencyManager Optional emergency broadcast manager (SOS + alerts).
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ResilientP2PApp(p2pManager: P2PManager, onExportLogs: () -> Unit, testRunner: TestRunner? = null, chatDao: ChatDao? = null, telemetryManager: TelemetryManager? = null) {
+fun ResilientP2PApp(p2pManager: P2PManager, onExportLogs: () -> Unit, testRunner: TestRunner? = null, chatDao: ChatDao? = null, telemetryManager: TelemetryManager? = null, emergencyManager: com.fyp.resilientp2p.managers.EmergencyManager? = null) {
         val state by p2pManager.state.collectAsState()
         val context = androidx.compose.ui.platform.LocalContext.current
 
@@ -170,6 +189,65 @@ fun ResilientP2PApp(p2pManager: P2PManager, onExportLogs: () -> Unit, testRunner
                                         if (isConnected) (bandwidthInfo?.quality ?: 0) else 0
                         )
 
+                        // --- Gateway Status Indicator ---
+                        if (state.hasInternet) {
+                                Card(
+                                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                        colors = CardDefaults.cardColors(
+                                                containerColor = if (state.isGateway) Color(0xFF1B5E20).copy(alpha = 0.15f) else colorScheme.surfaceVariant
+                                        )
+                                ) {
+                                        Row(
+                                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                                Text("\uD83C\uDF10", fontSize = 16.sp)
+                                                Spacer(modifier = Modifier.width(8.dp))
+                                                Text(
+                                                        if (state.isGateway) "Internet Gateway Active — relaying for mesh" else "Internet Available",
+                                                        style = MaterialTheme.typography.bodySmall,
+                                                        color = Color(0xFF1B5E20)
+                                                )
+                                        }
+                                }
+                        }
+
+                        // --- Emergency Alerts Banner ---
+                        val emergencyHistory = emergencyManager?.emergencyHistory?.collectAsState()
+                        val recentEmergencies = emergencyHistory?.value?.take(3) ?: emptyList()
+                        if (recentEmergencies.isNotEmpty()) {
+                                Card(
+                                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                        colors = CardDefaults.cardColors(containerColor = Color(0xFFB71C1C).copy(alpha = 0.15f)),
+                                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFB71C1C))
+                                ) {
+                                        Column(modifier = Modifier.padding(12.dp)) {
+                                                Text(
+                                                        "\u26a0\ufe0f EMERGENCY ALERTS (${emergencyHistory?.value?.size ?: 0})",
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = Color(0xFFB71C1C),
+                                                        fontSize = 14.sp
+                                                )
+                                                recentEmergencies.forEach { msg ->
+                                                        Spacer(modifier = Modifier.height(4.dp))
+                                                        Text(
+                                                                "${msg.sourceId}: ${msg.message.take(80)}",
+                                                                style = MaterialTheme.typography.bodySmall,
+                                                                color = Color(0xFFB71C1C),
+                                                                maxLines = 2
+                                                        )
+                                                        if (msg.hasLocation) {
+                                                                Text(
+                                                                        "\uD83D\uDCCD ${String.format("%.5f", msg.latitude)}, ${String.format("%.5f", msg.longitude)}",
+                                                                        style = MaterialTheme.typography.labelSmall,
+                                                                        color = Color(0xFFD32F2F)
+                                                                )
+                                                        }
+                                                }
+                                        }
+                                }
+                        }
+
                         Spacer(modifier = Modifier.height(16.dp))
 
                         // --- Controls Section ---
@@ -265,6 +343,80 @@ fun ResilientP2PApp(p2pManager: P2PManager, onExportLogs: () -> Unit, testRunner
                                                 fontSize = 12.sp,
                                                 color = colorScheme.onErrorContainer
                                         )
+                                }
+                        }
+
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        // --- SOS / Emergency Section ---
+                        if (emergencyManager != null) {
+                                val sosActive = emergencyManager.sosActive.collectAsState()
+                                var showEmergencyInput by remember { mutableStateOf(false) }
+                                var emergencyText by remember { mutableStateOf("") }
+
+                                Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                        // SOS Beacon Toggle
+                                        Button(
+                                                onClick = { emergencyManager.toggleSOSBeacon() },
+                                                modifier = Modifier.weight(1f).height(48.dp),
+                                                colors = ButtonDefaults.buttonColors(
+                                                        containerColor = if (sosActive.value) Color(0xFFB71C1C) else Color(0xFFD32F2F)
+                                                ),
+                                                shape = RoundedCornerShape(12.dp)
+                                        ) {
+                                                Text(
+                                                        if (sosActive.value) "\uD83D\uDED1 STOP SOS" else "\uD83C\uDD98 SOS BEACON",
+                                                        fontWeight = FontWeight.Bold,
+                                                        fontSize = 13.sp,
+                                                        color = Color.White
+                                                )
+                                        }
+                                        // One-shot emergency broadcast
+                                        Button(
+                                                onClick = { showEmergencyInput = !showEmergencyInput },
+                                                modifier = Modifier.weight(1f).height(48.dp),
+                                                colors = ButtonDefaults.buttonColors(
+                                                        containerColor = Color(0xFFE65100)
+                                                ),
+                                                shape = RoundedCornerShape(12.dp)
+                                        ) {
+                                                Text(
+                                                        "\u26a0\ufe0f EMERGENCY",
+                                                        fontWeight = FontWeight.Bold,
+                                                        fontSize = 13.sp,
+                                                        color = Color.White
+                                                )
+                                        }
+                                }
+                                AnimatedVisibility(visible = showEmergencyInput) {
+                                        Row(
+                                                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                                                verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                                OutlinedTextField(
+                                                        value = emergencyText,
+                                                        onValueChange = { emergencyText = it },
+                                                        modifier = Modifier.weight(1f),
+                                                        placeholder = { Text("Emergency message...") },
+                                                        singleLine = true
+                                                )
+                                                Spacer(modifier = Modifier.width(8.dp))
+                                                Button(
+                                                        onClick = {
+                                                                if (emergencyText.isNotBlank()) {
+                                                                        emergencyManager.sendEmergencyBroadcast(emergencyText)
+                                                                        emergencyText = ""
+                                                                        showEmergencyInput = false
+                                                                }
+                                                        },
+                                                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFB71C1C))
+                                                ) {
+                                                        Text("SEND", color = Color.White, fontWeight = FontWeight.Bold)
+                                                }
+                                        }
                                 }
                         }
 

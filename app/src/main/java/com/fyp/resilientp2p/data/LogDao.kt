@@ -5,6 +5,15 @@ import androidx.room.Insert
 import androidx.room.Query
 import kotlinx.coroutines.flow.Flow
 
+/**
+ * Room DAO for the `logs` table ([LogEntry]).
+ *
+ * Provides reactive [Flow]-based queries for the UI log viewer and snapshot
+ * queries for CSV export and telemetry upload.
+ *
+ * @see LogEntry
+ * @see AppDatabase
+ */
 @Dao
 interface LogDao {
     @Insert suspend fun insert(entry: LogEntry)

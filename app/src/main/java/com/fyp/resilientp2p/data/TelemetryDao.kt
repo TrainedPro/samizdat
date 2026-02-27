@@ -4,6 +4,16 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.Query
 
+/**
+ * Room DAO for the `telemetry_events` table ([TelemetryEvent]).
+ *
+ * Manages the upload lifecycle: events are inserted as "pending", batch-uploaded
+ * by [com.fyp.resilientp2p.managers.TelemetryUploadWorker], and then marked uploaded
+ * or cleaned up. A hard cap of 5 000 rows prevents unbounded DB growth.
+ *
+ * @see TelemetryEvent
+ * @see com.fyp.resilientp2p.managers.TelemetryManager
+ */
 @Dao
 interface TelemetryDao {
     @Insert

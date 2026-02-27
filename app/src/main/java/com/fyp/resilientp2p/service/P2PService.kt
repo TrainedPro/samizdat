@@ -15,6 +15,21 @@ import com.fyp.resilientp2p.P2PApplication
 import com.fyp.resilientp2p.R
 import com.fyp.resilientp2p.managers.P2PManager
 
+/**
+ * Foreground service that keeps the mesh node alive when the app is backgrounded.
+ *
+ * Android kills background processes aggressively; this service holds a persistent
+ * notification and `FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE` (API 34+) to signal
+ * the OS that an active Bluetooth/WiFi-Direct session must not be interrupted.
+ *
+ * Lifecycle:
+ * - Created by [MainActivity] after permissions are granted.
+ * - [onCreate]: obtains [P2PManager] from [P2PApplication] and shows the notification.
+ * - [onDestroy]: tears down all managers in reverse-dependency order.
+ *
+ * @see P2PApplication
+ * @see P2PManager
+ */
 class P2PService : Service() {
 
     private val binder = LocalBinder()
@@ -81,8 +96,11 @@ class P2PService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         stopForeground(STOP_FOREGROUND_REMOVE)
-        (application as P2PApplication).telemetryManager.destroy()
+        val app = application as P2PApplication
+        app.emergencyManager.destroy()
+        app.internetGatewayManager.destroy()
+        app.telemetryManager.destroy()
         p2pManager.stopAll()
-        (application as P2PApplication).heartbeatManager.destroy()
+        app.heartbeatManager.destroy()
     }
 }

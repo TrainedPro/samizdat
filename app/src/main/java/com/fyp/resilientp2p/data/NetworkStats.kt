@@ -29,6 +29,18 @@ data class NetworkStatsSnapshot(
     val peerStats: Map<String, PeerStatsSnapshot> = emptyMap()
 )
 
+/**
+ * Immutable snapshot of per-peer statistics, included inside [NetworkStatsSnapshot.peerStats].
+ *
+ * @property peerName Device name of the remote peer.
+ * @property connectedSinceMs Epoch millis when the connection was established.
+ * @property lastRttMs Last measured RTT in milliseconds (-1 = no measurement yet).
+ * @property bytesSent Cumulative bytes sent to this peer.
+ * @property bytesReceived Cumulative bytes received from this peer.
+ * @property packetsSent Cumulative packets sent to this peer.
+ * @property packetsReceived Cumulative packets received from this peer.
+ * @property disconnectCount Number of times this peer has disconnected and reconnected.
+ */
 data class PeerStatsSnapshot(
     val peerName: String,
     val connectedSinceMs: Long = 0,

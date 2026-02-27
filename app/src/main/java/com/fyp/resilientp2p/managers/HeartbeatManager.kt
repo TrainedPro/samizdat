@@ -11,10 +11,27 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
+/**
+ * Manages periodic heartbeat (PING/PONG) exchanges with all direct mesh neighbors.
+ *
+ * Heartbeats serve three purposes:
+ * 1. **Liveness detection** — peers that stop responding are disconnected ("zombie cleanup").
+ * 2. **RTT measurement** — round-trip times are fed into [NetworkStats] for the dashboard.
+ * 3. **Adaptive interval** — [BandwidthInfo] events adjust heartbeat frequency
+ *    (2 s on HIGH bandwidth, 10 s on LOW, default 5 s).
+ *
+ * Zombie threshold: `max(interval * 6, 45 000 ms)`. The 45 s floor prevents false
+ * positives caused by normal Bluetooth stalls under contested bandwidth.
+ *
+ * @param p2pManager The core mesh engine used to send PINGs and read neighbor state.
+ * @see HeartbeatConfig
+ */
 class HeartbeatManager(private val p2pManager: P2PManager) {
 
     companion object {
+        /** Default heartbeat interval in milliseconds. */
         private const val DEFAULT_INTERVAL_MS = 5000L
+        /** Default PING payload size in bytes (includes 8-byte timestamp). */
         private const val DEFAULT_PAYLOAD_SIZE = 64
     }
 
@@ -22,6 +39,13 @@ class HeartbeatManager(private val p2pManager: P2PManager) {
     private val supervisorJob = SupervisorJob()
     private val scope = CoroutineScope(Dispatchers.IO + supervisorJob)
 
+    /**
+     * Configuration for the heartbeat subsystem.
+     *
+     * @property intervalMs Milliseconds between PING rounds.
+     * @property payloadSizeBytes PING payload size (min 8 bytes for embedded timestamp).
+     * @property isEnabled Master switch — heartbeat auto-starts when enabled.
+     */
     data class HeartbeatConfig(
             val intervalMs: Long = DEFAULT_INTERVAL_MS,
             val payloadSizeBytes: Int = DEFAULT_PAYLOAD_SIZE,

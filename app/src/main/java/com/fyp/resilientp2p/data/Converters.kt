@@ -3,6 +3,15 @@ package com.fyp.resilientp2p.data
 
 import androidx.room.TypeConverter
 
+/**
+ * Room [TypeConverter] collection for all enum types stored in the database.
+ *
+ * Converts enums to/from their [Enum.name] string representation. Unknown values
+ * fall back to a safe default rather than crashing, which protects against DB
+ * corruption after enum refactors or destructive migrations.
+ *
+ * @see AppDatabase
+ */
 class Converters {
     @TypeConverter
     fun fromLogLevel(value: LogLevel): String = value.name

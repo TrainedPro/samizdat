@@ -7,6 +7,14 @@ import java.io.DataOutputStream
 import java.nio.charset.StandardCharsets
 import java.util.UUID
 
+/**
+ * All wire-level message types in the Samizdat mesh protocol.
+ *
+ * Each packet on the mesh carries exactly one [PacketType]. Routers use the type to
+ * decide forwarding strategy (unicast, broadcast, flood) and priority.
+ *
+ * @see Packet
+ */
 enum class PacketType {
     PING,
     PONG,
@@ -18,11 +26,39 @@ enum class PacketType {
     AUDIO_CONTROL,     // Start/stop audio session signals
     ROUTE_ANNOUNCE,    // Periodic route table advertisement
     STORE_FORWARD,     // Store-and-forward delivery attempt
-    FILE_META          // File transfer metadata (filename, MIME, payloadId)
+    FILE_META,         // File transfer metadata (filename, MIME, payloadId)
+    EMERGENCY          // Emergency broadcast — highest priority, floods entire mesh
 }
 
+/**
+ * A single hop recorded in a packet's route trace.
+ *
+ * @property peerId The device name of the node at this hop.
+ * @property rssi The RSSI (signal strength) measured at this hop, or 0 if unknown.
+ */
 data class Hop(val peerId: String, val rssi: Int)
 
+/**
+ * The fundamental mesh protocol data unit. Every message on the Samizdat mesh is
+ * serialized as a [Packet] using a compact binary format (no Protobuf/JSON on-wire).
+ *
+ * Binary format (big-endian via [DataOutputStream]):
+ * ```
+ * [id:lenPrefixStr][type:lenPrefixStr][timestamp:i64][sourceId:str][destId:str]
+ * [payloadSize:i32][payload:bytes][ttl:i32][seqNo:i64][traceSize:i32][trace...]
+ * ```
+ *
+ * @property id Unique packet identifier (UUID). Used for deduplication.
+ * @property type The [PacketType] determining routing behavior.
+ * @property timestamp Unix epoch millis when the packet was created.
+ * @property sourceId The originating device name.
+ * @property destId The target device name, or a broadcast address.
+ * @property payload Opaque application-level data (max 1 MB).
+ * @property ttl Time-to-live in hops (default 5, max 255). Decremented at each relay.
+ * @property trace Ordered list of [Hop]s this packet has traversed.
+ * @property sequenceNumber Monotonic counter from the source, used for ordering.
+ * @see PacketType
+ */
 data class Packet(
         val id: String = UUID.randomUUID().toString(),
         val type: PacketType,
@@ -76,11 +112,16 @@ data class Packet(
     // Binary serialization only
 
     companion object {
-        const val DEFAULT_TTL = 5 // Support up to 5-hop meshes
-        private const val MAX_STRING_LENGTH = 256 // 256B max per string (device names/UUIDs are short)
-        private const val MAX_PAYLOAD_SIZE = 1 * 1024 * 1024 // 1MB max payload
-        private const val MAX_TRACE_SIZE = 256 // Max hops in trace
-        private const val MAX_TOTAL_PACKET_SIZE = 2 * 1024 * 1024 // 2MB aggregate limit
+        /** Default hop limit. 5 hops covers most BLE/WiFi-Direct mesh topologies. */
+        const val DEFAULT_TTL = 5
+        /** Maximum byte length for any single string field (device name, UUID). */
+        private const val MAX_STRING_LENGTH = 256
+        /** Maximum payload size in bytes (1 MB). */
+        private const val MAX_PAYLOAD_SIZE = 1 * 1024 * 1024
+        /** Maximum number of hops recorded in the trace list. */
+        private const val MAX_TRACE_SIZE = 256
+        /** Aggregate packet size limit to prevent OOM from malformed data (2 MB). */
+        private const val MAX_TOTAL_PACKET_SIZE = 2 * 1024 * 1024
 
         fun fromBytes(bytes: ByteArray): Packet {
             // Aggregate size check to prevent OOM DoS

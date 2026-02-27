@@ -6,6 +6,15 @@ import androidx.room.Query
 import androidx.room.Update
 import kotlinx.coroutines.flow.Flow
 
+/**
+ * Room DAO for the `chat_messages` table ([ChatMessage]).
+ *
+ * Supports direct peer-to-peer chats and broadcast messages. File transfer
+ * progress is updated in-place via [updateProgress] and [markTransferComplete].
+ *
+ * @see ChatMessage
+ * @see AppDatabase
+ */
 @Dao
 interface ChatDao {
     @Insert

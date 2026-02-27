@@ -8,6 +8,24 @@ import androidx.room.OnConflictStrategy
 import androidx.room.PrimaryKey
 import androidx.room.Query
 
+/**
+ * Room entity for the store-and-forward packet queue.
+ *
+ * When a packet's destination peer is unreachable, it is persisted here and
+ * re-attempted whenever that peer (or a route to it) becomes available.
+ * Indexed by [destId]+[expiration] for efficient lookup and TTL cleanup.
+ *
+ * @property id The original [Packet.id] UUID (primary key — natural dedup).
+ * @property destId Target device name. Used to query pending packets when a peer appears.
+ * @property type Serialized [PacketType] name for reconstruction.
+ * @property payload Raw packet payload bytes.
+ * @property timestamp Original creation time (epoch millis).
+ * @property expiration Absolute epoch millis after which this entry is garbage-collected.
+ * @property sourceId Originator device name, needed to reconstruct the full [Packet].
+ *
+ * @see PacketDao
+ * @see com.fyp.resilientp2p.managers.P2PManager
+ */
 @Entity(
     tableName = "packet_queue",
     indices = [Index(value = ["destId", "expiration"])]
@@ -50,6 +68,14 @@ data class PacketEntity(
     }
 }
 
+/**
+ * DAO for the store-and-forward packet queue ([PacketEntity]).
+ *
+ * Provides insert, per-peer lookup, single delete, and TTL-based cleanup.
+ * All operations are suspending for use from coroutines.
+ *
+ * @see PacketEntity
+ */
 @Dao
 interface PacketDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE) suspend fun insertPacket(packet: PacketEntity)

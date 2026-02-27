@@ -5,6 +5,20 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 
+/**
+ * Room database for the Samizdat mesh node.
+ *
+ * Hosts four tables:
+ * - **logs** — diagnostic and metric log entries ([LogEntry])
+ * - **packet_queue** — store-and-forward packets ([PacketEntity])
+ * - **chat_messages** — user chat messages and file transfers ([ChatMessage])
+ * - **telemetry_events** — cloud telemetry snapshots ([TelemetryEvent])
+ *
+ * Uses [fallbackToDestructiveMigration] because this is a research/test-bed app
+ * where data persistence across schema changes is not required.
+ *
+ * @see Converters
+ */
 @Database(
         entities = [LogEntry::class, PacketEntity::class, ChatMessage::class, TelemetryEvent::class],
         version = 7,

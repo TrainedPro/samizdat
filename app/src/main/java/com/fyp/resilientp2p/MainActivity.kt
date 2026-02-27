@@ -40,6 +40,23 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+/**
+ * Main entry-point Activity for Samizdat.
+ *
+ * Responsibilities:
+ * - Request Bluetooth, WiFi, and location permissions at startup.
+ * - Start the foreground [P2PService] and bind to it.
+ * - Host the root [ResilientP2PApp] Compose UI.
+ * - Provide options-menu actions: Advanced settings, log export, and graceful exit.
+ * - Handle battery-optimization exemption request for reliable background operation.
+ *
+ * All long-lived state is owned by [P2PApplication]; this Activity merely observes
+ * and delegates.
+ *
+ * @see P2PApplication
+ * @see P2PService
+ * @see ResilientP2PApp
+ */
 class MainActivity : AppCompatActivity() {
 
     private lateinit var p2pManager: P2PManager
@@ -112,7 +129,8 @@ class MainActivity : AppCompatActivity() {
                                     onExportLogs = { exportLogs() },
                                     testRunner = testRunner,
                                     chatDao = (application as P2PApplication).database.chatDao(),
-                                    telemetryManager = (application as P2PApplication).telemetryManager
+                                    telemetryManager = (application as P2PApplication).telemetryManager,
+                                    emergencyManager = (application as P2PApplication).emergencyManager
                             )
                         }
                     }

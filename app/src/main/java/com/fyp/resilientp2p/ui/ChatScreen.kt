@@ -147,10 +147,15 @@ fun ChatScreen(
     ) { padding ->
         val listState = rememberLazyListState()
 
-        // Auto-scroll to bottom when new messages arrive
+        // Auto-scroll to bottom when new messages arrive, only if user is near the bottom
         LaunchedEffect(messages.size) {
             if (messages.isNotEmpty()) {
-                listState.animateScrollToItem(messages.size - 1)
+                val lastVisibleItem = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+                val totalItems = listState.layoutInfo.totalItemsCount
+                // Only auto-scroll if user is within 3 items of the bottom (or list just started)
+                if (totalItems <= 1 || lastVisibleItem >= totalItems - 3) {
+                    listState.animateScrollToItem(messages.size - 1)
+                }
             }
         }
 
@@ -370,8 +375,14 @@ private fun ChatInputBar(
                 if (!isBroadcast) {
                     val interactionSource = remember { MutableInteractionSource() }
                     val isPressed by interactionSource.collectIsPressedAsState()
+                    var wasEverPressed by remember { mutableStateOf(false) }
                     LaunchedEffect(isPressed) {
-                        if (isPressed) onStartAudio() else onStopAudio()
+                        if (isPressed) {
+                            wasEverPressed = true
+                            onStartAudio()
+                        } else if (wasEverPressed) {
+                            onStopAudio()
+                        }
                     }
                     Button(
                         onClick = {},

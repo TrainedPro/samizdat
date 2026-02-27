@@ -40,13 +40,10 @@ class MessageCache(private val capacity: Int = 1000) {
             // If still over capacity, remove ~25% via random sampling (O(n) vs O(n log n) sort)
             if (cache.size > capacity) {
                 val toRemove = capacity / 4
-                var removed = 0
-                val iter = cache.entries.iterator()
-                while (iter.hasNext() && removed < toRemove) {
-                    iter.next()
-                    iter.remove()
-                    removed++
-                }
+                val oldest = cache.entries
+                    .sortedBy { it.value }
+                    .take(toRemove)
+                oldest.forEach { cache.remove(it.key) }
             }
         } finally {
             cleanupLock.set(false)

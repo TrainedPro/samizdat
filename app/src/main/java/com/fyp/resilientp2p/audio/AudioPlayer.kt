@@ -72,10 +72,9 @@ open class AudioPlayer(
                 audioTrack.release()
                 return@Thread
             }
-            audioTrack.play()
-
             var len: Int = 0
             try {
+                audioTrack.play()
                 val data = buffer.data
 
                 // --- Adaptive Jitter Buffer: pre-fill before playback ---
@@ -119,6 +118,7 @@ open class AudioPlayer(
                 log("[$TAG] Exception with playing stream: ${e.message}", LogLevel.ERROR)
             } finally {
                 stopInternal()
+                try { audioTrack.stop() } catch (_: IllegalStateException) {}
                 audioTrack.release()
                 onFinish()
             }

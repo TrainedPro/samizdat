@@ -56,7 +56,6 @@ private val LightColorScheme =
 fun ResilientP2PTestbedTheme(
         darkTheme: Boolean = isSystemInDarkTheme(),
         // Dynamic color is available on Android 12+
-        // Dynamic color is available on Android 12+
         dynamicColor: Boolean = false,
         content: @Composable () -> Unit
 ) {
@@ -76,16 +75,8 @@ fun ResilientP2PTestbedTheme(
                 SideEffect {
                         val window = (view.context as? Activity)?.window ?: return@SideEffect
                         if (Build.VERSION.SDK_INT < 35) {
-                                try {
-                                        val method =
-                                                window.javaClass.getMethod(
-                                                        "setStatusBarColor",
-                                                        Int::class.javaPrimitiveType
-                                                )
-                                        method.invoke(window, colorScheme.background.toArgb())
-                                } catch (e: Exception) {
-                                        // Ignore reflection errors
-                                }
+                                @Suppress("DEPRECATION")
+                                window.statusBarColor = colorScheme.background.toArgb()
                         }
                         WindowCompat.getInsetsController(window, view).isAppearanceLightStatusBars =
                                 !darkTheme

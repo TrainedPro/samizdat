@@ -7,7 +7,7 @@ import androidx.room.RoomDatabase
 
 @Database(
         entities = [LogEntry::class, PacketEntity::class, ChatMessage::class, TelemetryEvent::class],
-        version = 6,
+        version = 7,
         exportSchema = false
 )
 @androidx.room.TypeConverters(Converters::class)
@@ -20,6 +20,7 @@ abstract class AppDatabase : RoomDatabase() {
     companion object {
         @Volatile private var INSTANCE: AppDatabase? = null
 
+        @Suppress("DEPRECATION")
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE
                     ?: synchronized(this) {
@@ -29,9 +30,7 @@ abstract class AppDatabase : RoomDatabase() {
                                                 AppDatabase::class.java,
                                                 "p2p_testbed_db"
                                         )
-                                        .fallbackToDestructiveMigration() // Enabled to handle
-                                        // schema changes
-                                        // (LogEntry fields)
+                                        .fallbackToDestructiveMigration()
                                         .build()
                         INSTANCE = instance
                         instance

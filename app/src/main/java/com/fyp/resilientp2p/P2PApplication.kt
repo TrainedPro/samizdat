@@ -37,16 +37,12 @@ class P2PApplication : Application() {
         testRunner.onTestResultsReady = { json -> telemetryManager.recordTestResults(json) }
 
         // AUDIT FIX: onTerminate() is never called on real devices.
-        // Use ProcessLifecycleOwner for reliable cleanup when the app process stops.
+        // ProcessLifecycleOwner NEVER dispatches ON_DESTROY, so that callback was dead code.
+        // Use onStop to know when the app goes to background; actual cleanup is done
+        // by the foreground service's onDestroy and graceful-shutdown paths.
         ProcessLifecycleOwner.get().lifecycle.addObserver(object : DefaultLifecycleObserver {
             override fun onStop(owner: LifecycleOwner) {
                 // App went to background — managers stay alive (foreground service).
-                // Cleanup only on actual destroy.
-            }
-            override fun onDestroy(owner: LifecycleOwner) {
-                telemetryManager.destroy()
-                heartbeatManager.destroy()
-                p2pManager.stopAll()
             }
         })
     }

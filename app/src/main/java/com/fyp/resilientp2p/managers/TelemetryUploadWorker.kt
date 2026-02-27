@@ -7,6 +7,8 @@ import androidx.work.WorkerParameters
 import com.fyp.resilientp2p.data.AppDatabase
 import com.fyp.resilientp2p.data.TelemetryEvent
 import com.fyp.resilientp2p.data.TelemetryEventType
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.BufferedWriter
 import java.io.File
@@ -69,7 +71,7 @@ class TelemetryUploadWorker(
         private val consecutiveFailures = AtomicInteger(0)
     }
 
-    override suspend fun doWork(): Result {
+    override suspend fun doWork(): Result = withContext(Dispatchers.IO) {
         val db = AppDatabase.getDatabase(applicationContext)
         val telemetryDao = db.telemetryDao()
         val prefs = applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -79,26 +81,26 @@ class TelemetryUploadWorker(
         val lastUpload = prefs.getLong(KEY_LAST_UPLOAD_TIME, 0)
         if (now - lastUpload < MIN_UPLOAD_INTERVAL_MS) {
             Log.d(TAG, "Rate limited — skipping upload (last was ${(now - lastUpload) / 1000}s ago)")
-            return Result.success()
+            return@withContext Result.success()
         }
 
         // Circuit breaker check
         val failures = consecutiveFailures.get()
         if (failures >= MAX_CONSECUTIVE_FAILURES) {
             Log.w(TAG, "Circuit breaker open ($failures consecutive failures) — retry via WorkManager backoff")
-            return Result.retry()
+            return@withContext Result.retry()
         }
 
         // Get pending events
         val pending = telemetryDao.getPendingEvents(TelemetryManager.MAX_BATCH_SIZE)
         if (pending.isEmpty()) {
             Log.d(TAG, "No pending telemetry events")
-            return Result.success()
+            return@withContext Result.success()
         }
 
         Log.i(TAG, "Uploading ${pending.size} telemetry events...")
 
-        return try {
+        return@withContext try {
             if (isFirebaseConfigured) {
                 // Upload to Firebase Firestore
                 uploadToFirestore(pending)
@@ -111,8 +113,8 @@ class TelemetryUploadWorker(
             val ids = pending.map { it.id }
             telemetryDao.markUploaded(ids)
 
-            // Cleanup uploaded events
-            telemetryDao.deleteUploaded()
+            // Enforce hard DB cap (retention-based cleanup is handled by TelemetryManager)
+            telemetryDao.enforceMaxCount(5000)
 
             // Reset circuit breaker
             consecutiveFailures.set(0)
@@ -233,7 +235,8 @@ class TelemetryUploadWorker(
     // ─────────────────────────────────────────────────────────────────
 
     private fun exportToLocalFile(events: List<TelemetryEvent>) {
-        val dir = File(applicationContext.getExternalFilesDir(null), "telemetry")
+        val baseDir = applicationContext.getExternalFilesDir(null) ?: applicationContext.filesDir
+        val dir = File(baseDir, "telemetry")
         if (!dir.exists()) dir.mkdirs()
 
         val timestamp = java.text.SimpleDateFormat(

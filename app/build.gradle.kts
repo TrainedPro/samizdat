@@ -9,6 +9,9 @@ android {
     namespace = "com.fyp.resilientp2p"
     compileSdk = 36
 
+    // Allow test_mode property: ./gradlew assembleDebug -Ptest_mode=true
+    val isTestMode = project.findProperty("test_mode")?.toString()?.toBoolean() ?: false
+
     defaultConfig {
         applicationId = "com.fyp.resilientp2p"
         minSdk = 24
@@ -17,11 +20,13 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        buildConfigField("boolean", "TEST_MODE", isTestMode.toString())
     }
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -38,13 +43,6 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
-    }
-
-    // Allow test_mode property: ./gradlew assembleDebug -Ptest_mode=true
-    val isTestMode = project.findProperty("test_mode")?.toString()?.toBoolean() ?: false
-
-    defaultConfig {
-        buildConfigField("boolean", "TEST_MODE", isTestMode.toString())
     }
 }
 
@@ -67,20 +65,11 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
 
-    // Standard AndroidX libraries required for a basic app
-    implementation(libs.androidx.core.ktx)
-    implementation(libs.androidx.appcompat)
-    implementation(libs.androidx.activity.ktx)
-    implementation(libs.material)
-    implementation(libs.androidx.constraintlayout)
-
     // Our core dependency for the P2P communication
     implementation(libs.play.services.nearby)
 
-    // Default test dependencies
-    testImplementation(libs.junit)
-    androidTestImplementation(libs.androidx.junit)
-    androidTestImplementation(libs.androidx.espresso.core)
+    // Material (required for Theme.MaterialComponents in themes.xml)
+    implementation(libs.material)
 
     // Room
     implementation(libs.androidx.room.runtime)
@@ -92,7 +81,4 @@ dependencies {
 
     // WorkManager (periodic telemetry upload)
     implementation(libs.androidx.work.runtime)
-
-    // UWB
-
 }

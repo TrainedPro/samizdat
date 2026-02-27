@@ -37,6 +37,7 @@ import com.fyp.resilientp2p.managers.P2PManager
 import com.fyp.resilientp2p.managers.TelemetryManager
 import com.fyp.resilientp2p.managers.TelemetryStatus
 import com.fyp.resilientp2p.testing.TestRunner
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -302,10 +303,15 @@ fun ResilientP2PApp(p2pManager: P2PManager, onExportLogs: () -> Unit, testRunner
                         }
                 }.collectAsState(initial = emptyList())
 
+                // Track processed payloads to avoid duplicate insertion on chatTargetId change
+                var processedPayloadId by remember { mutableStateOf<String?>(null) }
+
                 // Persist incoming messages for this peer
                 LaunchedEffect(latestPayload, chatTargetId) {
                         latestPayload?.let { event ->
                                 val pkt = event.packet
+                                val payloadId = "${pkt.sourceId}:${pkt.payload.contentHashCode()}:${pkt.id}"
+                                if (payloadId == processedPayloadId) return@LaunchedEffect
                                 if (pkt.type == com.fyp.resilientp2p.transport.PacketType.DATA && chatDao != null) {
                                         val text = String(pkt.payload, java.nio.charset.StandardCharsets.UTF_8)
                                         if (!text.startsWith("__TEST__")) {
@@ -319,15 +325,21 @@ fun ResilientP2PApp(p2pManager: P2PManager, onExportLogs: () -> Unit, testRunner
                                                                 text = text,
                                                                 isBroadcast = isBroadcast
                                                         ))
+                                                        processedPayloadId = payloadId
                                                 }
                                         }
                                 }
                         }
                 }
 
+                // Track processed file payloads
+                var processedFileId by remember { mutableStateOf<String?>(null) }
+
                 // Persist received files
                 LaunchedEffect(receivedFile, chatTargetId) {
                         receivedFile?.let { event ->
+                                val fileId = "${event.senderName}:${event.fileName}:${event.file.length()}"
+                                if (fileId == processedFileId) return@LaunchedEffect
                                 if (chatDao != null) {
                                         val msgType = if (event.mimeType.startsWith("image/")) MessageType.IMAGE else MessageType.FILE
                                         chatDao.insert(ChatMessage(
@@ -340,24 +352,27 @@ fun ResilientP2PApp(p2pManager: P2PManager, onExportLogs: () -> Unit, testRunner
                                                 fileSize = event.file.length(),
                                                 transferProgress = -1
                                         ))
+                                        processedFileId = fileId
                                 }
                         }
                 }
 
+                val targetId = chatTargetId ?: return@ResilientP2PApp
+
                 ChatScreen(
-                        peerId = chatTargetId!!,
+                        peerId = targetId,
                         messages = chatMessages,
                         onSendText = { msg ->
                                 if (isBroadcast) {
                                         p2pManager.broadcastMessage(msg)
                                 } else {
-                                        p2pManager.sendData(chatTargetId!!, msg)
+                                        p2pManager.sendData(targetId, msg)
                                 }
                                 // Persist outgoing message
                                 if (chatDao != null) {
                                         scope.launch {
                                                 chatDao.insert(ChatMessage(
-                                                        peerId = chatTargetId!!,
+                                                        peerId = targetId,
                                                         isOutgoing = true,
                                                         type = MessageType.TEXT,
                                                         text = msg,
@@ -370,15 +385,15 @@ fun ResilientP2PApp(p2pManager: P2PManager, onExportLogs: () -> Unit, testRunner
                                 val timestamp = System.currentTimeMillis()
                                 val buffer = java.nio.ByteBuffer.allocate(8)
                                 buffer.putLong(timestamp)
-                                p2pManager.sendPing(chatTargetId!!, buffer.array())
+                                p2pManager.sendPing(targetId, buffer.array())
                         },
-                        onStartAudio = { p2pManager.startAudioStreaming(chatTargetId!!) },
+                        onStartAudio = { p2pManager.startAudioStreaming(targetId) },
                         onStopAudio = { p2pManager.stopAudioStreaming() },
                         onSendFile = { uri ->
-                                p2pManager.sendFile(chatTargetId!!, uri)
+                                p2pManager.sendFile(targetId, uri)
                                 // Persist outgoing file message
                                 if (chatDao != null) {
-                                        scope.launch {
+                                        scope.launch(Dispatchers.IO) {
                                                 val cr = context.contentResolver
                                                 val name = cr.query(uri, null, null, null, null)?.use { c ->
                                                         if (c.moveToFirst()) {
@@ -389,7 +404,7 @@ fun ResilientP2PApp(p2pManager: P2PManager, onExportLogs: () -> Unit, testRunner
                                                 val mime = cr.getType(uri) ?: "application/octet-stream"
                                                 val msgType = if (mime.startsWith("image/")) MessageType.IMAGE else MessageType.FILE
                                                 chatDao.insert(ChatMessage(
-                                                        peerId = chatTargetId!!,
+                                                        peerId = targetId,
                                                         isOutgoing = true,
                                                         type = msgType,
                                                         fileName = name,
@@ -931,6 +946,7 @@ fun LogsSection(
         onClearLogs: () -> Unit
 ) {
         var isLogsExpanded by remember { mutableStateOf(false) }
+        val reversedLogs = remember(logs) { logs.reversed() }
 
         val logsHeight by
                 animateDpAsState(
@@ -1010,7 +1026,10 @@ fun LogsSection(
                                         reverseLayout = true,
                                         modifier = Modifier.fillMaxSize()
                                 ) {
-                                        items(logs.reversed()) { entry ->
+                                        items(
+                                                items = reversedLogs,
+                                                key = { "${it.timestamp}_${it.message.hashCode()}" }
+                                        ) { entry ->
                                                 val color =
                                                         when (entry.logType) {
                                                                 com.fyp.resilientp2p.data.LogType

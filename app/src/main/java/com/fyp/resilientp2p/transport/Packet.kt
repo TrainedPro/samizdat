@@ -35,6 +35,10 @@ data class Packet(
         val sequenceNumber: Long = 0
 ) {
     fun toBytes(): ByteArray {
+        require(ttl in 0..255) { "Invalid TTL: $ttl" }
+        require(sourceId.toByteArray(Charsets.UTF_8).size <= MAX_STRING_LENGTH) { "sourceId too long" }
+        require(destId.toByteArray(Charsets.UTF_8).size <= MAX_STRING_LENGTH) { "destId too long" }
+        require(payload.size <= MAX_PAYLOAD_SIZE) { "Payload too large: ${payload.size}" }
         val baos = ByteArrayOutputStream()
         DataOutputStream(baos).use { dos ->
             // Helper to write large strings

@@ -18,4 +18,7 @@ interface LogDao {
 
     @Query("DELETE FROM logs WHERE timestamp < :cutoff")
     suspend fun deleteOlderThan(cutoff: Long)
+
+    @Query("SELECT * FROM logs WHERE (level = 'ERROR' OR level = 'WARN') AND timestamp > :since ORDER BY timestamp ASC LIMIT :limit")
+    suspend fun getErrorLogsSince(since: Long, limit: Int): List<LogEntry>
 }

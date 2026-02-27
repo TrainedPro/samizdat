@@ -8,7 +8,6 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
@@ -79,31 +78,27 @@ class HeartbeatManager(private val p2pManager: P2PManager) {
 
     // Config and state moved to top to support init access
 
+    @Synchronized
     fun updateConfig(intervalMs: Long? = null, payloadSize: Int? = null, enabled: Boolean? = null) {
-        _config.update { current ->
-            // Force enabled if it's supposed to be always on, but for now respect the parameter
-            // User requested "shouldn't be able to be disabled".
-            // Let's force it to TRUE if specific logic requires, or just default to TRUE.
-            // For now, I will keep the logic flexible but default is TRUE.
-            val newEnabled = enabled ?: current.isEnabled
-            val newConfig =
-                    current.copy(
-                            intervalMs = intervalMs ?: current.intervalMs,
-                            payloadSizeBytes = payloadSize ?: current.payloadSizeBytes,
-                            isEnabled = newEnabled
-                    )
+        val current = _config.value
+        val newEnabled = enabled ?: current.isEnabled
+        val newConfig =
+                current.copy(
+                        intervalMs = intervalMs ?: current.intervalMs,
+                        payloadSizeBytes = payloadSize ?: current.payloadSizeBytes,
+                        isEnabled = newEnabled
+                )
 
-            if (newEnabled && !current.isEnabled) {
-                startHeartbeat(newConfig)
-            } else if (!newEnabled && current.isEnabled) {
-                stopHeartbeat()
-            } else if (newEnabled) {
-                // Restart if config changed while enabled
-                stopHeartbeat()
-                startHeartbeat(newConfig)
-            }
-            newConfig
+        if (newEnabled && !current.isEnabled) {
+            startHeartbeat(newConfig)
+        } else if (!newEnabled && current.isEnabled) {
+            stopHeartbeat()
+        } else if (newEnabled) {
+            // Restart if config changed while enabled
+            stopHeartbeat()
+            startHeartbeat(newConfig)
         }
+        _config.value = newConfig
     }
 
     fun setHeartbeatEnabled(enabled: Boolean) {
@@ -134,6 +129,8 @@ class HeartbeatManager(private val p2pManager: P2PManager) {
 
     fun destroy() {
         log("Destroying HeartbeatManager", LogLevel.DEBUG)
+        heartbeatJob?.cancel()
+        heartbeatJob = null
         supervisorJob.cancel()
     }
 

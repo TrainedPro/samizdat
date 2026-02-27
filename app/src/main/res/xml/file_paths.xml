@@ -1,8 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
-    <cache-path name="cache" path="." />
-    <files-path name="files" path="." />
     <files-path name="received_files" path="received_files/" />
-    <external-files-path name="external_files" path="." />
+    <cache-path name="test_cache" path="test_files/" />
     <external-files-path name="test_results" path="test_results/" />
+    <external-files-path name="telemetry" path="telemetry/" />
 </paths>

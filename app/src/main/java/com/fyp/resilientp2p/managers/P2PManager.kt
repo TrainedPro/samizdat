@@ -56,8 +56,8 @@ class P2PManager(
 ) {
 
     private val connectionsClient: ConnectionsClient = Nearby.getConnectionsClient(context)
-    private var supervisorJob = SupervisorJob()
-    private var scope = CoroutineScope(Dispatchers.IO + supervisorJob)
+    @Volatile private var supervisorJob = SupervisorJob()
+    @Volatile private var scope = CoroutineScope(Dispatchers.IO + supervisorJob)
     private var routingJob: kotlinx.coroutines.Job? = null
     private var statsDumpJob: kotlinx.coroutines.Job? = null
 
@@ -135,7 +135,7 @@ class P2PManager(
     private var reconnectionJob: kotlinx.coroutines.Job? = null
 
     // Store-and-Forward Queue (in-memory, backed by Room DB)
-    private val pendingMessages = ConcurrentHashMap<String, MutableList<Packet>>() // destId -> packets
+    private val pendingMessages = ConcurrentHashMap<String, java.util.concurrent.CopyOnWriteArrayList<Packet>>() // destId -> packets
     private var storeForwardJob: kotlinx.coroutines.Job? = null
 
     // Endpoints with active transfers (exempt from zombie detection)
@@ -828,7 +828,7 @@ class P2PManager(
 
     private fun queueForStoreForward(packet: Packet) {
         // Queue to in-memory map
-        pendingMessages.getOrPut(packet.destId) { mutableListOf() }.add(packet)
+        pendingMessages.computeIfAbsent(packet.destId) { java.util.concurrent.CopyOnWriteArrayList() }.add(packet)
         networkStats.storeForwardQueued.incrementAndGet()
 
         // Also persist to Room DB if available
@@ -935,6 +935,9 @@ class P2PManager(
                 "totalPackets=↑${snap.totalPacketsSent}↓${snap.totalPacketsReceived} " +
                 "uptime=${formatDuration(snap.uptimeMs)}"
         )
+        try {
+            context.unregisterReceiver(batteryReceiver)
+        } catch (_: Exception) {}
         // 1. Cancel coroutines FIRST to stop background work
         routingJob?.cancel()
         routingJob = null
@@ -1039,7 +1042,9 @@ class P2PManager(
         if (!messageCache.tryMarkSeen(packet.id)) {
             log("PACKET_DEDUP id=${packet.id.take(8)} type=${packet.type} src='${packet.sourceId}'",
                     com.fyp.resilientp2p.data.LogLevel.TRACE)
-            networkStats.totalPacketsDropped.incrementAndGet()
+            if (packet.type != PacketType.IDENTITY && packet.type != PacketType.ROUTE_ANNOUNCE) {
+                networkStats.totalPacketsDropped.incrementAndGet()
+            }
             return
         }
 
@@ -1197,9 +1202,9 @@ class P2PManager(
                                 type = PacketType.PONG,
                                 destId = packet.sourceId,
                                 sourceId = localUsername,
-                                // Payload contains timestamp, we just echo it back
                                 payload = packet.payload,
-                                timestamp = System.currentTimeMillis()
+                                timestamp = System.currentTimeMillis(),
+                                ttl = Packet.DEFAULT_TTL // Reset TTL for return trip
                         )
                 // Use handlePacket("LOCAL") to route it correctly (direct send)
                 handlePacket(pongPacket, "LOCAL")
@@ -1482,20 +1487,17 @@ class P2PManager(
         }
 
         // Extract filename and MIME type from URI
-        val cursor = context.contentResolver.query(uri, null, null, null, null)
-        val fileName = cursor?.use { c ->
+        val (fileName, fileSize) = context.contentResolver.query(uri, null, null, null, null)?.use { c ->
             if (c.moveToFirst()) {
-                val idx = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
-                if (idx >= 0) c.getString(idx) else null
+                val nameIdx = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                val sizeIdx = c.getColumnIndex(android.provider.OpenableColumns.SIZE)
+                val name = if (nameIdx >= 0) c.getString(nameIdx) else null
+                val size = if (sizeIdx >= 0) c.getLong(sizeIdx) else -1L
+                Pair(name, size)
             } else null
-        } ?: uri.lastPathSegment ?: "file"
+        } ?: Pair(null, -1L)
+        val resolvedFileName = fileName ?: uri.lastPathSegment ?: "file"
         val mimeType = context.contentResolver.getType(uri) ?: "application/octet-stream"
-        val fileSize = cursor?.use { c ->
-            if (c.moveToFirst()) {
-                val idx = c.getColumnIndex(android.provider.OpenableColumns.SIZE)
-                if (idx >= 0) c.getLong(idx) else -1L
-            } else -1L
-        } ?: -1L
 
         // Nearby Connections API takes ownership of PFD for FILE payloads
         val pfd = context.contentResolver.openFileDescriptor(uri, "r")
@@ -1515,7 +1517,7 @@ class P2PManager(
         val payloadId = payload.id
         val metaJson = org.json.JSONObject().apply {
             put("payloadId", payloadId)
-            put("fileName", fileName)
+            put("fileName", resolvedFileName)
             put("mimeType", mimeType)
             put("fileSize", fileSize)
         }.toString()
@@ -1532,11 +1534,11 @@ class P2PManager(
         // After this point, Nearby API owns PFD - do NOT close in callbacks
         connectionsClient.sendPayload(endpointId, payload)
             .addOnSuccessListener {
-                log("FILE_SENT peer='$peerName' name='$fileName' mime='$mimeType' payloadId=$payloadId",
+                log("FILE_SENT peer='$peerName' name='$resolvedFileName' mime='$mimeType' payloadId=$payloadId",
                     com.fyp.resilientp2p.data.LogLevel.INFO, peerId = peerName)
             }
             .addOnFailureListener { e ->
-                log("FILE_SEND_FAILED peer='$peerName' name='$fileName' error='${e.message}'",
+                log("FILE_SEND_FAILED peer='$peerName' name='$resolvedFileName' error='${e.message}'",
                     com.fyp.resilientp2p.data.LogLevel.ERROR, peerId = peerName)
             }
     }
@@ -1746,7 +1748,7 @@ class P2PManager(
                 destId = "BROADCAST",
                 payload = routeData.toByteArray(StandardCharsets.UTF_8),
                 timestamp = System.currentTimeMillis(),
-                ttl = 1 // Route announcements are 1-hop only
+                ttl = 0 // Route announcements are direct-only (0 = no further forwarding)
             )
             val bytes = packet.toBytes()
             connectionsClient.sendPayload(endpointId, Payload.fromBytes(bytes))

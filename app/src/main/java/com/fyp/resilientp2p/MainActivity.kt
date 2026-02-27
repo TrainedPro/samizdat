@@ -78,6 +78,7 @@ class MainActivity : AppCompatActivity() {
                 if (denied.isEmpty()) {
                     p2pManager.log("All permissions granted.")
                     startAndBindService()
+                    checkBatteryOptimization()
                 } else {
                     // Show user-friendly dialog for permission denial
                     androidx.appcompat.app.AlertDialog.Builder(this@MainActivity)
@@ -124,8 +125,8 @@ class MainActivity : AppCompatActivity() {
             requestPermissionLauncher.launch(neededPermissions)
         } else {
             startAndBindService()
+            checkBatteryOptimization()
         }
-        checkBatteryOptimization()
 
         observeAuthEvents()
     }
@@ -416,7 +417,13 @@ class MainActivity : AppCompatActivity() {
         if (!powerManager.isIgnoringBatteryOptimizations(packageName)) {
             val intent =
                     Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply { data = android.net.Uri.parse("package:$packageName") }
-            startActivity(intent)
+            if (intent.resolveActivity(packageManager) != null) {
+                try {
+                    startActivity(intent)
+                } catch (e: Exception) {
+                    p2pManager.log("Could not open battery optimization settings: ${e.message}", LogLevel.WARN)
+                }
+            }
         }
     }
 

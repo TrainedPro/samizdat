@@ -90,6 +90,9 @@ class TestRunner(
         scope.launch {
             val startTime = System.currentTimeMillis()
             testLog.clear()
+            receivedTestMessages.clear()
+            receivedPongs.clear()
+            receivedBroadcasts.clear()
             _state.update {
                 TestState(isRunning = true, totalTests = allTests.size, statusMessage = "Initializing...")
             }
@@ -172,7 +175,7 @@ class TestRunner(
                 // Phase 5: Compile and export
                 stopPacketListener()
                 val totalDuration = System.currentTimeMillis() - startTime
-                val timestamp = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).format(Date())
+                val timestamp = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }.format(Date())
                 val runResult = TestRunResult(
                     runTimestamp = timestamp,
                     deviceName = p2pManager.getLocalDeviceName(),
@@ -371,7 +374,7 @@ class TestRunner(
         if (!cache.tryMarkSeen(UUID.randomUUID().toString())) warnings.add("Different ID tryMarkSeen returned false")
 
         // 4: Capacity overflow — insert 150 items into capacity-100 cache
-        for (i in 0..150) cache.tryMarkSeen(UUID.randomUUID().toString())
+        for (i in 1..150) cache.tryMarkSeen(UUID.randomUUID().toString())
         if (!cache.tryMarkSeen(UUID.randomUUID().toString())) warnings.add("Post-overflow insert failed")
 
         // 5: Clear works
@@ -545,10 +548,11 @@ class TestRunner(
         val duration = System.currentTimeMillis() - start
         return TestResult(
             testName = "Message Reception",
-            passed = true, // Informational — passes as long as listener is working
+            passed = totalReceived > 0,
             durationMs = duration,
             details = mapOf("totalReceived" to totalReceived, "peersWhoSent" to peersWhoSent.size),
-            warnings = warnings
+            warnings = warnings,
+            error = if (totalReceived == 0) "No test messages received from any peer" else null,
         )
     }
 
@@ -606,7 +610,8 @@ class TestRunner(
         val allRtts = receivedPongs.values.flatten()
         if (allRtts.isNotEmpty()) {
             details["overallAvg"] = allRtts.average().toLong()
-            val loss = ((1.0 - totalPongsReceived.toDouble() / totalSent) * 100)
+            val actualSent = totalSent - sendErrors
+            val loss = if (actualSent > 0) ((1.0 - totalPongsReceived.toDouble() / actualSent) * 100) else 100.0
             details["lossPercent"] = String.format("%.1f", loss)
             if (loss > 50) warnings.add("High packet loss: ${String.format("%.1f", loss)}%")
         }
@@ -733,13 +738,14 @@ class TestRunner(
         val duration = System.currentTimeMillis() - start
         return TestResult(
             testName = "Store-and-Forward Queue",
-            passed = true, // Pass as long as no crash; S&F behavior depends on topology
+            passed = warnings.isEmpty(),
             durationMs = duration,
             details = mapOf(
                 "queuedBefore" to queuedBefore, "queuedAfter" to queuedAfter,
                 "wasQueued" to (queuedAfter > queuedBefore), "totalDelivered" to delivered
             ),
-            warnings = warnings
+            warnings = warnings,
+            error = if (warnings.isNotEmpty()) warnings.joinToString("; ") else null,
         )
     }
 
@@ -788,11 +794,12 @@ class TestRunner(
             )
         } catch (e: Exception) {
             val duration = System.currentTimeMillis() - start
-            tlog("  File transfer error (non-fatal): ${e.message}")
-            warnings.add("File transfer skipped: ${e.message}")
+            tlog("  File transfer error: ${e.message}")
+            warnings.add("File transfer failed: ${e.message}")
             return TestResult(
                 testName = "File Transfer",
-                passed = true, // Don't fail suite for missing FileProvider config
+                passed = false,
+                error = "File transfer failed: ${e.message}",
                 durationMs = duration,
                 details = mapOf("skipped" to true, "reason" to (e.message ?: "unknown")),
                 warnings = warnings

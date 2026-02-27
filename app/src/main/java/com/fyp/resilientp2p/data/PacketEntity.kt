@@ -2,12 +2,16 @@ package com.fyp.resilientp2p.data
 
 import androidx.room.Dao
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.PrimaryKey
 import androidx.room.Query
 
-@Entity(tableName = "packet_queue")
+@Entity(
+    tableName = "packet_queue",
+    indices = [Index(value = ["destId", "expiration"])]
+)
 data class PacketEntity(
         @PrimaryKey val id: String,
         val destId: String,
@@ -24,14 +28,24 @@ data class PacketEntity(
         other as PacketEntity
 
         if (id != other.id) return false
+        if (destId != other.destId) return false
+        if (type != other.type) return false
         if (!payload.contentEquals(other.payload)) return false
+        if (timestamp != other.timestamp) return false
+        if (expiration != other.expiration) return false
+        if (sourceId != other.sourceId) return false
 
         return true
     }
 
     override fun hashCode(): Int {
         var result = id.hashCode()
+        result = 31 * result + destId.hashCode()
+        result = 31 * result + type.hashCode()
         result = 31 * result + payload.contentHashCode()
+        result = 31 * result + timestamp.hashCode()
+        result = 31 * result + expiration.hashCode()
+        result = 31 * result + sourceId.hashCode()
         return result
     }
 }

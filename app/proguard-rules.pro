@@ -5,17 +5,27 @@
 # For more details, see
 #   http://developer.android.com/guide/developing/tools/proguard.html
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
+# --- Room entities, DAOs, and converters ---
+-keep class com.fyp.resilientp2p.data.** { *; }
 
-# Uncomment this to preserve the line number information for
-# debugging stack traces.
-#-keepattributes SourceFile,LineNumberTable
+# --- Play Services (Nearby Connections uses reflection) ---
+-keep class com.google.android.gms.** { *; }
+-dontwarn com.google.android.gms.**
 
-# If you keep the line number information, uncomment this to
-# hide the original source file name.
-#-renamesourcefileattribute SourceFile
+# --- Kotlin metadata (for Room and other annotation processors) ---
+-keepattributes *Annotation*
+-keep class kotlin.Metadata { *; }
+
+# --- Keep source file & line numbers for crash reports ---
+-keepattributes SourceFile,LineNumberTable
+-renamesourcefileattribute SourceFile
+
+# --- Coil (image loading) ---
+-dontwarn coil.**
+-keep class coil.** { *; }
+
+# --- WorkManager ---
+-keep class * extends androidx.work.Worker
+-keep class * extends androidx.work.ListenableWorker {
+    public <init>(android.content.Context, androidx.work.WorkerParameters);
+}

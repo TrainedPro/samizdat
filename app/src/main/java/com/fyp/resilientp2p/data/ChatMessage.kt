@@ -1,13 +1,17 @@
 package com.fyp.resilientp2p.data
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 
 /**
  * Represents a chat message in the P2P mesh.
  * Persisted in Room for chat history.
  */
-@Entity(tableName = "chat_messages")
+@Entity(
+    tableName = "chat_messages",
+    indices = [Index(value = ["peerId", "timestamp"])]
+)
 data class ChatMessage(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val timestamp: Long = System.currentTimeMillis(),

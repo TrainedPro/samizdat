@@ -80,8 +80,9 @@ class P2PService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        (application as P2PApplication).telemetryManager.destroy()
         p2pManager.stopAll()
         (application as P2PApplication).heartbeatManager.destroy()
-        stopForeground(STOP_FOREGROUND_REMOVE)
     }
 }

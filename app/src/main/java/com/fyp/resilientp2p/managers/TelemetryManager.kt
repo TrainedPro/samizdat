@@ -88,7 +88,7 @@ class TelemetryManager(
     /** Whether telemetry collection is enabled */
     var isEnabled: Boolean
         get() = prefs.getBoolean(KEY_TELEMETRY_ENABLED, true)
-        set(value) {
+        @Synchronized set(value) {
             prefs.edit().putBoolean(KEY_TELEMETRY_ENABLED, value).apply()
             if (value) start() else stop()
         }
@@ -294,10 +294,7 @@ class TelemetryManager(
     /** Collect ERROR and WARN logs since last upload */
     private suspend fun collectErrorLogs() {
         val lastUploadTime = prefs.getLong(KEY_LAST_LOG_UPLOAD_TIME, 0)
-        val logs = logDao.getLogsSnapshot()
-            .filter { it.level == LogLevel.ERROR || it.level == LogLevel.WARN }
-            .filter { it.timestamp > lastUploadTime }
-            .take(MAX_BATCH_SIZE) // Cap batch size
+        val logs = logDao.getErrorLogsSince(lastUploadTime, MAX_BATCH_SIZE)
 
         if (logs.isEmpty()) return
 

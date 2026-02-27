@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Samizdat — Mesh Network Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header>
+        <div class="header-content">
+            <h1>📡 Samizdat Mesh Dashboard</h1>
+            <div class="header-controls">
+                <span id="last-refresh" class="badge badge-secondary">Never refreshed</span>
+                <button id="btn-refresh" class="btn btn-primary" onclick="refreshAll()">⟳ Refresh</button>
+                <button id="btn-auto" class="btn btn-outline" onclick="toggleAutoRefresh()">Auto: OFF</button>
+                <button id="btn-settings" class="btn btn-outline" onclick="toggleSettings()">⚙ Settings</button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Settings Panel -->
+    <div id="settings-panel" class="settings-panel hidden">
+        <div class="settings-grid">
+            <div class="setting-group">
+                <label for="input-project-id">Firebase Project ID</label>
+                <input type="text" id="input-project-id" placeholder="samizdat" />
+            </div>
+            <div class="setting-group">
+                <label for="input-api-key">Firebase API Key</label>
+                <input type="password" id="input-api-key" placeholder="AIza..." />
+            </div>
+            <div class="setting-group">
+                <label for="input-refresh-interval">Refresh Interval (s)</label>
+                <input type="number" id="input-refresh-interval" value="30" min="5" max="300" />
+            </div>
+            <div class="setting-group">
+                <button class="btn btn-primary" onclick="saveSettings()">Save & Connect</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Status Bar -->
+    <div id="status-bar" class="status-bar status-disconnected">
+        <span id="status-text">⚠ Configure Firebase credentials to connect</span>
+    </div>
+
+    <!-- Summary Cards -->
+    <section class="cards-grid">
+        <div class="card card-blue">
+            <div class="card-icon">📱</div>
+            <div class="card-body">
+                <div class="card-value" id="total-devices">0</div>
+                <div class="card-label">Total Devices</div>
+            </div>
+        </div>
+        <div class="card card-green">
+            <div class="card-icon">🟢</div>
+            <div class="card-body">
+                <div class="card-value" id="active-devices">0</div>
+                <div class="card-label">Active (last 15 min)</div>
+            </div>
+        </div>
+        <div class="card card-purple">
+            <div class="card-icon">📦</div>
+            <div class="card-body">
+                <div class="card-value" id="total-events">0</div>
+                <div class="card-label">Telemetry Events</div>
+            </div>
+        </div>
+        <div class="card card-orange">
+            <div class="card-icon">🔗</div>
+            <div class="card-body">
+                <div class="card-value" id="total-connections">0</div>
+                <div class="card-label">Total Connections</div>
+            </div>
+        </div>
+        <div class="card card-red">
+            <div class="card-icon">🚨</div>
+            <div class="card-body">
+                <div class="card-value" id="relay-messages">0</div>
+                <div class="card-label">Relay Messages</div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Main Content Grid -->
+    <section class="main-grid">
+        <!-- Device List -->
+        <div class="panel">
+            <div class="panel-header">
+                <h2>📱 Registered Devices</h2>
+                <input type="text" id="device-search" placeholder="Search devices..." oninput="filterDevices()" />
+            </div>
+            <div class="panel-body">
+                <table id="device-table">
+                    <thead>
+                        <tr>
+                            <th>Device Name</th>
+                            <th>Model</th>
+                            <th>Last Seen</th>
+                            <th>Uptime</th>
+                            <th>Battery</th>
+                            <th>Peers</th>
+                            <th>Packets ↑↓</th>
+                        </tr>
+                    </thead>
+                    <tbody id="device-tbody">
+                        <tr><td colspan="7" class="empty-row">No devices found</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Charts Row -->
+        <div class="charts-row">
+            <div class="panel chart-panel">
+                <h2>📊 Packets Over Time</h2>
+                <canvas id="chart-packets"></canvas>
+            </div>
+            <div class="panel chart-panel">
+                <h2>🔋 Battery Levels</h2>
+                <canvas id="chart-battery"></canvas>
+            </div>
+        </div>
+
+        <div class="charts-row">
+            <div class="panel chart-panel">
+                <h2>⏱ RTT Distribution</h2>
+                <canvas id="chart-rtt"></canvas>
+            </div>
+            <div class="panel chart-panel">
+                <h2>🌐 Network Topology</h2>
+                <canvas id="chart-topology"></canvas>
+            </div>
+        </div>
+
+        <!-- Event Log -->
+        <div class="panel">
+            <div class="panel-header">
+                <h2>📋 Recent Telemetry Events</h2>
+                <div class="log-controls">
+                    <select id="log-type-filter" onchange="filterEvents()">
+                        <option value="">All Types</option>
+                        <option value="STATS_SNAPSHOT">Stats</option>
+                        <option value="CONNECTION_EVENT">Connections</option>
+                        <option value="ERROR_LOG">Errors</option>
+                        <option value="ROUTING_UPDATE">Routing</option>
+                        <option value="TEST_RESULT">Tests</option>
+                    </select>
+                    <input type="text" id="log-search" placeholder="Search events..." oninput="filterEvents()" />
+                </div>
+            </div>
+            <div class="panel-body log-panel">
+                <div id="event-log" class="event-log">
+                    <div class="empty-row">No events loaded</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Relay Queue -->
+        <div class="panel">
+            <div class="panel-header">
+                <h2>☁️ Cloud Relay Queue</h2>
+                <button class="btn btn-sm btn-outline" onclick="refreshRelay()">Refresh</button>
+            </div>
+            <div class="panel-body">
+                <table id="relay-table">
+                    <thead>
+                        <tr>
+                            <th>Source</th>
+                            <th>Destination</th>
+                            <th>Gateway</th>
+                            <th>Age</th>
+                            <th>Payload Preview</th>
+                        </tr>
+                    </thead>
+                    <tbody id="relay-tbody">
+                        <tr><td colspan="5" class="empty-row">No relay messages</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Test Results -->
+        <div class="panel">
+            <div class="panel-header">
+                <h2>🧪 Test Results</h2>
+            </div>
+            <div class="panel-body">
+                <div id="test-results" class="test-results">
+                    <div class="empty-row">No test results loaded</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <footer>
+        <p>Samizdat Mesh Network Dashboard &mdash; FYP Research Testbed</p>
+    </footer>
+
+    <script src="dashboard.js"></script>
+</body>
+</html>

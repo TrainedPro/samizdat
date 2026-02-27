@@ -37,7 +37,7 @@ class MessageCache(private val capacity: Int = 1000) {
             // Use removeIf for atomic removal based on condition
             cache.entries.removeIf { now - it.value > ttl }
             
-            // If still over capacity, remove ~25% via random sampling (O(n) vs O(n log n) sort)
+            // If still over capacity, remove ~25% oldest entries (O(n log n) sort)
             if (cache.size > capacity) {
                 val toRemove = capacity / 4
                 val oldest = cache.entries

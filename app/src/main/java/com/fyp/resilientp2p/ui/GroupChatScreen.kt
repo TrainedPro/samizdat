@@ -157,7 +157,7 @@ private fun GroupListPanel(
             verticalArrangement = Arrangement.spacedBy(8.dp),
             contentPadding = PaddingValues(vertical = 8.dp)
         ) {
-            items(groups) { group ->
+            items(groups, key = { it.groupId }) { group ->
                 GroupCard(
                     group = group,
                     isMember = group.memberSet().contains(localUsername),
@@ -243,7 +243,7 @@ private fun GroupMessagePanel(
             verticalArrangement = Arrangement.spacedBy(4.dp),
             contentPadding = PaddingValues(vertical = 8.dp)
         ) {
-            items(messages) { msg ->
+            items(messages, key = { it.id }) { msg ->
                 val isLocal = msg.senderName == localUsername
                 Row(
                     modifier = Modifier.fillMaxWidth(),

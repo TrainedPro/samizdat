@@ -53,7 +53,7 @@ class FileShareManager(
     /** Callback to send a packet onto the mesh (set by P2PManager). */
     var sendPacket: ((Packet) -> Unit)? = null
 
-    /** Tracks which chunks we've received per file hash. */
+    /** Tracks which chunks we've received per file hash (thread-safe sets). */
     private val receivedChunks = ConcurrentHashMap<String, MutableSet<Int>>()
 
     /** Local files available for sharing (sha256 → local path). */
@@ -166,7 +166,9 @@ class FileShareManager(
     fun requestFile(sha256: String) {
         scope.launch {
             val file = sharedFileDao.getFile(sha256) ?: return@launch
-            val received = receivedChunks.getOrPut(sha256) { mutableSetOf() }
+            val received = receivedChunks.computeIfAbsent(sha256) {
+                java.util.Collections.synchronizedSet(mutableSetOf())
+            }
 
             for (chunk in 0 until file.totalChunks) {
                 if (chunk in received) continue
@@ -198,31 +200,31 @@ class FileShareManager(
 
         scope.launch {
             try {
-                val file = RandomAccessFile(filePath, "r")
-                val offset = chunkIndex.toLong() * CHUNK_SIZE
-                file.seek(offset)
-                val buffer = ByteArray(CHUNK_SIZE)
-                val bytesRead = file.read(buffer)
-                file.close()
+                RandomAccessFile(filePath, "r").use { file ->
+                    val offset = chunkIndex.toLong() * CHUNK_SIZE
+                    file.seek(offset)
+                    val buffer = ByteArray(CHUNK_SIZE)
+                    val bytesRead = file.read(buffer)
 
-                if (bytesRead <= 0) return@launch
-                val chunkData = if (bytesRead < CHUNK_SIZE) buffer.copyOf(bytesRead) else buffer
+                    if (bytesRead <= 0) return@launch
+                    val chunkData = if (bytesRead < CHUNK_SIZE) buffer.copyOf(bytesRead) else buffer
 
-                // Build chunk payload: sha256|chunkIndex|<binary>
-                val header = "$sha256$SEPARATOR$chunkIndex$SEPARATOR"
-                    .toByteArray(StandardCharsets.UTF_8)
-                val payload = header + chunkData
+                    // Build chunk payload: sha256|chunkIndex|<binary>
+                    val header = "$sha256$SEPARATOR$chunkIndex$SEPARATOR"
+                        .toByteArray(StandardCharsets.UTF_8)
+                    val payload = header + chunkData
 
-                val responsePacket = Packet(
-                    id = UUID.randomUUID().toString(),
-                    type = PacketType.FILE_CHUNK,
-                    sourceId = localUsername,
-                    destId = packet.sourceId,
-                    payload = payload,
-                    timestamp = System.currentTimeMillis()
-                )
-                sendPacket?.invoke(responsePacket)
-                Log.d(TAG, "Sent chunk $chunkIndex of $sha256 to ${packet.sourceId}")
+                    val responsePacket = Packet(
+                        id = UUID.randomUUID().toString(),
+                        type = PacketType.FILE_CHUNK,
+                        sourceId = localUsername,
+                        destId = packet.sourceId,
+                        payload = payload,
+                        timestamp = System.currentTimeMillis()
+                    )
+                    sendPacket?.invoke(responsePacket)
+                    Log.d(TAG, "Sent chunk $chunkIndex of $sha256 to ${packet.sourceId}")
+                }
             } catch (e: Exception) {
                 Log.e(TAG, "Error reading chunk $chunkIndex of $sha256: ${e.message}")
             }
@@ -247,24 +249,28 @@ class FileShareManager(
         val chunkIndex = parts[1].toIntOrNull() ?: return
         val chunkData = payload.copyOfRange(headerEnd + 1, payload.size)
 
-        val received = receivedChunks.getOrPut(sha256) { mutableSetOf() }
+        val received = receivedChunks.computeIfAbsent(sha256) {
+            java.util.Collections.synchronizedSet(mutableSetOf())
+        }
         if (chunkIndex in received) return // Already have this chunk
 
         scope.launch {
             try {
                 val file = sharedFileDao.getFile(sha256) ?: return@launch
                 val destFile = File(shareDir, "${sha256}_${file.fileName}")
-                val raf = RandomAccessFile(destFile.absolutePath, "rw")
-                raf.seek(chunkIndex.toLong() * file.chunkSize)
-                raf.write(chunkData)
-                raf.close()
+                RandomAccessFile(destFile.absolutePath, "rw").use { raf ->
+                    raf.seek(chunkIndex.toLong() * file.chunkSize)
+                    raf.write(chunkData)
+                }
 
                 received.add(chunkIndex)
-                val localPath = if (received.size >= file.totalChunks) destFile.absolutePath else null
+                val downloadComplete = received.size >= file.totalChunks
+                val localPath = if (downloadComplete) destFile.absolutePath else null
                 sharedFileDao.updateProgress(sha256, received.size, localPath)
 
                 if (localPath != null) {
                     localFiles[sha256] = localPath
+                    receivedChunks.remove(sha256) // Cleanup tracking after complete download
                     Log.d(TAG, "File download complete: ${file.fileName} ($sha256)")
                 } else {
                     Log.d(TAG, "Chunk $chunkIndex/${file.totalChunks} of ${file.fileName}")

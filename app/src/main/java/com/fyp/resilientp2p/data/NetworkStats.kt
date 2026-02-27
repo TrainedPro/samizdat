@@ -89,22 +89,22 @@ class NetworkStats {
 
     fun recordPeerDisconnected(peerId: String) {
         peerConnectedSince.remove(peerId)
-        peerDisconnectCount.getOrPut(peerId) { AtomicLong(0) }.incrementAndGet()
+        peerDisconnectCount.computeIfAbsent(peerId) { AtomicLong(0) }.incrementAndGet()
         totalConnectionsLost.incrementAndGet()
     }
 
     fun recordPacketSent(peerId: String, sizeBytes: Int) {
         totalPacketsSent.incrementAndGet()
         totalBytesSent.addAndGet(sizeBytes.toLong())
-        peerPacketsSent.getOrPut(peerId) { AtomicLong(0) }.incrementAndGet()
-        peerBytesSent.getOrPut(peerId) { AtomicLong(0) }.addAndGet(sizeBytes.toLong())
+        peerPacketsSent.computeIfAbsent(peerId) { AtomicLong(0) }.incrementAndGet()
+        peerBytesSent.computeIfAbsent(peerId) { AtomicLong(0) }.addAndGet(sizeBytes.toLong())
     }
 
     fun recordPacketReceived(peerId: String, sizeBytes: Int) {
         totalPacketsReceived.incrementAndGet()
         totalBytesReceived.addAndGet(sizeBytes.toLong())
-        peerPacketsReceived.getOrPut(peerId) { AtomicLong(0) }.incrementAndGet()
-        peerBytesReceived.getOrPut(peerId) { AtomicLong(0) }.addAndGet(sizeBytes.toLong())
+        peerPacketsReceived.computeIfAbsent(peerId) { AtomicLong(0) }.incrementAndGet()
+        peerBytesReceived.computeIfAbsent(peerId) { AtomicLong(0) }.addAndGet(sizeBytes.toLong())
     }
 
     fun recordRtt(peerId: String, rttMs: Long) {

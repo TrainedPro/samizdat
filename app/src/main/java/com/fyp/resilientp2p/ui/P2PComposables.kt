@@ -1,12 +1,10 @@
 package com.fyp.resilientp2p.ui
 
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -1203,12 +1201,12 @@ fun LogsSection(
                                         Modifier.fillMaxWidth()
                                                 .height(logsHeight)
                                                 .background(
-                                                        Color.White, // Explicit White as requested
+                                                        MaterialTheme.colorScheme.surface,
                                                         RoundedCornerShape(8.dp)
                                                 )
                                                 .border(
                                                         1.dp,
-                                                        Color.LightGray,
+                                                        MaterialTheme.colorScheme.outlineVariant,
                                                         RoundedCornerShape(8.dp)
                                                 )
                                                 .padding(8.dp)
@@ -1259,7 +1257,7 @@ fun LogsSection(
                                                                                         .data
                                                                                         .LogLevel
                                                                                         .INFO ->
-                                                                                        Color.Black // Black for System Info on White BG
+                                                                                        MaterialTheme.colorScheme.onSurface
                                                                                 com.fyp.resilientp2p
                                                                                         .data
                                                                                         .LogLevel
@@ -1273,7 +1271,7 @@ fun LogsSection(
                                                                                         .data
                                                                                         .LogLevel
                                                                                         .TRACE ->
-                                                                                        Color.LightGray
+                                                                                        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
                                                                                 com.fyp.resilientp2p
                                                                                         .data
                                                                                         .LogLevel

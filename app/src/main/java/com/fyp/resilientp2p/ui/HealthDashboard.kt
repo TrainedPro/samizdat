@@ -356,12 +356,13 @@ private fun DrawScope.drawHeatmap(peers: List<PeerStatsSnapshot>) {
         )
     }
 
-    // Cells: color by loss rate
+    // Cells: color by per-peer loss rate (diagonal = self loss, off-diagonal = 0)
     for (i in peers.indices) {
         for (j in peers.indices) {
-            val lossRate = if (i == j) 0f
-            else if (peers[i].packetsSent > 0) {
-                val lost = (peers[i].packetsSent - peers[j].packetsReceived).coerceAtLeast(0)
+            // We only have per-peer-to-local stats, not peer-to-peer.
+            // Show each peer's own loss rate on the diagonal; off-diagonal is unknown.
+            val lossRate = if (i == j && peers[i].packetsSent > 0) {
+                val lost = (peers[i].packetsSent - peers[i].packetsReceived).coerceAtLeast(0)
                 (lost.toFloat() / peers[i].packetsSent).coerceIn(0f, 1f)
             } else 0f
 

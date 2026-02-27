@@ -3,6 +3,7 @@ package com.fyp.resilientp2p.data
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import java.util.UUID
 
 /**
  * A group chat message persisted in Room.
@@ -28,5 +29,5 @@ data class GroupMessage(
     val senderName: String,
     val text: String,
     val timestamp: Long = System.currentTimeMillis(),
-    val packetId: String = ""
+    val packetId: String = UUID.randomUUID().toString()
 )

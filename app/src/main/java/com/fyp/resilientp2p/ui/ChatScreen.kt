@@ -376,12 +376,17 @@ private fun ChatInputBar(
                     val interactionSource = remember { MutableInteractionSource() }
                     val isPressed by interactionSource.collectIsPressedAsState()
                     var wasEverPressed by remember { mutableStateOf(false) }
-                    LaunchedEffect(isPressed) {
+                    DisposableEffect(isPressed) {
                         if (isPressed) {
                             wasEverPressed = true
                             onStartAudio()
                         } else if (wasEverPressed) {
                             onStopAudio()
+                        }
+                        onDispose {
+                            if (isPressed) {
+                                onStopAudio()
+                            }
                         }
                     }
                     Button(

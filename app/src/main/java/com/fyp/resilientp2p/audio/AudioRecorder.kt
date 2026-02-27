@@ -134,7 +134,6 @@ class AudioRecorder(
     }
 
     /** Stops recording audio. */
-    /** Stops recording audio. */
     fun stop() {
         stopInternal()
         thread?.interrupt() // Interrupt any blocking Read/Write

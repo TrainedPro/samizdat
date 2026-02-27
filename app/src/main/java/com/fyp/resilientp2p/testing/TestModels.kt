@@ -20,7 +20,11 @@ data class TestResult(
         put("durationMs", durationMs)
         error?.let { put("error", it) }
         if (warnings.isNotEmpty()) put("warnings", JSONArray(warnings))
-        details.forEach { (k, v) -> put(k, v) }
+        if (details.isNotEmpty()) {
+            put("details", JSONObject().apply {
+                details.forEach { (k, v) -> put(k, v) }
+            })
+        }
     }
 }
 
@@ -86,4 +90,4 @@ data class TestState(
     val logMessages: List<String> = emptyList()  // Recent test log messages
 )
 
-private fun csvEscape(s: String) = "\"${s.replace("\"", "\"\"")}\"" 
+private fun csvEscape(s: String) = "\"${s.replace("\"", "\"\"").replace("\n", " ").replace("\r", "")}\"" 

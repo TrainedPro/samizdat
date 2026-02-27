@@ -100,7 +100,7 @@ class P2PService : Service() {
         app.emergencyManager.destroy()
         app.internetGatewayManager.destroy()
         app.telemetryManager.destroy()
-        p2pManager.stopAll()
         app.heartbeatManager.destroy()
+        p2pManager.stopAll()
     }
 }

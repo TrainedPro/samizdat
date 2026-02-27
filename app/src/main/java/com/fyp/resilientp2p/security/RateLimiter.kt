@@ -8,7 +8,7 @@ import java.util.concurrent.atomic.AtomicLong
  * Per-peer packet rate limiter to prevent denial-of-service attacks from
  * malicious mesh participants.
  *
- * Uses a sliding window counter: each peer's packet count is tracked over
+ * Uses a tumbling window counter: each peer's packet count is tracked over
  * a configurable window (default 1 second). If the count exceeds the limit,
  * further packets from that peer are rejected until the window resets.
  *
@@ -30,17 +30,31 @@ class RateLimiter(
         private const val TAG = "RateLimiter"
         /** Default rate limit: 100 packets/second/peer. */
         const val DEFAULT_RATE_LIMIT = 100
-        /** Sliding window size in milliseconds. */
+        /** Tumbling window size in milliseconds. */
         private const val WINDOW_MS = 1000L
     }
 
     /**
-     * Per-peer rate tracking.
+     * Per-peer rate tracking. Uses @Synchronized for atomic window reset.
      */
     private data class PeerWindow(
         val windowStart: AtomicLong = AtomicLong(0),
         val packetCount: AtomicLong = AtomicLong(0)
-    )
+    ) {
+        /**
+         * Atomically check and potentially reset the window, then increment the count.
+         * @return the count after increment within the current window.
+         */
+        @Synchronized
+        fun incrementAndGet(now: Long, windowMs: Long): Long {
+            if (now - windowStart.get() > windowMs) {
+                windowStart.set(now)
+                packetCount.set(1)
+                return 1
+            }
+            return packetCount.incrementAndGet()
+        }
+    }
 
     private val peerWindows = ConcurrentHashMap<String, PeerWindow>()
 
@@ -57,15 +71,7 @@ class RateLimiter(
         val now = System.currentTimeMillis()
         val window = peerWindows.getOrPut(peerId) { PeerWindow() }
 
-        val windowStart = window.windowStart.get()
-        if (now - windowStart > WINDOW_MS) {
-            // New window
-            window.windowStart.set(now)
-            window.packetCount.set(1)
-            return true
-        }
-
-        val count = window.packetCount.incrementAndGet()
+        val count = window.incrementAndGet(now, WINDOW_MS)
         if (count > maxPacketsPerSecond) {
             totalDropped.incrementAndGet()
             Log.w(TAG, "RATE_LIMITED peer=$peerId count=$count limit=$maxPacketsPerSecond")

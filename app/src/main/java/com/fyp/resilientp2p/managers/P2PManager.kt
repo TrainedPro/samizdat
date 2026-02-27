@@ -879,23 +879,24 @@ class P2PManager(
                         val nextHop = synchronized(routingLock) { routingTable[destId] }
                         if (nextHop == null || !neighbors.containsKey(nextHop)) continue
 
-                        val delivered = mutableListOf<Packet>()
                         for (packet in packets) {
                             try {
                                 val bytes = packet.toBytes()
                                 connectionsClient.sendPayload(nextHop, Payload.fromBytes(bytes))
                                     .addOnSuccessListener {
                                         networkStats.storeForwardDelivered.incrementAndGet()
+                                        packets.remove(packet)
+                                        if (packets.isEmpty()) {
+                                            pendingMessages.remove(destId)
+                                        }
                                         log("STORE_FORWARD_DELIVERED_MEM dest=$destId", com.fyp.resilientp2p.data.LogLevel.DEBUG)
                                     }
-                                delivered.add(packet)
+                                    .addOnFailureListener { e ->
+                                        log("Store-Forward: Send failed for dest=$destId: ${e.message}", com.fyp.resilientp2p.data.LogLevel.WARN)
+                                    }
                             } catch (e: Exception) {
                                 log("Store-Forward: Error sending in-memory packet: ${e.message}", com.fyp.resilientp2p.data.LogLevel.WARN)
                             }
-                        }
-                        packets.removeAll(delivered.toSet())
-                        if (packets.isEmpty()) {
-                            pendingMessages.remove(destId)
                         }
                     }
                 } catch (e: Exception) {
@@ -1512,7 +1513,7 @@ class P2PManager(
                     val floodPeerName = neighbors[endpointId]?.peerName ?: "Unknown"
                     networkStats.totalPacketsForwarded.incrementAndGet()
                     networkStats.recordPacketSent(floodPeerName, bytes.size)
-                    connectionsClient.sendPayload(endpointId, payload).addOnFailureListener { e ->
+                    connectionsClient.sendPayload(endpointId, Payload.fromBytes(bytes)).addOnFailureListener { e ->
                         if (e.message?.contains("8012") == true) {
                             log("DEAD_ENDPOINT_8012 endpoint=$endpointId", com.fyp.resilientp2p.data.LogLevel.WARN)
                             disconnectFromEndpoint(endpointId)
@@ -1563,7 +1564,7 @@ class P2PManager(
                 val bcPeerName = neighbors[endpointId]?.peerName ?: "Unknown"
                 networkStats.totalPacketsForwarded.incrementAndGet()
                 networkStats.recordPacketSent(bcPeerName, bytes.size)
-                connectionsClient.sendPayload(endpointId, payload).addOnFailureListener { e ->
+                connectionsClient.sendPayload(endpointId, Payload.fromBytes(bytes)).addOnFailureListener { e ->
                     if (e.message?.contains("8012") == true) {
                         log("DEAD_ENDPOINT_8012 endpoint=$endpointId", com.fyp.resilientp2p.data.LogLevel.WARN)
                         disconnectFromEndpoint(endpointId)
@@ -1784,6 +1785,7 @@ class P2PManager(
         // initiate the disconnect. We MUST clean up here ourselves, otherwise the neighbor
         // stays in the map as a ghost forever, blocking reconnection.
         networkStats.recordPeerDisconnected(peerName)
+        encounterLogger?.onPeerDisconnected(peerName)
         neighbors.remove(endpointId)
         activeTransferEndpoints.remove(endpointId)
         synchronized(routingLock) {

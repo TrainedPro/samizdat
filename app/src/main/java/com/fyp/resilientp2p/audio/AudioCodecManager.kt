@@ -4,6 +4,7 @@ import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaFormat
 import android.util.Log
+import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 
 /**
@@ -107,7 +108,7 @@ object AudioCodecManager {
          */
         fun encode(pcmData: ByteArray): ByteArray {
             if (isReleased) return ByteArray(0)
-            val output = mutableListOf<Byte>()
+            val output = ByteArrayOutputStream()
 
             try {
                 // Feed input
@@ -125,7 +126,7 @@ object AudioCodecManager {
                     val outputBuffer = codec.getOutputBuffer(outputIndex) ?: break
                     val chunk = ByteArray(bufferInfo.size)
                     outputBuffer.get(chunk)
-                    output.addAll(chunk.toList())
+                    output.write(chunk)
                     codec.releaseOutputBuffer(outputIndex, false)
                     outputIndex = codec.dequeueOutputBuffer(bufferInfo, 0)
                 }
@@ -137,6 +138,7 @@ object AudioCodecManager {
         }
 
         /** Release codec resources. Must be called when encoding is complete. */
+        @Synchronized
         fun release() {
             if (!isReleased) {
                 isReleased = true
@@ -181,7 +183,7 @@ object AudioCodecManager {
          */
         fun decode(aacData: ByteArray): ByteArray {
             if (isReleased) return ByteArray(0)
-            val output = mutableListOf<Byte>()
+            val output = ByteArrayOutputStream()
 
             try {
                 // Feed input
@@ -199,7 +201,7 @@ object AudioCodecManager {
                     val outputBuffer = codec.getOutputBuffer(outputIndex) ?: break
                     val chunk = ByteArray(bufferInfo.size)
                     outputBuffer.get(chunk)
-                    output.addAll(chunk.toList())
+                    output.write(chunk)
                     codec.releaseOutputBuffer(outputIndex, false)
                     outputIndex = codec.dequeueOutputBuffer(bufferInfo, 0)
                 }
@@ -211,6 +213,7 @@ object AudioCodecManager {
         }
 
         /** Release codec resources. Must be called when decoding is complete. */
+        @Synchronized
         fun release() {
             if (!isReleased) {
                 isReleased = true

@@ -61,12 +61,15 @@ import kotlinx.coroutines.launch
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ResilientP2PApp(p2pManager: P2PManager, onExportLogs: () -> Unit, testRunner: TestRunner? = null, chatDao: ChatDao? = null, telemetryManager: TelemetryManager? = null, emergencyManager: com.fyp.resilientp2p.managers.EmergencyManager? = null) {
+fun ResilientP2PApp(p2pManager: P2PManager, onExportLogs: () -> Unit, testRunner: TestRunner? = null, chatDao: ChatDao? = null, telemetryManager: TelemetryManager? = null, emergencyManager: com.fyp.resilientp2p.managers.EmergencyManager? = null, chatGroupDao: com.fyp.resilientp2p.data.ChatGroupDao? = null, groupMessageDao: com.fyp.resilientp2p.data.GroupMessageDao? = null, locationEstimator: com.fyp.resilientp2p.managers.LocationEstimator? = null) {
         val state by p2pManager.state.collectAsState()
         val context = androidx.compose.ui.platform.LocalContext.current
 
         // Test mode state
         var showTestMode by remember { mutableStateOf(false) }
+        // Phase 4 screen states
+        var showHealthDashboard by remember { mutableStateOf(false) }
+        var showGroupChat by remember { mutableStateOf(false) }
 
         // Auto-launch test mode when compiled with TEST_MODE=true
         LaunchedEffect(Unit) {
@@ -145,6 +148,22 @@ fun ResilientP2PApp(p2pManager: P2PManager, onExportLogs: () -> Unit, testRunner
                                                                 showAdvancedOptions = true
                                                         }
                                                 )
+                                                DropdownMenuItem(
+                                                        text = { Text("\uD83D\uDCCA Health Dashboard") },
+                                                        onClick = {
+                                                                showMenu = false
+                                                                showHealthDashboard = true
+                                                        }
+                                                )
+                                                if (chatGroupDao != null && groupMessageDao != null) {
+                                                        DropdownMenuItem(
+                                                                text = { Text("\uD83D\uDCAC Group Chat") },
+                                                                onClick = {
+                                                                        showMenu = false
+                                                                        showGroupChat = true
+                                                                }
+                                                        )
+                                                }
                                                 if (testRunner != null) {
                                                         DropdownMenuItem(
                                                                 text = { Text("🧪 Run Tests") },
@@ -587,6 +606,26 @@ fun ResilientP2PApp(p2pManager: P2PManager, onExportLogs: () -> Unit, testRunner
                 TestModeScreen(
                         testRunner = testRunner,
                         onDismiss = { showTestMode = false }
+                )
+        }
+
+        // Health dashboard overlay
+        if (showHealthDashboard) {
+                HealthDashboard(
+                        p2pManager = p2pManager,
+                        locationEstimator = locationEstimator,
+                        onBack = { showHealthDashboard = false }
+                )
+        }
+
+        // Group chat overlay
+        if (showGroupChat && chatGroupDao != null && groupMessageDao != null) {
+                GroupChatScreen(
+                        p2pManager = p2pManager,
+                        chatGroupDao = chatGroupDao,
+                        groupMessageDao = groupMessageDao,
+                        localUsername = state.localDeviceName,
+                        onBack = { showGroupChat = false }
                 )
         }
 }

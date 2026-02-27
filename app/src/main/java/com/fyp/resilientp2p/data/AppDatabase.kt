@@ -8,11 +8,15 @@ import androidx.room.RoomDatabase
 /**
  * Room database for the Samizdat mesh node.
  *
- * Hosts four tables:
+ * Hosts tables:
  * - **logs** — diagnostic and metric log entries ([LogEntry])
  * - **packet_queue** — store-and-forward packets ([PacketEntity])
  * - **chat_messages** — user chat messages and file transfers ([ChatMessage])
  * - **telemetry_events** — cloud telemetry snapshots ([TelemetryEvent])
+ * - **chat_groups** — named chat channels ([ChatGroup])
+ * - **group_messages** — group chat messages ([GroupMessage])
+ * - **shared_files** — content-addressable shared files ([SharedFile])
+ * - **encounter_log** — DTN encounter records ([EncounterLog])
  *
  * Uses [fallbackToDestructiveMigration] because this is a research/test-bed app
  * where data persistence across schema changes is not required.
@@ -20,8 +24,17 @@ import androidx.room.RoomDatabase
  * @see Converters
  */
 @Database(
-        entities = [LogEntry::class, PacketEntity::class, ChatMessage::class, TelemetryEvent::class],
-        version = 7,
+        entities = [
+            LogEntry::class,
+            PacketEntity::class,
+            ChatMessage::class,
+            TelemetryEvent::class,
+            ChatGroup::class,
+            GroupMessage::class,
+            SharedFile::class,
+            EncounterLog::class
+        ],
+        version = 8,
         exportSchema = false
 )
 @androidx.room.TypeConverters(Converters::class)
@@ -30,6 +43,10 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun packetDao(): PacketDao
     abstract fun chatDao(): ChatDao
     abstract fun telemetryDao(): TelemetryDao
+    abstract fun chatGroupDao(): ChatGroupDao
+    abstract fun groupMessageDao(): GroupMessageDao
+    abstract fun sharedFileDao(): SharedFileDao
+    abstract fun encounterDao(): EncounterDao
 
     companion object {
         @Volatile private var INSTANCE: AppDatabase? = null

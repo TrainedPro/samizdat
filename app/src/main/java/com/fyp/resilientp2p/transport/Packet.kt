@@ -27,7 +27,15 @@ enum class PacketType {
     ROUTE_ANNOUNCE,    // Periodic route table advertisement
     STORE_FORWARD,     // Store-and-forward delivery attempt
     FILE_META,         // File transfer metadata (filename, MIME, payloadId)
-    EMERGENCY          // Emergency broadcast — highest priority, floods entire mesh
+    EMERGENCY,         // Emergency broadcast — highest priority, floods entire mesh
+
+    // Phase 4 additions
+    GROUP_MESSAGE,     // Chat message destined for a named channel/group
+    FILE_ANNOUNCE,     // Announce a shared file to the mesh (hash, name, size)
+    FILE_REQUEST,      // Request a file chunk by SHA-256 hash + offset
+    FILE_CHUNK,        // Response with a chunk of the requested file
+    ENCOUNTER_LOG,     // DTN encounter record broadcast
+    LOCATION_PING      // Trilateration RTT measurement ping
 }
 
 /**

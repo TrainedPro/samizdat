@@ -5,12 +5,21 @@ import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
 import com.fyp.resilientp2p.data.AppDatabase
+import com.fyp.resilientp2p.data.GroupMessage
 import com.fyp.resilientp2p.managers.EmergencyManager
+import com.fyp.resilientp2p.managers.EncounterLogger
+import com.fyp.resilientp2p.managers.FileShareManager
 import com.fyp.resilientp2p.managers.HeartbeatManager
 import com.fyp.resilientp2p.managers.InternetGatewayManager
+import com.fyp.resilientp2p.managers.LocationEstimator
 import com.fyp.resilientp2p.managers.P2PManager
 import com.fyp.resilientp2p.managers.TelemetryManager
 import com.fyp.resilientp2p.testing.TestRunner
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import java.nio.charset.StandardCharsets
 
 /**
  * Application singleton that owns all long-lived managers.
@@ -40,6 +49,18 @@ class P2PApplication : Application() {
     /** Emergency broadcast and SOS beacon management. */
     lateinit var emergencyManager: EmergencyManager
         private set
+    /** RTT-based trilateration engine for 2D peer positioning. */
+    lateinit var locationEstimator: LocationEstimator
+        private set
+    /** DTN encounter logger for sneakernet analytics. */
+    lateinit var encounterLogger: EncounterLogger
+        private set
+    /** Content-addressable distributed file sharing over the mesh. */
+    lateinit var fileShareManager: FileShareManager
+        private set
+
+    /** Application-wide coroutine scope for non-UI async work. */
+    private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /** Whether this build was compiled with test mode enabled. */
     val isTestMode: Boolean
@@ -56,9 +77,73 @@ class P2PApplication : Application() {
         internetGatewayManager = InternetGatewayManager(this, p2pManager)
         emergencyManager = EmergencyManager(this, p2pManager)
 
+        // Phase 4 managers
+        locationEstimator = LocationEstimator()
+        encounterLogger = EncounterLogger(database.encounterDao())
+        fileShareManager = FileShareManager(this, database.sharedFileDao(), p2pManager.state.value.localDeviceName)
+        fileShareManager.sendPacket = { packet -> p2pManager.injectPacket(packet) }
+
         // Wire cross-references
         p2pManager.internetGatewayManager = internetGatewayManager
         p2pManager.emergencyManager = emergencyManager
+        p2pManager.locationEstimator = locationEstimator
+        p2pManager.encounterLogger = encounterLogger
+        p2pManager.fileShareManager = fileShareManager
+
+        // Group message handler: persist + auto-join unknown groups
+        val groupMessageDao = database.groupMessageDao()
+        val chatGroupDao = database.chatGroupDao()
+        p2pManager.groupMessageHandler = { packet ->
+            appScope.launch {
+                val payloadStr = String(packet.payload, StandardCharsets.UTF_8)
+                val parts = payloadStr.split("|", limit = 4)
+                when (parts.getOrNull(0)) {
+                    "MSG" -> {
+                        if (parts.size >= 4) {
+                            val groupId = parts[1]
+                            val sender = parts[2]
+                            val text = parts[3]
+                            // Auto-register group if unknown
+                            if (chatGroupDao.exists(groupId) == 0) {
+                                chatGroupDao.upsert(
+                                    com.fyp.resilientp2p.data.ChatGroup(
+                                        groupId = groupId,
+                                        name = "Group-${groupId.take(8)}",
+                                        createdBy = sender
+                                    )
+                                )
+                            }
+                            if (groupMessageDao.existsByPacketId(packet.id) == 0) {
+                                groupMessageDao.insert(
+                                    GroupMessage(
+                                        groupId = groupId,
+                                        senderName = sender,
+                                        text = text,
+                                        packetId = packet.id
+                                    )
+                                )
+                            }
+                        }
+                    }
+                    "CREATE" -> {
+                        if (parts.size >= 4) {
+                            val groupId = parts[1]
+                            val name = parts[2]
+                            val creator = parts[3]
+                            if (chatGroupDao.exists(groupId) == 0) {
+                                chatGroupDao.upsert(
+                                    com.fyp.resilientp2p.data.ChatGroup(
+                                        groupId = groupId,
+                                        name = name,
+                                        createdBy = creator
+                                    )
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         // Start managers
         telemetryManager.start()

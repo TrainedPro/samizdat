@@ -13,6 +13,7 @@ import com.fyp.resilientp2p.transport.Packet
 import com.fyp.resilientp2p.transport.PacketType
 import com.google.android.gms.nearby.Nearby
 import com.google.android.gms.nearby.connection.AdvertisingOptions
+import androidx.core.content.edit
 import com.google.android.gms.nearby.connection.BandwidthInfo
 import com.google.android.gms.nearby.connection.ConnectionInfo
 import com.google.android.gms.nearby.connection.ConnectionLifecycleCallback
@@ -95,7 +96,7 @@ class P2PManager(
         val prefs = context.getSharedPreferences("p2p_prefs", android.content.Context.MODE_PRIVATE)
         prefs.getString("device_id", null) ?: run {
             val newId = "${android.os.Build.MODEL}-${UUID.randomUUID().toString().take(12)}"
-            prefs.edit().putString("device_id", newId).apply()
+            prefs.edit { putString("device_id", newId) }
             newId
         }
     }
@@ -2021,8 +2022,8 @@ class P2PManager(
 
     private fun formatBytes(bytes: Long): String {
         return when {
-            bytes >= 1_048_576 -> String.format("%.1fMB", bytes / 1_048_576.0)
-            bytes >= 1024 -> String.format("%.1fKB", bytes / 1024.0)
+            bytes >= 1_048_576 -> String.format(java.util.Locale.US, "%.1fMB", bytes / 1_048_576.0)
+            bytes >= 1024 -> String.format(java.util.Locale.US, "%.1fKB", bytes / 1024.0)
             else -> "${bytes}B"
         }
     }

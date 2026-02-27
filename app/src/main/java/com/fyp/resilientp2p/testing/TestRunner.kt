@@ -612,8 +612,8 @@ class TestRunner(
             details["overallAvg"] = allRtts.average().toLong()
             val actualSent = totalSent - sendErrors
             val loss = if (actualSent > 0) ((1.0 - totalPongsReceived.toDouble() / actualSent) * 100) else 100.0
-            details["lossPercent"] = String.format("%.1f", loss)
-            if (loss > 50) warnings.add("High packet loss: ${String.format("%.1f", loss)}%")
+            details["lossPercent"] = String.format(Locale.US, "%.1f", loss)
+            if (loss > 50) warnings.add("High packet loss: ${String.format(Locale.US, "%.1f", loss)}%")
         }
 
         val duration = System.currentTimeMillis() - start

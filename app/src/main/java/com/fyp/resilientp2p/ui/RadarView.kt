@@ -13,6 +13,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.core.graphics.toColorInt
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -183,7 +184,7 @@ private fun DrawScope.drawRadar(
             // Peer label
             drawContext.canvas.nativeCanvas.apply {
                 val paint = android.graphics.Paint().apply {
-                    color = android.graphics.Color.parseColor("#64B5F6")
+                    color = "#64B5F6".toColorInt()
                     textSize = 24f
                     textAlign = android.graphics.Paint.Align.CENTER
                 }
@@ -207,7 +208,7 @@ private fun DrawScope.drawRadar(
 
             drawContext.canvas.nativeCanvas.apply {
                 val paint = android.graphics.Paint().apply {
-                    color = android.graphics.Color.parseColor("#64B5F6")
+                    color = "#64B5F6".toColorInt()
                     textSize = 24f
                     textAlign = android.graphics.Paint.Align.CENTER
                 }

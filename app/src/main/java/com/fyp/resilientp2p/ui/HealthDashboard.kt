@@ -13,6 +13,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
+import androidx.core.graphics.toColorInt
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -199,7 +200,7 @@ private fun DrawScope.drawTopology(peers: List<String>, localName: String) {
     // Local label
     drawContext.canvas.nativeCanvas.apply {
         val paint = android.graphics.Paint().apply {
-            color = android.graphics.Color.parseColor("#4CAF50")
+            color = "#4CAF50".toColorInt()
             textSize = 26f
             textAlign = android.graphics.Paint.Align.CENTER
             isFakeBoldText = true

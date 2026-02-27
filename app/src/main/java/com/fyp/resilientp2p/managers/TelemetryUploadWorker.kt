@@ -13,6 +13,7 @@ import org.json.JSONObject
 import java.io.BufferedWriter
 import java.io.File
 import java.io.FileWriter
+import androidx.core.content.edit
 import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URL
@@ -111,16 +112,16 @@ class TelemetryUploadWorker(
 
             // Reset circuit breaker
             consecutiveFailures.set(0)
-            prefs.edit()
-                .putLong(KEY_LAST_UPLOAD_TIME, now)
-                .putInt(KEY_CONSECUTIVE_FAILURES, 0)
-                .apply()
+            prefs.edit {
+                putLong(KEY_LAST_UPLOAD_TIME, now)
+                putInt(KEY_CONSECUTIVE_FAILURES, 0)
+            }
 
             Log.i(TAG, "Successfully uploaded ${pending.size} events")
             Result.success()
         } catch (e: Exception) {
             val newFailCount = consecutiveFailures.incrementAndGet()
-            prefs.edit().putInt(KEY_CONSECUTIVE_FAILURES, newFailCount).apply()
+            prefs.edit { putInt(KEY_CONSECUTIVE_FAILURES, newFailCount) }
             Log.e(TAG, "Upload failed (attempt $newFailCount): ${e.message}", e)
 
             // Increment attempt counter for these events

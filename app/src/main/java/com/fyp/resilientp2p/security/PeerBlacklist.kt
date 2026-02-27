@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.util.Log
 import java.util.concurrent.ConcurrentHashMap
+import androidx.core.content.edit
 
 /**
  * Persistent peer blacklist for the Samizdat mesh network.
@@ -116,6 +117,6 @@ class PeerBlacklist(
     }
 
     private fun persist() {
-        prefs.edit().putStringSet(KEY_BLACKLIST, blacklist.toSet()).apply()
+        prefs.edit { putStringSet(KEY_BLACKLIST, blacklist.toSet()) }
     }
 }

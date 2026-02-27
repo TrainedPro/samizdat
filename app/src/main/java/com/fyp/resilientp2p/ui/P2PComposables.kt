@@ -257,7 +257,7 @@ fun ResilientP2PApp(p2pManager: P2PManager, onExportLogs: () -> Unit, testRunner
                                                         )
                                                         if (msg.hasLocation) {
                                                                 Text(
-                                                                        "\uD83D\uDCCD ${String.format("%.5f", msg.latitude)}, ${String.format("%.5f", msg.longitude)}",
+                                                                        "\uD83D\uDCCD ${String.format(java.util.Locale.US, "%.5f", msg.latitude)}, ${String.format(java.util.Locale.US, "%.5f", msg.longitude)}",
                                                                         style = MaterialTheme.typography.labelSmall,
                                                                         color = Color(0xFFD32F2F)
                                                                 )
@@ -1124,8 +1124,8 @@ private fun formatStatsDuration(ms: Long): String {
 
 private fun formatStatsBytes(bytes: Long): String {
         return when {
-                bytes >= 1_048_576 -> String.format("%.1f MB", bytes / 1_048_576.0)
-                bytes >= 1024 -> String.format("%.1f KB", bytes / 1024.0)
+                bytes >= 1_048_576 -> String.format(java.util.Locale.US, "%.1f MB", bytes / 1_048_576.0)
+                bytes >= 1024 -> String.format(java.util.Locale.US, "%.1f KB", bytes / 1024.0)
                 else -> "$bytes B"
         }
 }

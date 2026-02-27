@@ -451,6 +451,6 @@ private fun formatFileSize(bytes: Long): String {
     return when {
         bytes < 1024 -> "${bytes}B"
         bytes < 1024 * 1024 -> "${bytes / 1024}KB"
-        else -> String.format("%.1fMB", bytes / (1024.0 * 1024.0))
+        else -> String.format(java.util.Locale.US, "%.1fMB", bytes / (1024.0 * 1024.0))
     }
 }

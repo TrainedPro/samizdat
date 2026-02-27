@@ -45,6 +45,13 @@
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
     <uses-feature android:name="android.hardware.wifi.direct" android:required="false" />
 
+    <!-- Package visibility for battery optimization settings intent -->
+    <queries>
+        <intent>
+            <action android:name="android.settings.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+        </intent>
+    </queries>
+
     <application
         android:name=".P2PApplication"
         android:allowBackup="false"

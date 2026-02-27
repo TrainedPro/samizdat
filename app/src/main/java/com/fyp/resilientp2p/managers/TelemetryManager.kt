@@ -13,6 +13,7 @@ import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
+import androidx.core.content.edit
 
 /**
  * Cloud telemetry manager for the Samizdat mesh network.
@@ -89,7 +90,7 @@ class TelemetryManager(
     var isEnabled: Boolean
         get() = prefs.getBoolean(KEY_TELEMETRY_ENABLED, true)
         @Synchronized set(value) {
-            prefs.edit().putBoolean(KEY_TELEMETRY_ENABLED, value).apply()
+            prefs.edit { putBoolean(KEY_TELEMETRY_ENABLED, value) }
             if (value) start() else stop()
         }
 
@@ -97,7 +98,7 @@ class TelemetryManager(
     var wifiOnlyUpload: Boolean
         get() = prefs.getBoolean(KEY_WIFI_ONLY, false)
         set(value) {
-            prefs.edit().putBoolean(KEY_WIFI_ONLY, value).apply()
+            prefs.edit { putBoolean(KEY_WIFI_ONLY, value) }
             // Re-schedule upload worker with updated constraints
             schedulePeriodicUpload()
         }
@@ -176,7 +177,7 @@ class TelemetryManager(
                 payload = payload.toString()
             )
         )
-        prefs.edit().putBoolean(KEY_DEVICE_REGISTERED, true).apply()
+        prefs.edit { putBoolean(KEY_DEVICE_REGISTERED, true) }
         Log.i(TAG, "Device registered: $deviceId")
     }
 
@@ -208,7 +209,7 @@ class TelemetryManager(
         if (now - last < SNAPSHOT_INTERVAL_MS - 5000) return
 
         lastSnapshotTime.set(now)
-        prefs.edit().putLong(KEY_LAST_SNAPSHOT_TIME, now).apply()
+        prefs.edit { putLong(KEY_LAST_SNAPSHOT_TIME, now) }
 
         val state = p2pManager.state.value
         val stats = state.stats
@@ -324,7 +325,7 @@ class TelemetryManager(
             )
         )
 
-        prefs.edit().putLong(KEY_LAST_LOG_UPLOAD_TIME, System.currentTimeMillis()).apply()
+        prefs.edit { putLong(KEY_LAST_LOG_UPLOAD_TIME, System.currentTimeMillis()) }
         Log.d(TAG, "Collected ${logs.size} error/warn logs for upload")
     }
 

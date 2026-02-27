@@ -28,6 +28,7 @@ import com.fyp.resilientp2p.ui.ResilientP2PApp
 import com.fyp.resilientp2p.ui.theme.ResilientP2PTestbedTheme
 import com.fyp.resilientp2p.testing.TestRunner
 import com.fyp.resilientp2p.data.LogLevel
+import androidx.core.net.toUri
 import com.google.android.material.slider.Slider
 import java.io.File
 import java.io.FileWriter
@@ -437,7 +438,7 @@ class MainActivity : AppCompatActivity() {
         val powerManager = getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
         if (!powerManager.isIgnoringBatteryOptimizations(packageName)) {
             val intent =
-                    Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply { data = android.net.Uri.parse("package:$packageName") }
+                    Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply { data = "package:$packageName".toUri() }
             if (intent.resolveActivity(packageManager) != null) {
                 try {
                     startActivity(intent)

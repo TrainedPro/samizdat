@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "830416727072",
+    "project_id": "samizdat-relay",
+    "storage_bucket": "samizdat-relay.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:830416727072:android:35f2c5979d33e2c7a96045",
+        "android_client_info": {
+          "package_name": "com.fyp.resilientp2p"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC0Es8J4cpm7uOc0S4-qS6cv3QVaXdHS1Y"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

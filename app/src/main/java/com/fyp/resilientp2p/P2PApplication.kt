@@ -17,6 +17,7 @@ import com.fyp.resilientp2p.managers.TelemetryManager
 import com.fyp.resilientp2p.security.PeerBlacklist
 import com.fyp.resilientp2p.security.RateLimiter
 import com.fyp.resilientp2p.security.SecurityManager
+import com.fyp.resilientp2p.testing.EnduranceTestRunner
 import com.fyp.resilientp2p.testing.TestRunner
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -42,6 +43,9 @@ class P2PApplication : Application() {
         private set
     /** Automated test suite runner (15 tests covering full stack). */
     lateinit var testRunner: TestRunner
+        private set
+    /** Long-running endurance/soak test runner for battery & stability analysis. */
+    lateinit var enduranceTestRunner: EnduranceTestRunner
         private set
     /** Cloud telemetry collection and upload via WorkManager. */
     lateinit var telemetryManager: TelemetryManager
@@ -83,6 +87,7 @@ class P2PApplication : Application() {
         p2pManager = P2PManager(this, database.logDao(), database.packetDao())
         heartbeatManager = HeartbeatManager(p2pManager)
         testRunner = TestRunner(this, p2pManager)
+        enduranceTestRunner = EnduranceTestRunner(this, p2pManager)
         telemetryManager = TelemetryManager(this, database.telemetryDao(), database.logDao(), p2pManager)
 
         // Phase 3 managers
@@ -172,6 +177,14 @@ class P2PApplication : Application() {
 
         // Wire test results to telemetry
         testRunner.onTestResultsReady = { json -> telemetryManager.recordTestResults(json) }
+
+        // Wire endurance test results to telemetry
+        enduranceTestRunner.onEnduranceReportReady = { json ->
+            telemetryManager.recordEnduranceReport(json)
+        }
+        enduranceTestRunner.onEnduranceSnapshotReady = { json ->
+            telemetryManager.recordEnduranceSnapshot(json)
+        }
 
         // ProcessLifecycleOwner NEVER dispatches ON_DESTROY, so that callback was dead code.
         // Use onStop to know when the app goes to background; actual cleanup is done

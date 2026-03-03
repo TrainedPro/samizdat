@@ -80,13 +80,20 @@ class P2PManager(
     private val connectionTimestamps = ConcurrentHashMap<String, Long>()
 
     // Battery Monitoring
+    private val batteryManager = context.getSystemService(Context.BATTERY_SERVICE) as BatteryManager
     private val batteryReceiver = object : BroadcastReceiver() {
         override fun onReceive(ctx: Context, intent: Intent) {
             val level = intent.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
             val scale = intent.getIntExtra(BatteryManager.EXTRA_SCALE, 100)
             val temp = intent.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 0) / 10f
+            val voltage = intent.getIntExtra(BatteryManager.EXTRA_VOLTAGE, 0)
             if (level >= 0) networkStats.batteryLevel = (level * 100) / scale
             networkStats.batteryTemperature = temp
+            networkStats.batteryVoltageMilliV = voltage
+
+            // µAh from charge counter (returns -1 or 0 on unsupported OEMs)
+            val chargeUah = batteryManager.getIntProperty(BatteryManager.BATTERY_PROPERTY_CHARGE_COUNTER).toLong()
+            if (chargeUah > 0) networkStats.batteryChargeUah = chargeUah
         }
     }
 
@@ -702,6 +709,48 @@ class P2PManager(
         } catch (e: Exception) {
             log("BATTERY_MONITOR_FAILED error='${e.message}'", com.fyp.resilientp2p.data.LogLevel.WARN)
         }
+
+        // Read battery design capacity once (from hidden PowerProfile or sysfs)
+        try {
+            val designCapMah = readBatteryDesignCapacityMah()
+            if (designCapMah > 0) {
+                networkStats.batteryDesignCapacityMah = designCapMah
+                log("Battery design capacity: ${designCapMah} mAh", com.fyp.resilientp2p.data.LogLevel.INFO)
+            } else {
+                log("Battery design capacity unavailable (OEM does not expose it)", com.fyp.resilientp2p.data.LogLevel.WARN)
+            }
+        } catch (e: Exception) {
+            log("BATTERY_CAPACITY_READ_FAILED error='${e.message}'", com.fyp.resilientp2p.data.LogLevel.WARN)
+        }
+    }
+
+    /**
+     * Read battery design capacity in mAh from Android's hidden `PowerProfile` class
+     * (reflection) or the `/sys/class/power_supply/battery/charge_full_design` sysfs node.
+     * Returns 0 if neither source is available.
+     */
+    private fun readBatteryDesignCapacityMah(): Int {
+        // Attempt 1: PowerProfile reflection (works on most Samsung, Pixel, Lenovo)
+        try {
+            val powerProfileClass = Class.forName("com.android.internal.os.PowerProfile")
+            val constructor = powerProfileClass.getConstructor(Context::class.java)
+            val profile = constructor.newInstance(context)
+            val method = powerProfileClass.getMethod("getBatteryCapacity")
+            val capacity = (method.invoke(profile) as Double).toInt()
+            if (capacity > 0) return capacity
+        } catch (_: Exception) { /* Not available */ }
+
+        // Attempt 2: sysfs (µAh or mAh depending on kernel)
+        try {
+            val sysfsFile = java.io.File("/sys/class/power_supply/battery/charge_full_design")
+            if (sysfsFile.exists()) {
+                val raw = sysfsFile.readText().trim().toLongOrNull() ?: 0L
+                // Kernel reports in µAh on most devices, mAh on some
+                return if (raw > 100_000) (raw / 1000).toInt() else raw.toInt()
+            }
+        } catch (_: Exception) { /* Not available */ }
+
+        return 0
     }
 
     private fun startRoutingUpdates() {
@@ -1992,9 +2041,10 @@ class P2PManager(
                         routingTable.entries.joinToString { "${it.key}->${it.value}(${routingScores[it.key] ?: 0})" }
                     }
                     val neighborList = neighbors.values.joinToString { "${it.peerName}(${it.peerId})" }
+                    val mAhStr = if (snap.batteryChargeUah > 0) "${snap.batteryChargeUah / 1000}mAh" else "~${snap.estimatedRemainingMah().toInt()}mAh(est)"
                     log(
                             "STATS_DUMP v=$appVersion uptime=${formatDuration(snap.uptimeMs)} " +
-                            "battery=${snap.batteryLevel}%(${snap.batteryTemperature}\u00B0C) " +
+                            "battery=${snap.batteryLevel}%(${snap.batteryTemperature}\u00B0C) ${mAhStr} ${snap.batteryVoltageMilliV}mV " +
                             "neighbors=${snap.currentNeighborCount}[$neighborList] " +
                             "routes=${snap.currentRouteCount}[$routeList] " +
                             "packets=\u2191${snap.totalPacketsSent}\u2193${snap.totalPacketsReceived}\u21BB${snap.totalPacketsForwarded}\u2717${snap.totalPacketsDropped} " +

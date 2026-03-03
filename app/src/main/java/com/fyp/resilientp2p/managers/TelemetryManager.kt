@@ -220,6 +220,10 @@ class TelemetryManager(
             put("uptimeMs", stats.uptimeMs)
             put("batteryLevel", stats.batteryLevel)
             put("batteryTemperature", stats.batteryTemperature.toDouble())
+            put("batteryChargeUah", stats.batteryChargeUah)
+            put("batteryVoltageMilliV", stats.batteryVoltageMilliV)
+            put("batteryDesignCapacityMah", stats.batteryDesignCapacityMah)
+            put("batteryEstimatedMah", stats.estimatedRemainingMah())
             put("totalBytesSent", stats.totalBytesSent)
             put("totalBytesReceived", stats.totalBytesReceived)
             put("totalPacketsSent", stats.totalPacketsSent)
@@ -389,6 +393,36 @@ class TelemetryManager(
                 )
             )
             Log.i(TAG, "Test results queued for upload")
+        }
+    }
+
+    /** Record the final endurance test report for cloud upload. */
+    fun recordEnduranceReport(reportJson: String) {
+        if (!isEnabled) return
+        scope.launch {
+            telemetryDao.insert(
+                TelemetryEvent(
+                    deviceId = deviceId,
+                    eventType = TelemetryEventType.ENDURANCE_REPORT,
+                    payload = reportJson
+                )
+            )
+            Log.i(TAG, "Endurance report queued for upload")
+        }
+    }
+
+    /** Record a periodic endurance snapshot for cloud upload. */
+    fun recordEnduranceSnapshot(snapshotJson: String) {
+        if (!isEnabled) return
+        scope.launch {
+            telemetryDao.insert(
+                TelemetryEvent(
+                    deviceId = deviceId,
+                    eventType = TelemetryEventType.ENDURANCE_SNAPSHOT,
+                    payload = snapshotJson
+                )
+            )
+            Log.d(TAG, "Endurance snapshot queued for upload")
         }
     }
 

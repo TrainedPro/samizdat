@@ -26,6 +26,7 @@ import com.fyp.resilientp2p.managers.P2PManager
 import com.fyp.resilientp2p.service.P2PService
 import com.fyp.resilientp2p.ui.ResilientP2PApp
 import com.fyp.resilientp2p.ui.theme.ResilientP2PTestbedTheme
+import com.fyp.resilientp2p.testing.EnduranceTestRunner
 import com.fyp.resilientp2p.testing.TestRunner
 import com.fyp.resilientp2p.data.LogLevel
 import androidx.core.net.toUri
@@ -63,6 +64,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var p2pManager: P2PManager
     private lateinit var heartbeatManager: HeartbeatManager
     private lateinit var testRunner: TestRunner
+    private lateinit var enduranceTestRunner: EnduranceTestRunner
 
     // Dynamic permission list generation
     private fun getRequiredPermissions(): Array<String> {
@@ -119,6 +121,7 @@ class MainActivity : AppCompatActivity() {
         p2pManager = app.p2pManager
         heartbeatManager = app.heartbeatManager
         testRunner = app.testRunner
+        enduranceTestRunner = app.enduranceTestRunner
 
         // Set Content to Pure Compose
         val composeView =
@@ -129,6 +132,7 @@ class MainActivity : AppCompatActivity() {
                                     p2pManager = p2pManager,
                                     onExportLogs = { exportLogs() },
                                     testRunner = testRunner,
+                                    enduranceTestRunner = enduranceTestRunner,
                                     chatDao = (application as P2PApplication).database.chatDao(),
                                     telemetryManager = (application as P2PApplication).telemetryManager,
                                     emergencyManager = (application as P2PApplication).emergencyManager,

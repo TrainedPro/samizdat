@@ -12,16 +12,16 @@ A standalone web dashboard for monitoring the Samizdat mesh network in real time
 
 ## Features
 
-| Feature | Description |
-|---------|-------------|
-| **Device List** | All registered mesh nodes with live status, battery, uptime, peer count |
-| **Packets Chart** | Line chart of sent/received/forwarded packets over time |
-| **Battery Chart** | Bar chart of current battery levels across all devices |
-| **RTT Chart** | Average round-trip time per device |
-| **Mesh Topology** | Canvas visualization of connected mesh nodes |
-| **Event Log** | Filterable telemetry event stream (stats, connection, error, routing, test) |
-| **Cloud Relay** | Monitor messages in the Firestore relay queue |
-| **Test Results** | View automated test suite results per device |
+| Feature           | Description                                                                 |
+| ----------------- | --------------------------------------------------------------------------- |
+| **Device List**   | All registered mesh nodes with live status, battery, uptime, peer count     |
+| **Packets Chart** | Line chart of sent/received/forwarded packets over time                     |
+| **Battery Chart** | Bar chart of current battery levels across all devices                      |
+| **RTT Chart**     | Average round-trip time per device                                          |
+| **Mesh Topology** | Canvas visualization of connected mesh nodes                                |
+| **Event Log**     | Filterable telemetry event stream (stats, connection, error, routing, test) |
+| **Cloud Relay**   | Monitor messages in the Firestore relay queue                               |
+| **Test Results**  | View automated test suite results per device                                |
 
 ## Data Sources
 

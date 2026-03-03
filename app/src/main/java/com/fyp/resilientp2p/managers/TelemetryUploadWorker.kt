@@ -190,6 +190,8 @@ class TelemetryUploadWorker(
             TelemetryEventType.ERROR_LOG -> "error_logs"
             TelemetryEventType.TEST_RESULT -> "test_results"
             TelemetryEventType.STORE_FORWARD_REPORT -> "store_forward"
+            TelemetryEventType.ENDURANCE_REPORT -> "endurance_reports"
+            TelemetryEventType.ENDURANCE_SNAPSHOT -> "endurance_snapshots"
         }
     }
 

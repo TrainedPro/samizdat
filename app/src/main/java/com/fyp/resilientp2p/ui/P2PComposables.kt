@@ -34,6 +34,7 @@ import com.fyp.resilientp2p.data.NetworkStatsSnapshot
 import com.fyp.resilientp2p.managers.P2PManager
 import com.fyp.resilientp2p.managers.TelemetryManager
 import com.fyp.resilientp2p.managers.TelemetryStatus
+import com.fyp.resilientp2p.testing.EnduranceTestRunner
 import com.fyp.resilientp2p.testing.TestRunner
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -59,15 +60,15 @@ import kotlinx.coroutines.launch
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ResilientP2PApp(p2pManager: P2PManager, onExportLogs: () -> Unit, testRunner: TestRunner? = null, chatDao: ChatDao? = null, telemetryManager: TelemetryManager? = null, emergencyManager: com.fyp.resilientp2p.managers.EmergencyManager? = null, chatGroupDao: com.fyp.resilientp2p.data.ChatGroupDao? = null, groupMessageDao: com.fyp.resilientp2p.data.GroupMessageDao? = null, locationEstimator: com.fyp.resilientp2p.managers.LocationEstimator? = null) {
+fun ResilientP2PApp(p2pManager: P2PManager, onExportLogs: () -> Unit, testRunner: TestRunner? = null, enduranceTestRunner: EnduranceTestRunner? = null, chatDao: ChatDao? = null, telemetryManager: TelemetryManager? = null, emergencyManager: com.fyp.resilientp2p.managers.EmergencyManager? = null, chatGroupDao: com.fyp.resilientp2p.data.ChatGroupDao? = null, groupMessageDao: com.fyp.resilientp2p.data.GroupMessageDao? = null, locationEstimator: com.fyp.resilientp2p.managers.LocationEstimator? = null) {
         val state by p2pManager.state.collectAsState()
         val context = androidx.compose.ui.platform.LocalContext.current
 
         // Test mode state
-        var showTestMode by remember { mutableStateOf(false) }
+        var showTestMode by rememberSaveable { mutableStateOf(false) }
         // Phase 4 screen states
-        var showHealthDashboard by remember { mutableStateOf(false) }
-        var showGroupChat by remember { mutableStateOf(false) }
+        var showHealthDashboard by rememberSaveable { mutableStateOf(false) }
+        var showGroupChat by rememberSaveable { mutableStateOf(false) }
 
         // Auto-launch test mode when compiled with TEST_MODE=true
         LaunchedEffect(Unit) {
@@ -603,6 +604,7 @@ fun ResilientP2PApp(p2pManager: P2PManager, onExportLogs: () -> Unit, testRunner
         if (showTestMode && testRunner != null) {
                 TestModeScreen(
                         testRunner = testRunner,
+                        enduranceTestRunner = enduranceTestRunner,
                         onDismiss = { showTestMode = false }
                 )
         }

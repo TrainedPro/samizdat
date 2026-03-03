@@ -13,6 +13,12 @@ data class NetworkStatsSnapshot(
     val uptimeMs: Long = 0,
     val batteryLevel: Int = -1, // -1 = unknown
     val batteryTemperature: Float = 0f,
+    /** Remaining charge in micro-amp-hours from BATTERY_PROPERTY_CHARGE_COUNTER. -1 = unsupported by OEM. */
+    val batteryChargeUah: Long = -1,
+    /** Battery voltage in millivolts from EXTRA_VOLTAGE. */
+    val batteryVoltageMilliV: Int = 0,
+    /** Design capacity of the battery in mAh, read from PowerProfile or sysfs. 0 = unknown. */
+    val batteryDesignCapacityMah: Int = 0,
     val totalBytesSent: Long = 0,
     val totalBytesReceived: Long = 0,
     val totalPacketsSent: Long = 0,
@@ -27,7 +33,20 @@ data class NetworkStatsSnapshot(
     val storeForwardQueued: Long = 0,
     val storeForwardDelivered: Long = 0,
     val peerStats: Map<String, PeerStatsSnapshot> = emptyMap()
-)
+) {
+    /**
+     * Best-effort remaining charge in mAh.
+     * Uses [batteryChargeUah] when the OEM exposes it (`BATTERY_PROPERTY_CHARGE_COUNTER`),
+     * otherwise falls back to interpolating from [batteryLevel] and [batteryDesignCapacityMah].
+     * Returns -1 if neither source is available.
+     */
+    fun estimatedRemainingMah(): Double = when {
+        batteryChargeUah > 0 -> batteryChargeUah / 1000.0
+        batteryLevel in 0..100 && batteryDesignCapacityMah > 0 ->
+            batteryDesignCapacityMah * (batteryLevel / 100.0)
+        else -> -1.0
+    }
+}
 
 /**
  * Immutable snapshot of per-peer statistics, included inside [NetworkStatsSnapshot.peerStats].
@@ -72,6 +91,12 @@ class NetworkStats {
     // Battery
     @Volatile var batteryLevel: Int = -1
     @Volatile var batteryTemperature: Float = 0f
+    /** Remaining charge in µAh (from BatteryManager.BATTERY_PROPERTY_CHARGE_COUNTER). -1 = unsupported. */
+    @Volatile var batteryChargeUah: Long = -1
+    /** Battery voltage in millivolts (from EXTRA_VOLTAGE). */
+    @Volatile var batteryVoltageMilliV: Int = 0
+    /** Full design capacity in mAh, read once at initialisation. 0 = unknown. */
+    @Volatile var batteryDesignCapacityMah: Int = 0
 
     // Per-peer RTT tracking
     val peerRtt = ConcurrentHashMap<String, Long>() // peerId -> lastRttMs
@@ -158,6 +183,9 @@ class NetworkStats {
             uptimeMs = System.currentTimeMillis() - startTimeMs,
             batteryLevel = batteryLevel,
             batteryTemperature = batteryTemperature,
+            batteryChargeUah = batteryChargeUah,
+            batteryVoltageMilliV = batteryVoltageMilliV,
+            batteryDesignCapacityMah = batteryDesignCapacityMah,
             totalBytesSent = totalBytesSent.get(),
             totalBytesReceived = totalBytesReceived.get(),
             totalPacketsSent = totalPacketsSent.get(),

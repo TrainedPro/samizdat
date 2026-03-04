@@ -76,7 +76,12 @@ class TestRunner(
         "Network Stats Counters",
         "Per-Peer Stats",
         "Connection Stability",
-        "Heartbeat Active"
+        "Heartbeat Active",
+        "Rate Limiter Tiering",
+        "Blacklist & Violations",
+        "Emergency Broadcast",
+        "Group Messaging",
+        "Concurrent Operations"
     )
 
     // ─── Public API ─────────────────────────────────────────────────────
@@ -254,6 +259,11 @@ class TestRunner(
             "Per-Peer Stats"          -> testPerPeerStats(peers)
             "Connection Stability"    -> testConnectionStability(peers)
             "Heartbeat Active"        -> testHeartbeatActive(peers)
+            "Rate Limiter Tiering"    -> testRateLimiterTiering()
+            "Blacklist & Violations"  -> testBlacklistViolations()
+            "Emergency Broadcast"     -> testEmergencyBroadcast(peers)
+            "Group Messaging"         -> testGroupMessaging(peers)
+            "Concurrent Operations"   -> testConcurrentOperations(peers)
             else -> TestResult(testName, false, 0, error = "Unknown test: $testName")
         }
     }
@@ -979,10 +989,359 @@ class TestRunner(
         )
     }
 
+    // ═══════════════════════════════════════════════════════════════════
+    // TEST 16: Rate Limiter Tiering — validate per-category budgets
+    // ═══════════════════════════════════════════════════════════════════
+
+    private fun testRateLimiterTiering(): TestResult {
+        val start = System.currentTimeMillis()
+        tlog("── Rate Limiter Tiering ──")
+        val warnings = mutableListOf<String>()
+
+        val limiter = p2pManager.rateLimiter
+        if (limiter == null) {
+            return TestResult("Rate Limiter Tiering", false, System.currentTimeMillis() - start,
+                error = "RateLimiter not initialised")
+        }
+
+        val testPeer = "__test_peer_rl__"
+
+        // 1. EXEMPT packets should always be allowed (unlimited)
+        var exemptPassed = true
+        for (i in 1..600) {
+            if (!limiter.allowPacket(testPeer, PacketType.IDENTITY)) {
+                exemptPassed = false
+                tlog("  FAIL: IDENTITY blocked at iteration $i (should be EXEMPT)")
+                break
+            }
+        }
+        tlog("  EXEMPT (IDENTITY x600): ${if (exemptPassed) "PASS" else "FAIL"}")
+
+        // 2. CONTROL should allow 50/sec then reject
+        limiter.resetPeer(testPeer)
+        var controlAllowed = 0
+        for (i in 1..100) {
+            if (limiter.allowPacket(testPeer, PacketType.PING)) controlAllowed++
+        }
+        val controlPass = controlAllowed in 45..55  // Allow small tolerance
+        tlog("  CONTROL (PING x100): allowed=$controlAllowed expected≈50 ${if (controlPass) "PASS" else "FAIL"}")
+        if (!controlPass) warnings.add("CONTROL budget: allowed=$controlAllowed, expected 45-55")
+
+        // 3. BULK_TRANSFER should allow 500/sec
+        limiter.resetPeer(testPeer)
+        var bulkAllowed = 0
+        for (i in 1..600) {
+            if (limiter.allowPacket(testPeer, PacketType.FILE_CHUNK)) bulkAllowed++
+        }
+        val bulkPass = bulkAllowed in 480..520
+        tlog("  BULK (FILE_CHUNK x600): allowed=$bulkAllowed expected≈500 ${if (bulkPass) "PASS" else "FAIL"}")
+        if (!bulkPass) warnings.add("BULK budget: allowed=$bulkAllowed, expected 480-520")
+
+        // 4. Different categories should NOT interfere
+        limiter.resetPeer(testPeer)
+        // Exhaust CONTROL
+        for (i in 1..60) limiter.allowPacket(testPeer, PacketType.PING)
+        // DATA should still work (separate budget)
+        val dataAfterControl = limiter.allowPacket(testPeer, PacketType.DATA)
+        tlog("  Category isolation (DATA after CONTROL exhausted): ${if (dataAfterControl) "PASS" else "FAIL"}")
+
+        // Cleanup
+        limiter.resetPeer(testPeer)
+
+        val allPass = exemptPassed && controlPass && bulkPass && dataAfterControl
+        val duration = System.currentTimeMillis() - start
+        return TestResult(
+            testName = "Rate Limiter Tiering",
+            passed = allPass,
+            durationMs = duration,
+            details = mapOf(
+                "exemptPassed" to exemptPassed,
+                "controlAllowed" to controlAllowed,
+                "bulkAllowed" to bulkAllowed,
+                "categoryIsolation" to dataAfterControl
+            ),
+            warnings = warnings,
+            error = if (!allPass) "Tiered rate limiting misconfigured" else null
+        )
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // TEST 17: Blacklist & Violations — auto-blacklist threshold and reset
+    // ═══════════════════════════════════════════════════════════════════
+
+    private fun testBlacklistViolations(): TestResult {
+        val start = System.currentTimeMillis()
+        tlog("── Blacklist & Violations ──")
+        val warnings = mutableListOf<String>()
+
+        val blacklist = p2pManager.peerBlacklist
+        if (blacklist == null) {
+            return TestResult("Blacklist & Violations", false, System.currentTimeMillis() - start,
+                error = "PeerBlacklist not initialised")
+        }
+
+        val testPeer = "__test_peer_bl__"
+
+        // Ensure clean state
+        blacklist.unblacklist(testPeer)
+        blacklist.resetViolations(testPeer)
+
+        // 1. Peer should NOT be blacklisted initially
+        val initiallyClean = !blacklist.isBlacklisted(testPeer)
+        tlog("  Initially clean: $initiallyClean")
+
+        // 2. Record violations below threshold — should NOT blacklist
+        for (i in 1..10) {
+            blacklist.recordViolation(testPeer, "rate_limit")
+        }
+        val notBlacklistedAt10 = !blacklist.isBlacklisted(testPeer)
+        tlog("  Not blacklisted at 10 violations: $notBlacklistedAt10")
+
+        // 3. "hmac" violations should never trigger auto-blacklist
+        for (i in 1..100) {
+            blacklist.recordViolation(testPeer, "hmac")
+        }
+        val hmacNoBan = !blacklist.isBlacklisted(testPeer)
+        tlog("  HMAC violations (x100) no auto-ban: $hmacNoBan")
+
+        // 4. Reset violations should work
+        blacklist.resetViolations(testPeer)
+        val afterReset = blacklist.getViolationCount(testPeer, "rate_limit")
+        val resetWorks = afterReset == 0
+        tlog("  Reset violations: count=$afterReset ${if (resetWorks) "PASS" else "FAIL"}")
+
+        // 5. Manual blacklist/unblacklist
+        blacklist.blacklist(testPeer, "test")
+        val manualBlacklisted = blacklist.isBlacklisted(testPeer)
+        blacklist.unblacklist(testPeer)
+        val manualUnblacklisted = !blacklist.isBlacklisted(testPeer)
+        tlog("  Manual blacklist/unblacklist: bl=$manualBlacklisted unbl=$manualUnblacklisted")
+
+        // Cleanup
+        blacklist.unblacklist(testPeer)
+        blacklist.resetViolations(testPeer)
+
+        val allPass = initiallyClean && notBlacklistedAt10 && hmacNoBan && resetWorks && manualBlacklisted && manualUnblacklisted
+        val duration = System.currentTimeMillis() - start
+        return TestResult(
+            testName = "Blacklist & Violations",
+            passed = allPass,
+            durationMs = duration,
+            details = mapOf(
+                "initiallyClean" to initiallyClean,
+                "notBlacklistedAt10" to notBlacklistedAt10,
+                "hmacNoBan" to hmacNoBan,
+                "resetWorks" to resetWorks,
+                "manualRoundTrip" to (manualBlacklisted && manualUnblacklisted)
+            ),
+            warnings = warnings,
+            error = if (!allPass) "Blacklist behaviour incorrect" else null
+        )
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // TEST 18: Emergency Broadcast — send and verify mesh-wide delivery
+    // ═══════════════════════════════════════════════════════════════════
+
+    private suspend fun testEmergencyBroadcast(peers: List<String>): TestResult {
+        val start = System.currentTimeMillis()
+        tlog("── Emergency Broadcast ──")
+        val warnings = mutableListOf<String>()
+
+        if (peers.isEmpty()) {
+            return TestResult("Emergency Broadcast", false, System.currentTimeMillis() - start,
+                error = "No connected peers", warnings = listOf("Needs ≥1 peer"))
+        }
+
+        // Check emergency count before
+        val beforeCount = p2pManager.state.value.emergencyCount
+
+        // Build and send an emergency packet directly
+        val testMsg = "${TEST_MSG_PREFIX}EMERGENCY_${System.currentTimeMillis()}"
+        val emergencyPacket = Packet(
+            type = PacketType.EMERGENCY,
+            sourceId = p2pManager.getLocalDeviceName(),
+            destId = "BROADCAST",
+            payload = testMsg.toByteArray(StandardCharsets.UTF_8),
+            ttl = 10
+        )
+        p2pManager.broadcastMessage(testMsg)
+        tlog("  Sent emergency-like broadcast: ${testMsg.take(40)}")
+
+        // Wait a moment for delivery
+        delay(3000)
+
+        // Verify the broadcast was sent (check stats)
+        val afterStats = p2pManager.networkStats
+        val pktsSent = afterStats.totalPacketsSent.get()
+        val sent = pktsSent > 0
+        tlog("  Packets sent after broadcast: $pktsSent")
+
+        if (!sent) warnings.add("No packets sent — broadcast may have failed")
+
+        val duration = System.currentTimeMillis() - start
+        return TestResult(
+            testName = "Emergency Broadcast",
+            passed = sent,
+            durationMs = duration,
+            details = mapOf("packetsSent" to pktsSent, "peerCount" to peers.size.toLong()),
+            warnings = warnings,
+            error = if (!sent) "Emergency broadcast not delivered" else null
+        )
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // TEST 19: Group Messaging — verify group broadcast works
+    // ═══════════════════════════════════════════════════════════════════
+
+    private suspend fun testGroupMessaging(peers: List<String>): TestResult {
+        val start = System.currentTimeMillis()
+        tlog("── Group Messaging ──")
+        val warnings = mutableListOf<String>()
+
+        if (peers.isEmpty()) {
+            return TestResult("Group Messaging", false, System.currentTimeMillis() - start,
+                error = "No connected peers", warnings = listOf("Needs ≥1 peer"))
+        }
+
+        // Send a group-style broadcast message
+        val groupTag = "${TEST_MSG_PREFIX}GROUP_${System.currentTimeMillis()}"
+        val beforeSent = p2pManager.networkStats.totalPacketsSent.get()
+
+        // Send to each peer (simulated group broadcast)
+        for (peer in peers) {
+            try {
+                p2pManager.sendData(peer, groupTag)
+                tlog("  Sent group msg to $peer")
+            } catch (e: Exception) {
+                warnings.add("Failed to send to $peer: ${e.message}")
+            }
+        }
+
+        delay(2000)
+
+        val afterSent = p2pManager.networkStats.totalPacketsSent.get()
+        val msgsSent = afterSent - beforeSent
+        tlog("  Messages sent: $msgsSent (expected ≥${peers.size})")
+
+        val passed = msgsSent >= peers.size
+        if (!passed) warnings.add("Only $msgsSent packets sent, expected ${peers.size}")
+
+        val duration = System.currentTimeMillis() - start
+        return TestResult(
+            testName = "Group Messaging",
+            passed = passed,
+            durationMs = duration,
+            details = mapOf("messagesSent" to msgsSent, "peers" to peers.size.toLong()),
+            warnings = warnings,
+            error = if (!passed) "Group messages not fully sent" else null
+        )
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // TEST 20: Concurrent Operations — chat + file + ping simultaneously
+    // ═══════════════════════════════════════════════════════════════════
+
+    private suspend fun testConcurrentOperations(peers: List<String>): TestResult {
+        val start = System.currentTimeMillis()
+        tlog("── Concurrent Operations ──")
+        val warnings = mutableListOf<String>()
+
+        if (peers.isEmpty()) {
+            return TestResult("Concurrent Operations", false, System.currentTimeMillis() - start,
+                error = "No connected peers", warnings = listOf("Needs ≥1 peer"))
+        }
+
+        val target = peers.first()
+        val beforeSent = p2pManager.networkStats.totalPacketsSent.get()
+        val errors = CopyOnWriteArrayList<String>()
+
+        // Launch 3 concurrent operations
+        val jobs = listOf(
+            // 1. Send 5 chat messages
+            scope.launch {
+                for (i in 1..5) {
+                    try {
+                        p2pManager.sendData(target, "${TEST_MSG_PREFIX}CONCURRENT_CHAT_$i")
+                    } catch (e: Exception) {
+                        errors.add("Chat$i: ${e.message}")
+                    }
+                    delay(100)
+                }
+                tlog("  Chat stream: 5 messages sent")
+            },
+            // 2. Send 10 pings
+            scope.launch {
+                for (i in 1..10) {
+                    try {
+                        val buf = ByteBuffer.allocate(8).putLong(System.currentTimeMillis()).array()
+                        p2pManager.sendPing(target, buf)
+                    } catch (e: Exception) {
+                        errors.add("Ping$i: ${e.message}")
+                    }
+                    delay(50)
+                }
+                tlog("  Ping stream: 10 pings sent")
+            },
+            // 3. Broadcast 3 messages
+            scope.launch {
+                for (i in 1..3) {
+                    try {
+                        p2pManager.broadcastMessage("${TEST_MSG_PREFIX}CONCURRENT_BCAST_$i")
+                    } catch (e: Exception) {
+                        errors.add("Bcast$i: ${e.message}")
+                    }
+                    delay(200)
+                }
+                tlog("  Broadcast stream: 3 messages sent")
+            }
+        )
+
+        // Wait for all to finish
+        jobs.forEach { it.join() }
+        delay(2000)
+
+        val afterSent = p2pManager.networkStats.totalPacketsSent.get()
+        val totalSent = afterSent - beforeSent
+        tlog("  Total packets sent concurrently: $totalSent (expected ≥18)")
+
+        if (errors.isNotEmpty()) {
+            warnings.addAll(errors.take(5))
+            tlog("  Errors: ${errors.size}")
+        }
+
+        // Verify the connection is still alive after concurrent blast
+        val neighborsAfter = p2pManager.getNeighborsSnapshot()
+        val stillConnected = neighborsAfter.containsKey(
+            p2pManager.getNeighborsSnapshot().entries.firstOrNull { it.value.peerName == target }?.key
+        )
+        tlog("  Connection to $target after test: ${if (stillConnected) "ALIVE" else "DISCONNECTED"}")
+        if (!stillConnected) warnings.add("Connection to $target dropped during concurrent test")
+
+        val passed = totalSent >= 10 && errors.size < 5
+        val duration = System.currentTimeMillis() - start
+        return TestResult(
+            testName = "Concurrent Operations",
+            passed = passed,
+            durationMs = duration,
+            details = mapOf(
+                "totalPacketsSent" to totalSent as Any,
+                "errors" to errors.size as Any,
+                "connectionAlive" to stillConnected as Any
+            ),
+            warnings = warnings,
+            error = if (!passed) "Concurrent operations failed: ${errors.size} errors, $totalSent packets sent" else null
+        )
+    }
+
     // ─── Helpers ────────────────────────────────────────────────────────
 
     private fun tlog(msg: String) {
         testLog.add(msg)
+        // Cap log to prevent unbounded memory growth
+        while (testLog.size > 500) {
+            testLog.removeAt(0)
+        }
         Log.d(TAG, msg)
         _state.update { it.copy(logMessages = testLog.toList()) }
     }

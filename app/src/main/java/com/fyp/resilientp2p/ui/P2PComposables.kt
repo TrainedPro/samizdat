@@ -16,6 +16,7 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.*
 import androidx.compose.material3.MaterialTheme.colorScheme
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -98,6 +99,10 @@ fun ResilientP2PApp(p2pManager: P2PManager, onExportLogs: () -> Unit, testRunner
         var chatTargetId by remember { mutableStateOf<String?>(null) }
         var showAdvancedOptions by remember { mutableStateOf(false) }
         var showMenu by remember { mutableStateOf(false) }
+
+        // Endurance test state (for persistent indicator on main screen)
+        val enduranceState = enduranceTestRunner?.state?.collectAsState()
+        val isEnduranceRunning = enduranceState?.value?.isRunning == true
 
         // Received file notifications
         val receivedFile by p2pManager.receivedFileEvents.collectAsState(initial = null)
@@ -207,26 +212,73 @@ fun ResilientP2PApp(p2pManager: P2PManager, onExportLogs: () -> Unit, testRunner
                                         if (isConnected) (bandwidthInfo?.quality ?: 0) else 0
                         )
 
-                        // --- Gateway Status Indicator ---
-                        if (state.hasInternet) {
+                        // --- Endurance Test Running Indicator ---
+                        AnimatedVisibility(visible = isEnduranceRunning) {
                                 Card(
                                         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                                         colors = CardDefaults.cardColors(
-                                                containerColor = if (state.isGateway) Color(0xFF1B5E20).copy(alpha = 0.15f) else colorScheme.surfaceVariant
-                                        )
+                                                containerColor = Color(0xFF0D47A1).copy(alpha = 0.15f)
+                                        ),
+                                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF1565C0))
                                 ) {
                                         Row(
                                                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                                                 verticalAlignment = Alignment.CenterVertically
                                         ) {
-                                                Text("\uD83C\uDF10", fontSize = 16.sp)
+                                                Text("\u23F1\uFE0F", fontSize = 16.sp)
                                                 Spacer(modifier = Modifier.width(8.dp))
                                                 Text(
-                                                        if (state.isGateway) "Internet Gateway Active — relaying for mesh" else "Internet Available",
+                                                        "Endurance Test Running",
                                                         style = MaterialTheme.typography.bodySmall,
-                                                        color = Color(0xFF1B5E20)
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = Color(0xFF0D47A1)
+                                                )
+                                                Spacer(modifier = Modifier.weight(1f))
+                                                Text(
+                                                        "\u2022 ${enduranceState?.value?.messagesSent ?: 0} msgs",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = Color(0xFF1565C0)
                                                 )
                                         }
+                                }
+                        }
+
+                        // --- Network Status Indicator (always visible) ---
+                        Card(
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                                colors = CardDefaults.cardColors(
+                                        containerColor = when {
+                                                state.isGateway -> Color(0xFF1B5E20).copy(alpha = 0.15f)
+                                                state.hasInternet -> colorScheme.surfaceVariant
+                                                else -> Color(0xFF5D4037).copy(alpha = 0.10f)
+                                        }
+                                )
+                        ) {
+                                Row(
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                        Text(
+                                                when {
+                                                        state.isGateway -> "\uD83C\uDF10"
+                                                        state.hasInternet -> "\uD83C\uDF10"
+                                                        else -> "\uD83D\uDEAB"
+                                                },
+                                                fontSize = 16.sp
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                                when {
+                                                        state.isGateway -> "Internet Gateway Active \u2014 relaying for mesh"
+                                                        state.hasInternet -> "Internet Available"
+                                                        else -> "Offline \u2014 mesh-only mode"
+                                                },
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = when {
+                                                        state.hasInternet -> Color(0xFF1B5E20)
+                                                        else -> Color(0xFF5D4037)
+                                                }
+                                        )
                                 }
                         }
 
@@ -268,99 +320,48 @@ fun ResilientP2PApp(p2pManager: P2PManager, onExportLogs: () -> Unit, testRunner
 
                         Spacer(modifier = Modifier.height(16.dp))
 
-                        // --- Controls Section ---
-                        Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.Center
+                        // --- Mesh On/Off Toggle ---
+                        val isMeshActive = state.isAdvertising || state.isDiscovering
+                        Button(
+                                onClick = {
+                                        if (isMeshActive) {
+                                                p2pManager.stopAll()
+                                        } else {
+                                                p2pManager.start()
+                                        }
+                                },
+                                modifier = Modifier.fillMaxWidth().height(56.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                        containerColor = if (isMeshActive) colorScheme.error else Color(0xFF2E7D32)
+                                ),
+                                shape = RoundedCornerShape(12.dp),
+                                elevation = ButtonDefaults.buttonElevation(8.dp)
                         ) {
-                                // Advertising Button
-                                Button(
-                                        onClick = {
-                                                if (state.isAdvertising) {
-                                                        p2pManager.stopAdvertising()
-                                                } else {
-                                                        p2pManager.startAdvertising()
-                                                }
-                                        },
-                                        modifier =
-                                                Modifier.weight(1f)
-                                                        .height(56.dp)
-                                                        .padding(end = 8.dp),
-                                        colors =
-                                                ButtonDefaults.buttonColors(
-                                                        containerColor =
-                                                                if (state.isAdvertising)
-                                                                        colorScheme.error
-                                                                else colorScheme.primary
-                                                ),
-                                        shape = RoundedCornerShape(12.dp),
-                                        elevation = ButtonDefaults.buttonElevation(8.dp)
-                                ) {
-                                        Text(
-                                                text =
-                                                        if (state.isAdvertising) "Stop Adv."
-                                                        else "Start Adv.",
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = 14.sp
-                                        )
-                                }
-
-                                // Discovery Button
-                                Button(
-                                        onClick = {
-                                                if (state.isDiscovering) {
-                                                        p2pManager.stopDiscovery()
-                                                } else {
-                                                        p2pManager.startDiscovery()
-                                                }
-                                        },
-                                        modifier =
-                                                Modifier.weight(1f)
-                                                        .height(56.dp)
-                                                        .padding(start = 8.dp),
-                                        colors =
-                                                ButtonDefaults.buttonColors(
-                                                        containerColor =
-                                                                if (state.isDiscovering)
-                                                                        colorScheme.error
-                                                                else colorScheme.secondary
-                                                ),
-                                        shape = RoundedCornerShape(12.dp),
-                                        elevation = ButtonDefaults.buttonElevation(8.dp)
-                                ) {
-                                        Text(
-                                                text =
-                                                        if (state.isDiscovering) "Stop Disc."
-                                                        else "Start Disc.",
-                                                fontWeight = FontWeight.Bold,
-                                                fontSize = 14.sp
-                                        )
-                                }
+                                Text(
+                                        text = if (isMeshActive) "\uD83D\uDED1  MESH OFF" else "\uD83D\uDFE2  MESH ON",
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 16.sp,
+                                        color = Color.White
+                                )
                         }
 
-                        // Stop All Button (Conditional)
-                        val isBusy =
-                                state.isAdvertising ||
-                                        state.isDiscovering ||
-                                        state.connectedEndpoints.isNotEmpty()
-                        AnimatedVisibility(visible = isBusy) {
-                                Button(
-                                        onClick = { p2pManager.stopAll() },
-                                        modifier =
-                                                Modifier.fillMaxWidth()
-                                                        .padding(top = 12.dp)
-                                                        .height(40.dp),
-                                        colors =
-                                                ButtonDefaults.buttonColors(
-                                                        containerColor = colorScheme.errorContainer
-                                                ),
-                                        shape = RoundedCornerShape(8.dp)
+                        // Mesh status summary
+                        if (isMeshActive) {
+                                Row(
+                                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                                        horizontalArrangement = Arrangement.Center
                                 ) {
-                                        Text(
-                                                "STOP ALL ACTIVITY",
-                                                fontSize = 12.sp,
-                                                color = colorScheme.onErrorContainer
-                                        )
+                                        if (state.isAdvertising) {
+                                                Text("\uD83D\uDCE1 Advertising", style = MaterialTheme.typography.labelSmall, color = colorScheme.primary)
+                                                Spacer(modifier = Modifier.width(12.dp))
+                                        }
+                                        if (state.isDiscovering) {
+                                                Text("\uD83D\uDD0D Discovering", style = MaterialTheme.typography.labelSmall, color = colorScheme.secondary)
+                                                Spacer(modifier = Modifier.width(12.dp))
+                                        }
+                                        if (state.connectedEndpoints.isNotEmpty()) {
+                                                Text("\uD83D\uDD17 ${state.connectedEndpoints.size} peers", style = MaterialTheme.typography.labelSmall, color = colorScheme.tertiary)
+                                        }
                                 }
                         }
 
@@ -473,59 +474,9 @@ fun ResilientP2PApp(p2pManager: P2PManager, onExportLogs: () -> Unit, testRunner
                         }
                 }.collectAsState(initial = emptyList())
 
-                // Track processed payloads to avoid duplicate insertion on chatTargetId change
-                var processedPayloadId by remember { mutableStateOf<String?>(null) }
+                // Track processed payloads (incoming persistence now handled globally in P2PApplication)
 
-                // Persist incoming messages for this peer
-                LaunchedEffect(latestPayload, chatTargetId) {
-                        latestPayload?.let { event ->
-                                val pkt = event.packet
-                                val payloadId = "${pkt.sourceId}:${pkt.payload.contentHashCode()}:${pkt.id}"
-                                if (payloadId == processedPayloadId) return@LaunchedEffect
-                                if (pkt.type == com.fyp.resilientp2p.transport.PacketType.DATA && chatDao != null) {
-                                        val text = String(pkt.payload, java.nio.charset.StandardCharsets.UTF_8)
-                                        if (!text.startsWith("__TEST__")) {
-                                                val senderName = pkt.sourceId
-                                                // Only persist if this message is relevant to current chat
-                                                if (isBroadcast || senderName == chatTargetId) {
-                                                        chatDao.insert(ChatMessage(
-                                                                peerId = senderName,
-                                                                isOutgoing = false,
-                                                                type = MessageType.TEXT,
-                                                                text = text,
-                                                                isBroadcast = isBroadcast
-                                                        ))
-                                                        processedPayloadId = payloadId
-                                                }
-                                        }
-                                }
-                        }
-                }
-
-                // Track processed file payloads
-                var processedFileId by remember { mutableStateOf<String?>(null) }
-
-                // Persist received files
-                LaunchedEffect(receivedFile, chatTargetId) {
-                        receivedFile?.let { event ->
-                                val fileId = "${event.senderName}:${event.fileName}:${event.file.length()}"
-                                if (fileId == processedFileId) return@LaunchedEffect
-                                if (chatDao != null) {
-                                        val msgType = if (event.mimeType.startsWith("image/")) MessageType.IMAGE else MessageType.FILE
-                                        chatDao.insert(ChatMessage(
-                                                peerId = event.senderName,
-                                                isOutgoing = false,
-                                                type = msgType,
-                                                fileName = event.fileName,
-                                                filePath = event.file.absolutePath,
-                                                mimeType = event.mimeType,
-                                                fileSize = event.file.length(),
-                                                transferProgress = -1
-                                        ))
-                                        processedFileId = fileId
-                                }
-                        }
-                }
+                // Received file persistence now handled globally in P2PApplication
 
                 val targetId = chatTargetId ?: return@ResilientP2PApp
 
@@ -1219,7 +1170,7 @@ fun LogsSection(
                                 ) {
                                         items(
                                                 items = reversedLogs,
-                                                key = { "${it.timestamp}_${it.message.hashCode()}" }
+                                                key = { "${it.timestamp}_${it.message.hashCode()}_${System.identityHashCode(it)}" }
                                         ) { entry ->
                                                 val color =
                                                         when (entry.logType) {

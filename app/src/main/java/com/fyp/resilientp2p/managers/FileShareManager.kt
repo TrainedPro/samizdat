@@ -30,6 +30,7 @@ import java.util.concurrent.ConcurrentHashMap
  *
  * Files are identified by their SHA-256 hash (content-addressed). Chunks are
  * downloaded in order and reassembled locally. Duplicate chunks are ignored.
+ * Completed files are verified against their announced SHA-256 hash.
  *
  * @param context Android context for file storage.
  * @param sharedFileDao Room DAO for file metadata persistence.
@@ -38,7 +39,8 @@ import java.util.concurrent.ConcurrentHashMap
 class FileShareManager(
     private val context: Context,
     private val sharedFileDao: SharedFileDao,
-    private val localUsername: String
+    private val localUsername: String,
+    private val downloadedChunkDao: com.fyp.resilientp2p.data.DownloadedChunkDao? = null
 ) {
     companion object {
         private const val TAG = "FileShareManager"
@@ -58,6 +60,13 @@ class FileShareManager(
 
     /** Local files available for sharing (sha256 → local path). */
     private val localFiles = ConcurrentHashMap<String, String>()
+
+    /**
+     * Multi-source tracking: maps file SHA-256 → set of peer IDs that announced
+     * the file. When requesting chunks, requests are distributed across sources
+     * in round-robin fashion (BitTorrent-style multi-peer download).
+     */
+    private val fileSources = ConcurrentHashMap<String, MutableSet<String>>()
 
     /** All shared files as a Flow (for UI). */
     val allFiles: Flow<List<SharedFile>> = sharedFileDao.getAllFiles()
@@ -141,8 +150,17 @@ class FileShareManager(
         val chunkSize = parts[4].toIntOrNull() ?: return
         val totalChunks = parts[5].toIntOrNull() ?: return
 
+        // Always track additional sources (BitTorrent swarm principle)
+        fileSources.computeIfAbsent(sha256) {
+            java.util.Collections.synchronizedSet(mutableSetOf())
+        }.add(packet.sourceId)
+
         scope.launch {
-            if (sharedFileDao.exists(sha256) > 0) return@launch // Already known
+            if (sharedFileDao.exists(sha256) > 0) {
+                // File already known — we just recorded the additional source above.
+                Log.d(TAG, "Additional source for $sha256: ${packet.sourceId} (total: ${fileSources[sha256]?.size})")
+                return@launch
+            }
             val sharedFile = SharedFile(
                 sha256 = sha256,
                 fileName = fileName,
@@ -160,30 +178,54 @@ class FileShareManager(
     /**
      * Request download of a file from the mesh.
      * Sends FILE_REQUEST packets for each chunk we don't have yet.
+     * Supports resume: loads persisted chunk records from Room so only
+     * missing chunks are requested after an interruption.
      *
      * @param sha256 The file's SHA-256 hash.
      */
     fun requestFile(sha256: String) {
         scope.launch {
-            val file = sharedFileDao.getFile(sha256) ?: return@launch
+            val file = sharedFileDao.getFile(sha256)
+            if (file == null) {
+                Log.w(TAG, "requestFile: Unknown file $sha256 — not in database")
+                return@launch
+            }
             val received = receivedChunks.computeIfAbsent(sha256) {
                 java.util.Collections.synchronizedSet(mutableSetOf())
             }
 
+            // Resume: load previously persisted chunk records
+            if (received.isEmpty() && downloadedChunkDao != null) {
+                val persisted = downloadedChunkDao.getReceivedChunks(sha256)
+                if (persisted.isNotEmpty()) {
+                    received.addAll(persisted)
+                    Log.d(TAG, "Resumed $sha256: ${persisted.size}/${file.totalChunks} chunks already on disk")
+                }
+            }
+
+            // Multi-source: collect all known sources, fall back to original sharedBy
+            val sources = fileSources[sha256]?.toList()?.takeIf { it.isNotEmpty() }
+                ?: listOf(file.sharedBy)
+            val sourceCount = sources.size
+
+            var requested = 0
             for (chunk in 0 until file.totalChunks) {
                 if (chunk in received) continue
+                // Round-robin chunk assignment across sources (BitTorrent multi-peer pattern)
+                val targetPeer = sources[chunk % sourceCount]
                 val requestPayload = "$sha256$SEPARATOR$chunk"
                 val packet = Packet(
                     id = UUID.randomUUID().toString(),
                     type = PacketType.FILE_REQUEST,
                     sourceId = localUsername,
-                    destId = file.sharedBy,
+                    destId = targetPeer,
                     payload = requestPayload.toByteArray(StandardCharsets.UTF_8),
                     timestamp = System.currentTimeMillis()
                 )
                 sendPacket?.invoke(packet)
+                requested++
             }
-            Log.d(TAG, "Requested ${file.totalChunks - received.size} chunks for $sha256")
+            Log.d(TAG, "Requested $requested chunks for $sha256 from $sourceCount source(s) (${received.size} already received)")
         }
     }
 
@@ -252,7 +294,8 @@ class FileShareManager(
         val received = receivedChunks.computeIfAbsent(sha256) {
             java.util.Collections.synchronizedSet(mutableSetOf())
         }
-        if (chunkIndex in received) return // Already have this chunk
+        // Atomic dedup: add() returns false if already present
+        if (!received.add(chunkIndex)) return // Already have this chunk
 
         scope.launch {
             try {
@@ -264,13 +307,33 @@ class FileShareManager(
                 }
 
                 received.add(chunkIndex)
+
+                // Persist chunk receipt for resume-on-interrupt
+                downloadedChunkDao?.markChunkReceived(
+                    com.fyp.resilientp2p.data.DownloadedChunk(sha256, chunkIndex)
+                )
+
                 val downloadComplete = received.size >= file.totalChunks
+                if (downloadComplete) {
+                    // Verify file integrity against announced SHA-256
+                    val actualHash = computeSha256(destFile)
+                    if (actualHash != null && actualHash != sha256) {
+                        Log.e(TAG, "SHA-256 MISMATCH for ${file.fileName}: expected=$sha256 actual=$actualHash — deleting corrupt file")
+                        destFile.delete()
+                        received.clear()
+                        receivedChunks.remove(sha256)
+                        downloadedChunkDao?.clearChunks(sha256)
+                        sharedFileDao.updateProgress(sha256, 0, null)
+                        return@launch
+                    }
+                }
                 val localPath = if (downloadComplete) destFile.absolutePath else null
                 sharedFileDao.updateProgress(sha256, received.size, localPath)
 
                 if (localPath != null) {
                     localFiles[sha256] = localPath
                     receivedChunks.remove(sha256) // Cleanup tracking after complete download
+                    downloadedChunkDao?.clearChunks(sha256) // Cleanup persisted chunks
                     Log.d(TAG, "File download complete: ${file.fileName} ($sha256)")
                 } else {
                     Log.d(TAG, "Chunk $chunkIndex/${file.totalChunks} of ${file.fileName}")
@@ -309,5 +372,10 @@ class FileShareManager(
             Log.e(TAG, "SHA-256 computation failed: ${e.message}")
             null
         }
+    }
+
+    /** Cancel background coroutines. Call on application shutdown. */
+    fun destroy() {
+        scope.coroutineContext[kotlinx.coroutines.Job]?.cancel()
     }
 }

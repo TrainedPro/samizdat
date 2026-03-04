@@ -32,9 +32,10 @@ import androidx.room.RoomDatabase
             ChatGroup::class,
             GroupMessage::class,
             SharedFile::class,
-            EncounterLog::class
+            EncounterLog::class,
+            DownloadedChunk::class
         ],
-        version = 8,
+        version = 9,
         exportSchema = false
 )
 @androidx.room.TypeConverters(Converters::class)
@@ -47,6 +48,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun groupMessageDao(): GroupMessageDao
     abstract fun sharedFileDao(): SharedFileDao
     abstract fun encounterDao(): EncounterDao
+    abstract fun downloadedChunkDao(): DownloadedChunkDao
 
     companion object {
         @Volatile private var INSTANCE: AppDatabase? = null

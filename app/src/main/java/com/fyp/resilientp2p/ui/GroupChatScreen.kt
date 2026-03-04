@@ -96,13 +96,15 @@ fun GroupChatScreen(
                     }
                 )
             } else {
-                // Message view for selected group
-                GroupMessagePanel(
-                    group = selectedGroup!!,
-                    groupMessageDao = groupMessageDao,
-                    p2pManager = p2pManager,
-                    localUsername = localUsername
-                )
+                // Message view for selected group — safe unwrap via let
+                selectedGroup?.let { group ->
+                    GroupMessagePanel(
+                        group = group,
+                        groupMessageDao = groupMessageDao,
+                        p2pManager = p2pManager,
+                        localUsername = localUsername
+                    )
+                }
             }
         }
 
@@ -230,9 +232,15 @@ private fun GroupMessagePanel(
     val listState = rememberLazyListState()
     val dateFormat = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
 
-    // Auto-scroll to bottom
+    // Auto-scroll to bottom only if user is near the bottom
     LaunchedEffect(messages.size) {
-        if (messages.isNotEmpty()) listState.animateScrollToItem(messages.size - 1)
+        if (messages.isNotEmpty()) {
+            val lastVisible = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+            val total = listState.layoutInfo.totalItemsCount
+            if (total <= 1 || lastVisible >= total - 3) {
+                listState.animateScrollToItem(messages.size - 1)
+            }
+        }
     }
 
     Column(modifier = Modifier.fillMaxSize()) {

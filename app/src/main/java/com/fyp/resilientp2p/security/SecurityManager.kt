@@ -21,10 +21,11 @@ import javax.crypto.spec.SecretKeySpec
  * derive a shared secret during the IDENTITY handshake. Each peer generates an
  * ephemeral EC key pair; public keys are exchanged via IDENTITY packet payloads.
  *
- * ## Encryption
+ * ## Encryption (Encrypt-then-MAC)
  * The shared secret is expanded into a 256-bit AES key via HKDF-SHA256.
- * Payloads are encrypted with AES-256-GCM (128-bit auth tag, 12-byte random IV).
- * The IV is prepended to the ciphertext.
+ * `encrypt()`/`decrypt()` use AES-256-GCM (12-byte IV + ciphertext + 128-bit tag).
+ * Wired into P2PManager's `forwardPacket()` (send) and `onPayloadReceived()` (receive)
+ * using Encrypt-then-MAC: encrypt payload → HMAC the ciphertext → send.
  *
  * ## Packet Integrity
  * Every outgoing packet has an HMAC-SHA256 appended (32 bytes). The HMAC key is
@@ -210,6 +211,49 @@ class SecurityManager {
     fun hasKeyForPeer(peerId: String): Boolean = aesKeys.containsKey(peerId)
 
     /**
+     * Compute a **safety number** for verifying the key exchange with [peerId].
+     *
+     * Both peers compute the same number because the hash input is the
+     * **sorted** concatenation of both public keys — order-independent,
+     * just like Signal's safety numbers.
+     *
+     * Users compare this number out-of-band (e.g. reading digits aloud, or
+     * showing a QR code) to confirm that no MITM tampered with the ECDH exchange.
+     *
+     * Output: 12-digit numeric string (e.g. "384 791 256 013") derived from
+     * SHA-256(sortedKeys), formatted in groups of 3 for readability.
+     *
+     * @return The safety number string, or null if no key is exchanged with [peerId].
+     */
+    fun computeSafetyNumber(peerId: String): String? {
+        val peerPubKey = peerPublicKeys[peerId] ?: return null
+        val localPubKey = localKeyPair.public
+
+        // Sort by encoded bytes to ensure both sides compute the same hash
+        val localBytes = localPubKey.encoded
+        val peerBytes = peerPubKey.encoded
+        val (first, second) = if (compareByteArrays(localBytes, peerBytes) < 0) {
+            localBytes to peerBytes
+        } else {
+            peerBytes to localBytes
+        }
+
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        digest.update(first)
+        digest.update(second)
+        val hash = digest.digest()
+
+        // Convert first 6 bytes of hash to 12 decimal digits (2 digits per byte)
+        val sb = StringBuilder()
+        for (i in 0 until 6) {
+            val value = hash[i].toInt() and 0xFF
+            sb.append(String.format("%02d", value % 100))
+        }
+        // Format as "XXX XXX XXX XXX" for readability
+        return sb.toString().chunked(3).joinToString(" ")
+    }
+
+    /**
      * Removes all key material for a peer (on disconnect).
      */
     fun removePeerKeys(peerId: String) {
@@ -266,5 +310,14 @@ class SecurityManager {
         }
 
         return result
+    }
+
+    /** Lexicographic comparison of two byte arrays (for deterministic key ordering). */
+    private fun compareByteArrays(a: ByteArray, b: ByteArray): Int {
+        for (i in 0 until minOf(a.size, b.size)) {
+            val cmp = (a[i].toInt() and 0xFF) - (b[i].toInt() and 0xFF)
+            if (cmp != 0) return cmp
+        }
+        return a.size - b.size
     }
 }

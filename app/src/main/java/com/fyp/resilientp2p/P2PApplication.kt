@@ -15,6 +15,7 @@ import com.fyp.resilientp2p.managers.LocationEstimator
 import com.fyp.resilientp2p.managers.P2PManager
 import com.fyp.resilientp2p.managers.TelemetryManager
 import com.fyp.resilientp2p.security.PeerBlacklist
+import com.fyp.resilientp2p.security.PeerTrustScorer
 import com.fyp.resilientp2p.security.RateLimiter
 import com.fyp.resilientp2p.security.SecurityManager
 import com.fyp.resilientp2p.testing.EnduranceTestRunner
@@ -65,6 +66,9 @@ class P2PApplication : Application() {
     /** Persistent peer blacklist with auto-ban on violation threshold. */
     lateinit var peerBlacklist: PeerBlacklist
         private set
+    /** Per-peer trust/reputation scoring (libp2p GossipSub-inspired). */
+    lateinit var peerTrustScorer: PeerTrustScorer
+        private set
     /** RTT-based trilateration engine for 2D peer positioning. */
     lateinit var locationEstimator: LocationEstimator
         private set
@@ -98,11 +102,12 @@ class P2PApplication : Application() {
         securityManager = SecurityManager()
         rateLimiter = RateLimiter()
         peerBlacklist = PeerBlacklist(this)
+        peerTrustScorer = PeerTrustScorer()
 
         // Phase 4 managers
         locationEstimator = LocationEstimator()
         encounterLogger = EncounterLogger(database.encounterDao())
-        fileShareManager = FileShareManager(this, database.sharedFileDao(), p2pManager.state.value.localDeviceName)
+        fileShareManager = FileShareManager(this, database.sharedFileDao(), p2pManager.state.value.localDeviceName, database.downloadedChunkDao())
         fileShareManager.sendPacket = { packet -> p2pManager.injectPacket(packet) }
 
         // Wire cross-references
@@ -111,6 +116,7 @@ class P2PApplication : Application() {
         p2pManager.securityManager = securityManager
         p2pManager.rateLimiter = rateLimiter
         p2pManager.peerBlacklist = peerBlacklist
+        p2pManager.peerTrustScorer = peerTrustScorer
         p2pManager.locationEstimator = locationEstimator
         p2pManager.encounterLogger = encounterLogger
         p2pManager.fileShareManager = fileShareManager
@@ -184,6 +190,57 @@ class P2PApplication : Application() {
         }
         enduranceTestRunner.onEnduranceSnapshotReady = { json ->
             telemetryManager.recordEnduranceSnapshot(json)
+        }
+
+        // ─── Global chat message persistence ───────────────────────────
+        // Collect payload events from P2PManager and persist ALL incoming
+        // text messages to Room, regardless of whether the chat UI is open.
+        // This prevents message loss when the user is on another screen.
+        val chatDao = database.chatDao()
+        val seenPayloadIds = java.util.Collections.newSetFromMap(
+            java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+        )
+        appScope.launch {
+            p2pManager.payloadEvents.collect { event ->
+                val pkt = event.packet
+                if (pkt.type == com.fyp.resilientp2p.transport.PacketType.DATA &&
+                    pkt.sourceId != p2pManager.state.value.localDeviceName) {
+                    val payloadId = "${pkt.sourceId}:${pkt.id}"
+                    if (seenPayloadIds.add(payloadId)) {
+                        val text = String(pkt.payload, StandardCharsets.UTF_8)
+                        if (!text.startsWith("__TEST__")) {
+                            val isBroadcast = pkt.destId == "BROADCAST"
+                            chatDao.insert(com.fyp.resilientp2p.data.ChatMessage(
+                                peerId = pkt.sourceId,
+                                isOutgoing = false,
+                                type = com.fyp.resilientp2p.data.MessageType.TEXT,
+                                text = text,
+                                isBroadcast = isBroadcast
+                            ))
+                        }
+                        // Cap dedup set to prevent unbounded growth
+                        if (seenPayloadIds.size > 5000) seenPayloadIds.clear()
+                    }
+                }
+            }
+        }
+        // Persist received file events globally
+        appScope.launch {
+            p2pManager.receivedFileEvents.collect { event ->
+                val msgType = if (event.mimeType.startsWith("image/"))
+                    com.fyp.resilientp2p.data.MessageType.IMAGE
+                else com.fyp.resilientp2p.data.MessageType.FILE
+                chatDao.insert(com.fyp.resilientp2p.data.ChatMessage(
+                    peerId = event.senderName,
+                    isOutgoing = false,
+                    type = msgType,
+                    fileName = event.fileName,
+                    filePath = event.file.absolutePath,
+                    mimeType = event.mimeType,
+                    fileSize = event.file.length(),
+                    transferProgress = -1
+                ))
+            }
         }
 
         // ProcessLifecycleOwner NEVER dispatches ON_DESTROY, so that callback was dead code.

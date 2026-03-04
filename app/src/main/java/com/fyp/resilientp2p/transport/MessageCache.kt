@@ -5,7 +5,11 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Thread-safe message cache for packet deduplication.
- * Uses atomic operations to prevent race conditions.
+ *
+ * Uses [ConcurrentHashMap] for lock-free reads and a non-blocking eviction
+ * strategy. Expired entries (older than [ttl]) are removed first; if still
+ * over [capacity], the oldest 25% are evicted using a partial scan rather
+ * than a full sort to keep eviction at O(n) instead of O(n log n).
  */
 class MessageCache(private val capacity: Int = 1000) {
 
@@ -34,16 +38,32 @@ class MessageCache(private val capacity: Int = 1000) {
         if (!cleanupLock.compareAndSet(false, true)) return
         try {
             val now = System.currentTimeMillis()
-            // Use removeIf for atomic removal based on condition
+            // Use removeIf for atomic removal based on condition — O(n)
             cache.entries.removeIf { now - it.value > ttl }
             
-            // If still over capacity, remove ~25% oldest entries (O(n log n) sort)
+            // If still over capacity, remove oldest entries using threshold scan — O(n)
             if (cache.size > capacity) {
-                val toRemove = capacity / 4
-                val oldest = cache.entries
-                    .sortedBy { it.value }
-                    .take(toRemove)
-                oldest.forEach { cache.remove(it.key) }
+                val targetSize = capacity * 3 / 4
+                // Find approximate cutoff timestamp without sorting:
+                // scan once to find min/max, then remove entries below midpoint threshold
+                var minTs = Long.MAX_VALUE
+                var maxTs = Long.MIN_VALUE
+                for (entry in cache.entries) {
+                    if (entry.value < minTs) minTs = entry.value
+                    if (entry.value > maxTs) maxTs = entry.value
+                }
+                // Remove entries in the oldest quartile (below 25th percentile timestamp)
+                val threshold = minTs + (maxTs - minTs) / 4
+                cache.entries.removeIf { it.value <= threshold }
+                
+                // If still over, hard-evict by iteration until under target
+                if (cache.size > targetSize) {
+                    val iter = cache.entries.iterator()
+                    while (iter.hasNext() && cache.size > targetSize) {
+                        iter.next()
+                        iter.remove()
+                    }
+                }
             }
         } finally {
             cleanupLock.set(false)

@@ -138,4 +138,9 @@ class EncounterLogger(
 
     /** Get all currently connected peers with active encounters. */
     fun activePeers(): Set<String> = activeEncounters.keys.toSet()
+
+    /** Cancel background coroutines. Call on application shutdown. */
+    fun destroy() {
+        scope.coroutineContext[kotlinx.coroutines.Job]?.cancel()
+    }
 }

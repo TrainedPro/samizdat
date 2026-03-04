@@ -32,6 +32,7 @@ data class NetworkStatsSnapshot(
     val avgRttMs: Long = 0,
     val storeForwardQueued: Long = 0,
     val storeForwardDelivered: Long = 0,
+    val deliveryConfirmed: Long = 0, // ACKs received confirming end-to-end delivery
     val peerStats: Map<String, PeerStatsSnapshot> = emptyMap()
 ) {
     /**
@@ -87,6 +88,7 @@ class NetworkStats {
     val totalConnectionsLost = AtomicLong(0)
     val storeForwardQueued = AtomicLong(0)
     val storeForwardDelivered = AtomicLong(0)
+    val deliveryConfirmed = AtomicLong(0) // ACKs received confirming end-to-end delivery
 
     // Battery
     @Volatile var batteryLevel: Int = -1
@@ -199,6 +201,7 @@ class NetworkStats {
             avgRttMs = avgRtt,
             storeForwardQueued = storeForwardQueued.get(),
             storeForwardDelivered = storeForwardDelivered.get(),
+            deliveryConfirmed = deliveryConfirmed.get(),
             peerStats = peerSnapshots
         )
     }
@@ -214,6 +217,7 @@ class NetworkStats {
         totalConnectionsLost.set(0)
         storeForwardQueued.set(0)
         storeForwardDelivered.set(0)
+        deliveryConfirmed.set(0)
         peerRtt.clear()
         peerConnectedSince.clear()
         peerBytesSent.clear()

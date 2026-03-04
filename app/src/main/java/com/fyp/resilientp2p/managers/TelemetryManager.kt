@@ -212,46 +212,56 @@ class TelemetryManager(
         prefs.edit { putLong(KEY_LAST_SNAPSHOT_TIME, now) }
 
         val state = p2pManager.state.value
-        val stats = state.stats
+        // Use live mutable NetworkStats directly for freshest counters,
+        // rather than the potentially stale snapshot inside P2PState.
+        val live = p2pManager.networkStats
+        val avgRtt = if (live.peerRtt.isNotEmpty()) live.peerRtt.values.average().toLong() else 0L
 
         val payload = JSONObject().apply {
             put("deviceId", deviceId)
             put("timestamp", now)
-            put("uptimeMs", stats.uptimeMs)
-            put("batteryLevel", stats.batteryLevel)
-            put("batteryTemperature", stats.batteryTemperature.toDouble())
-            put("batteryChargeUah", stats.batteryChargeUah)
-            put("batteryVoltageMilliV", stats.batteryVoltageMilliV)
-            put("batteryDesignCapacityMah", stats.batteryDesignCapacityMah)
-            put("batteryEstimatedMah", stats.estimatedRemainingMah())
-            put("totalBytesSent", stats.totalBytesSent)
-            put("totalBytesReceived", stats.totalBytesReceived)
-            put("totalPacketsSent", stats.totalPacketsSent)
-            put("totalPacketsReceived", stats.totalPacketsReceived)
-            put("totalPacketsForwarded", stats.totalPacketsForwarded)
-            put("totalPacketsDropped", stats.totalPacketsDropped)
-            put("totalConnectionsEstablished", stats.totalConnectionsEstablished)
-            put("totalConnectionsLost", stats.totalConnectionsLost)
-            put("currentNeighborCount", stats.currentNeighborCount)
-            put("currentRouteCount", stats.currentRouteCount)
-            put("avgRttMs", stats.avgRttMs)
-            put("storeForwardQueued", stats.storeForwardQueued)
-            put("storeForwardDelivered", stats.storeForwardDelivered)
+            put("uptimeMs", now - live.startTimeMs)
+            put("batteryLevel", live.batteryLevel)
+            put("batteryTemperature", live.batteryTemperature.toDouble())
+            put("batteryChargeUah", live.batteryChargeUah)
+            put("batteryVoltageMilliV", live.batteryVoltageMilliV)
+            put("batteryDesignCapacityMah", live.batteryDesignCapacityMah)
+            // Estimated remaining mAh
+            val estMah = when {
+                live.batteryChargeUah > 0 -> live.batteryChargeUah / 1000.0
+                live.batteryLevel in 0..100 && live.batteryDesignCapacityMah > 0 ->
+                    live.batteryDesignCapacityMah * (live.batteryLevel / 100.0)
+                else -> -1.0
+            }
+            put("batteryEstimatedMah", estMah)
+            put("totalBytesSent", live.totalBytesSent.get())
+            put("totalBytesReceived", live.totalBytesReceived.get())
+            put("totalPacketsSent", live.totalPacketsSent.get())
+            put("totalPacketsReceived", live.totalPacketsReceived.get())
+            put("totalPacketsForwarded", live.totalPacketsForwarded.get())
+            put("totalPacketsDropped", live.totalPacketsDropped.get())
+            put("totalConnectionsEstablished", live.totalConnectionsEstablished.get())
+            put("totalConnectionsLost", live.totalConnectionsLost.get())
+            put("currentNeighborCount", state.connectedEndpoints.size)
+            put("currentRouteCount", state.knownPeers.size)
+            put("avgRttMs", avgRtt)
+            put("storeForwardQueued", live.storeForwardQueued.get())
+            put("storeForwardDelivered", live.storeForwardDelivered.get())
             put("isAdvertising", state.isAdvertising)
             put("isDiscovering", state.isDiscovering)
             put("connectedEndpointCount", state.connectedEndpoints.size)
 
-            // Per-peer stats
+            // Per-peer stats (read live concurrent maps)
             val peersArray = JSONArray()
-            stats.peerStats.forEach { (name, peer) ->
+            live.peerConnectedSince.forEach { (name, _) ->
                 peersArray.put(JSONObject().apply {
                     put("peerName", name)
-                    put("lastRttMs", peer.lastRttMs)
-                    put("bytesSent", peer.bytesSent)
-                    put("bytesReceived", peer.bytesReceived)
-                    put("packetsSent", peer.packetsSent)
-                    put("packetsReceived", peer.packetsReceived)
-                    put("disconnectCount", peer.disconnectCount)
+                    put("lastRttMs", live.peerRtt[name] ?: -1L)
+                    put("bytesSent", live.peerBytesSent[name]?.get() ?: 0L)
+                    put("bytesReceived", live.peerBytesReceived[name]?.get() ?: 0L)
+                    put("packetsSent", live.peerPacketsSent[name]?.get() ?: 0L)
+                    put("packetsReceived", live.peerPacketsReceived[name]?.get() ?: 0L)
+                    put("disconnectCount", live.peerDisconnectCount[name]?.get() ?: 0L)
                 })
             }
             put("peerStats", peersArray)
@@ -264,7 +274,7 @@ class TelemetryManager(
                 payload = payload.toString()
             )
         )
-        Log.d(TAG, "Stats snapshot collected (neighbors=${stats.currentNeighborCount}, routes=${stats.currentRouteCount})")
+        Log.d(TAG, "Stats snapshot collected (neighbors=${state.connectedEndpoints.size}, routes=${state.knownPeers.size})")
     }
 
     /** Collect routing table snapshot */

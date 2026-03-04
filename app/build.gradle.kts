@@ -5,6 +5,13 @@ plugins {
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.ksp)
+    alias(libs.plugins.detekt)
+}
+
+detekt {
+    buildUponDefaultConfig = true
+    config.setFrom(files("${rootProject.projectDir}/detekt.yml"))
+    basePath = rootProject.projectDir.absolutePath
 }
 
 // Read local.properties for secrets (Firebase keys, etc.)

@@ -55,6 +55,26 @@ fun HealthDashboard(
     val state by p2pManager.state.collectAsState()
     val stats = p2pManager.networkStats
 
+    // Single shared polling loop for per-peer snapshots (avoids duplicate timers)
+    val peerSnapshots = remember { mutableStateOf(emptyList<PeerStatsSnapshot>()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            peerSnapshots.value = stats.peerConnectedSince.entries.map { (peer, connSince) ->
+                PeerStatsSnapshot(
+                    peerName = peer,
+                    connectedSinceMs = connSince,
+                    lastRttMs = stats.peerRtt[peer] ?: -1,
+                    bytesSent = stats.peerBytesSent[peer]?.get() ?: 0,
+                    bytesReceived = stats.peerBytesReceived[peer]?.get() ?: 0,
+                    packetsSent = stats.peerPacketsSent[peer]?.get() ?: 0,
+                    packetsReceived = stats.peerPacketsReceived[peer]?.get() ?: 0,
+                    disconnectCount = stats.peerDisconnectCount[peer]?.get() ?: 0
+                )
+            }
+            kotlinx.coroutines.delay(2000)
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -82,10 +102,10 @@ fun HealthDashboard(
             TopologyGraph(state = state, stats = stats)
 
             // 3. Per-peer stats table
-            PeerStatsTable(stats = stats)
+            PeerStatsTable(peerSnapshots = peerSnapshots.value)
 
             // 4. Packet loss heatmap
-            PacketLossHeatmap(stats = stats)
+            PacketLossHeatmap(peerSnapshots = peerSnapshots.value)
 
             // 5. Radar view (if location estimator available)
             if (locationEstimator != null) {
@@ -211,26 +231,7 @@ private fun DrawScope.drawTopology(peers: List<String>, localName: String) {
 
 /** Per-peer statistics table. */
 @Composable
-private fun PeerStatsTable(stats: NetworkStats) {
-    val peerStats = remember { mutableStateOf(emptyList<PeerStatsSnapshot>()) }
-    LaunchedEffect(Unit) {
-        while (true) {
-            peerStats.value = stats.peerConnectedSince.entries.map { (peer, connSince) ->
-                PeerStatsSnapshot(
-                    peerName = peer,
-                    connectedSinceMs = connSince,
-                    lastRttMs = stats.peerRtt[peer] ?: -1,
-                    bytesSent = stats.peerBytesSent[peer]?.get() ?: 0,
-                    bytesReceived = stats.peerBytesReceived[peer]?.get() ?: 0,
-                    packetsSent = stats.peerPacketsSent[peer]?.get() ?: 0,
-                    packetsReceived = stats.peerPacketsReceived[peer]?.get() ?: 0,
-                    disconnectCount = stats.peerDisconnectCount[peer]?.get() ?: 0
-                )
-            }
-            kotlinx.coroutines.delay(2000)
-        }
-    }
-
+private fun PeerStatsTable(peerSnapshots: List<PeerStatsSnapshot>) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp)
@@ -239,7 +240,7 @@ private fun PeerStatsTable(stats: NetworkStats) {
             Text("Per-Peer Stats", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
             Spacer(modifier = Modifier.height(8.dp))
 
-            if (peerStats.value.isEmpty()) {
+            if (peerSnapshots.isEmpty()) {
                 Text("No peer data", color = MaterialTheme.colorScheme.onSurfaceVariant)
             } else {
                 // Header row
@@ -255,7 +256,7 @@ private fun PeerStatsTable(stats: NetworkStats) {
                 }
                 HorizontalDivider()
 
-                peerStats.value.forEach { peer ->
+                peerSnapshots.forEach { peer ->
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
                         horizontalArrangement = Arrangement.SpaceBetween
@@ -268,9 +269,11 @@ private fun PeerStatsTable(stats: NetworkStats) {
                             fontSize = 11.sp,
                             modifier = Modifier.weight(1f)
                         )
-                        val lossRate = if (peer.packetsSent > 0) {
-                            val lost = peer.packetsSent - peer.packetsReceived
-                            if (lost > 0) "${"%.0f".format(lost * 100.0 / peer.packetsSent)}%" else "0%"
+                        val lossRate = if (peer.packetsSent > 10) {
+                            // Approximate loss: asymmetry between sent and received
+                            // A perfectly symmetric link has sent ≈ received
+                            val ratio = peer.packetsReceived.toDouble() / peer.packetsSent
+                            if (ratio < 0.8) "${"%.0f".format((1.0 - ratio) * 100)}%" else "0%"
                         } else "-"
                         Text(lossRate, fontSize = 11.sp, modifier = Modifier.weight(1f),
                             color = if (lossRate != "-" && lossRate != "0%") Color(0xFFF44336) else Color.Unspecified)
@@ -283,25 +286,8 @@ private fun PeerStatsTable(stats: NetworkStats) {
 
 /** Packet loss heatmap — grid of estimated loss rates between peers. */
 @Composable
-private fun PacketLossHeatmap(stats: NetworkStats) {
-    val peerStats = remember { mutableStateOf(emptyList<PeerStatsSnapshot>()) }
-    LaunchedEffect(Unit) {
-        while (true) {
-            peerStats.value = stats.peerConnectedSince.entries.map { (peer, connSince) ->
-                PeerStatsSnapshot(
-                    peerName = peer,
-                    connectedSinceMs = connSince,
-                    lastRttMs = stats.peerRtt[peer] ?: -1,
-                    packetsSent = stats.peerPacketsSent[peer]?.get() ?: 0,
-                    packetsReceived = stats.peerPacketsReceived[peer]?.get() ?: 0
-                )
-            }
-            kotlinx.coroutines.delay(3000)
-        }
-    }
-
-    val peers = peerStats.value
-    if (peers.size < 2) return
+private fun PacketLossHeatmap(peerSnapshots: List<PeerStatsSnapshot>) {
+    if (peerSnapshots.size < 2) return
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -314,10 +300,10 @@ private fun PacketLossHeatmap(stats: NetworkStats) {
             Canvas(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height((peers.size * 40 + 40).dp)
+                    .height((peerSnapshots.size * 40 + 40).dp)
                     .background(Color(0xFF1A1A2E), RoundedCornerShape(8.dp))
             ) {
-                drawHeatmap(peers)
+                drawHeatmap(peerSnapshots)
             }
         }
     }
@@ -356,14 +342,15 @@ private fun DrawScope.drawHeatmap(peers: List<PeerStatsSnapshot>) {
         )
     }
 
-    // Cells: color by per-peer loss rate (diagonal = self loss, off-diagonal = 0)
+    // Cells: color by per-peer asymmetry (diagonal = self, off-diagonal = unknown)
     for (i in peers.indices) {
         for (j in peers.indices) {
             // We only have per-peer-to-local stats, not peer-to-peer.
-            // Show each peer's own loss rate on the diagonal; off-diagonal is unknown.
-            val lossRate = if (i == j && peers[i].packetsSent > 0) {
-                val lost = (peers[i].packetsSent - peers[i].packetsReceived).coerceAtLeast(0)
-                (lost.toFloat() / peers[i].packetsSent).coerceIn(0f, 1f)
+            // Show each peer's link asymmetry on the diagonal; off-diagonal is unknown.
+            val lossRate = if (i == j && peers[i].packetsSent > 10) {
+                // Use recv/sent ratio: a balanced link has ratio ≈ 1.0
+                val ratio = peers[i].packetsReceived.toFloat() / peers[i].packetsSent
+                (1f - ratio.coerceAtMost(1f)).coerceIn(0f, 1f)
             } else 0f
 
             val cellColor = lerpHeatColor(lossRate)

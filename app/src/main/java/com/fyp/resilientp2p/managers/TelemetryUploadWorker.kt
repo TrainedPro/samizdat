@@ -70,6 +70,11 @@ class TelemetryUploadWorker(
         val telemetryDao = db.telemetryDao()
         val prefs = applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
+        // Restore circuit breaker state from prefs on process restart
+        // (AtomicInteger in companion resets to 0 on new process)
+        val savedFailures = prefs.getInt(KEY_CONSECUTIVE_FAILURES, 0)
+        consecutiveFailures.compareAndSet(0, savedFailures)
+
         // Rate limit check
         val now = System.currentTimeMillis()
         val lastUpload = prefs.getLong(KEY_LAST_UPLOAD_TIME, 0)

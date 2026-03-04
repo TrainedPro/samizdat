@@ -173,6 +173,8 @@ class P2PManager(
     var rateLimiter: com.fyp.resilientp2p.security.RateLimiter? = null
     /** Persistent peer blacklist. Set by [P2PApplication]. */
     var peerBlacklist: com.fyp.resilientp2p.security.PeerBlacklist? = null
+    /** Per-peer reputation tracker (libp2p GossipSub-inspired). */
+    var peerTrustScorer: com.fyp.resilientp2p.security.PeerTrustScorer? = null
 
     // Phase 4 manager references
     /** RTT-based trilateration engine. Set by [P2PApplication]. */
@@ -199,6 +201,8 @@ class P2PManager(
 
     // Optional Managers
     var voiceManager: VoiceManager? = null
+    /** Mesh-routed audio with AAC-LC codec. Set by [P2PApplication] or init. */
+    var meshAudioManager: com.fyp.resilientp2p.audio.MeshAudioManager? = null
 
     // Data Classes for UI
     data class PayloadEvent(val endpointId: String, val packet: Packet)
@@ -230,40 +234,73 @@ class P2PManager(
                     if (payload.type == Payload.Type.BYTES) {
                         try {
                             payload.asBytes()?.let { bytes ->
-                                val packet = Packet.fromBytes(bytes)
+                                var packet = Packet.fromBytes(bytes)
 
                                 // --- Security checks ---
-                                // 1. Blacklist check
-                                if (peerBlacklist?.isBlacklisted(packet.sourceId) == true) {
-                                    log("BLOCKED_BLACKLISTED from=${packet.sourceId}",
+                                // All checks key on endpointId (physical transport identity,
+                                // assigned by Nearby Connections) rather than packet.sourceId
+                                // (self-declared, spoofable). This is the same principle as
+                                // libp2p connection gating — trust the transport, not the claim.
+                                //
+                                // 1. Blacklist check (by physical endpoint)
+                                if (peerBlacklist?.isBlacklisted(endpointId) == true) {
+                                    log("BLOCKED_BLACKLISTED endpoint=$endpointId(${packet.sourceId})",
                                         com.fyp.resilientp2p.data.LogLevel.WARN, peerId = peerName)
                                     return
                                 }
-                                // 2. Rate limiting
+                                // 2. Rate limiting (tiered, keyed on endpointId)
                                 val limiter = rateLimiter
-                                if (limiter != null && !limiter.allowPacket(packet.sourceId)) {
-                                    peerBlacklist?.recordViolation(packet.sourceId)
-                                    log("RATE_LIMITED from=${packet.sourceId}",
+                                if (limiter != null && !limiter.allowPacket(endpointId, packet.type)) {
+                                    peerBlacklist?.recordViolation(endpointId, "rate_limit")
+                                    peerTrustScorer?.recordRateLimitViolation(endpointId)
+                                    log("RATE_LIMITED endpoint=$endpointId type=${packet.type} src=${packet.sourceId}",
                                         com.fyp.resilientp2p.data.LogLevel.WARN, peerId = peerName)
                                     return
                                 }
-                                // 3. HMAC verification (if security enabled and key exists)
+                                // 3. HMAC verification (end-to-end: only at the final destination)
+                                // Intermediate forwarders skip HMAC check since they don't
+                                // share the source↔destination key pair.
                                 val security = securityManager
-                                if (security != null && security.hasKeyForPeer(packet.sourceId)) {
+                                if (security != null &&
+                                    packet.destId == localUsername &&
+                                    security.hasKeyForPeer(packet.sourceId)) {
                                     // Last HMAC_SIZE bytes are the HMAC
                                     if (packet.payload.size > com.fyp.resilientp2p.security.SecurityManager.HMAC_SIZE) {
                                         val dataBytes = packet.payload.copyOfRange(0, packet.payload.size - com.fyp.resilientp2p.security.SecurityManager.HMAC_SIZE)
                                         val hmacBytes = packet.payload.copyOfRange(packet.payload.size - com.fyp.resilientp2p.security.SecurityManager.HMAC_SIZE, packet.payload.size)
                                         if (!security.verifyHmac(packet.sourceId, dataBytes, hmacBytes)) {
+                                            // Use separate "hmac" reason; this should NOT auto-blacklist
+                                            // because HMAC race conditions during key re-exchange cause
+                                            // false positives. Only log and drop the packet.
+                                            peerTrustScorer?.recordHmacFailure(endpointId)
                                             log("HMAC_INVALID from=${packet.sourceId} — dropping packet",
                                                 com.fyp.resilientp2p.data.LogLevel.WARN, peerId = peerName)
-                                            peerBlacklist?.recordViolation(packet.sourceId)
                                             return
                                         }
+                                        // Strip HMAC from payload — dataBytes is the (encrypted) ciphertext
+                                        packet = packet.copy(payload = dataBytes)
+                                    }
+
+                                    // Decrypt: Encrypt-then-MAC receive path (mirror of forwardPacket send)
+                                    //   HMAC was verified above on the ciphertext; now decrypt to plaintext.
+                                    //   If decrypt fails (key race, version mismatch), fall through with
+                                    //   ciphertext — handlePacket will likely discard the garbled data
+                                    //   gracefully rather than crash.
+                                    val decrypted = security.decrypt(packet.sourceId, packet.payload)
+                                    if (decrypted != null) {
+                                        packet = packet.copy(payload = decrypted)
+                                    } else {
+                                        log("DECRYPT_FAIL from=${packet.sourceId} — proceeding with raw payload",
+                                            com.fyp.resilientp2p.data.LogLevel.WARN, peerId = peerName)
                                     }
                                 }
 
-                                try { handlePacket(packet, endpointId) } catch (e: Exception) {
+                                try {
+                                    handlePacket(packet, endpointId)
+                                    // Packet passed all checks (blacklist, rate limit, HMAC, decrypt)
+                                    // and was processed successfully → reward the sending peer.
+                                    peerTrustScorer?.recordValidPacket(endpointId)
+                                } catch (e: Exception) {
                                     log("PACKET_HANDLE_ERROR from=$endpointId($peerName) error='${e.message}' " +
                                         "stackTrace='${e.stackTrace.take(3).joinToString(" -> ")}'",
                                         com.fyp.resilientp2p.data.LogLevel.ERROR, peerId = peerName)
@@ -508,6 +545,14 @@ class P2PManager(
                         val peerName = neighbors[endpointId]?.peerName ?: "Unknown"
                         networkStats.recordPeerConnected(peerName)
 
+                        // Clean slate: reset rate-limit violations and per-peer
+                        // rate-limit windows on reconnect so the peer isn't penalised
+                        // for stale counters from a previous session.
+                        // Key on endpointId (physical identity) to match the security pipeline.
+                        peerBlacklist?.resetViolations(endpointId)
+                        rateLimiter?.resetPeer(endpointId)
+                        peerTrustScorer?.resetPeer(endpointId)
+
                         log(
                                 "CONNECTION_ESTABLISHED endpoint=$endpointId peerName='$peerName' " +
                                 "status=$statusCode($statusName) " +
@@ -700,6 +745,13 @@ class P2PManager(
         log("P2PManager INITIALIZED appVersion='$appVersion' localIdentity='$localUsername' maxConnections=$MAX_CONNECTIONS strategy=P2P_CLUSTER serviceId='$SERVICE_ID'")
 
         voiceManager = VoiceManager(context) { msg, level -> log(msg, level) }
+
+        // Initialize mesh audio manager (AAC-encoded multi-hop audio)
+        meshAudioManager = com.fyp.resilientp2p.audio.MeshAudioManager(
+            context, localUsername
+        ) { msg, level -> log(msg, level) }
+        meshAudioManager?.sendPacket = { packet -> injectPacket(packet) }
+        meshAudioManager?.getPeerRttMs = { peerId -> networkStats.peerRtt[peerId] ?: -1L }
 
         // Register battery monitor
         try {
@@ -935,8 +987,9 @@ class P2PManager(
                                     .addOnSuccessListener {
                                         networkStats.storeForwardDelivered.incrementAndGet()
                                         packets.remove(packet)
-                                        if (packets.isEmpty()) {
-                                            pendingMessages.remove(destId)
+                                        // Atomic conditional removal to prevent race with queueForStoreForward
+                                        pendingMessages.compute(destId) { _, list ->
+                                            if (list == null || list.isEmpty()) null else list
                                         }
                                         log("STORE_FORWARD_DELIVERED_MEM dest=$destId", com.fyp.resilientp2p.data.LogLevel.DEBUG)
                                     }
@@ -1046,6 +1099,10 @@ class P2PManager(
 
     fun start() {
         log("P2PManager START localName='$localUsername' battery=${networkStats.batteryLevel}%")
+        // Re-register battery receiver (unregistered by stopAll)
+        try {
+            context.registerReceiver(batteryReceiver, android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED))
+        } catch (_: Exception) {} // May already be registered on first start
         startAdvertising()
         startDiscovery()
         startRoutingUpdates()
@@ -1099,9 +1156,10 @@ class P2PManager(
         storeForwardJob?.cancel()
         storeForwardJob = null
         messageCache.clear()
+        securityManager?.destroy()
         
-        // 6. Reset state
-        _state.value = P2PState(localDeviceName = localUsername)
+        // 6. Reset state atomically
+        _state.update { P2PState(localDeviceName = localUsername) }
         log("STOP_ALL completed. All state cleared.")
     }
 
@@ -1168,13 +1226,18 @@ class P2PManager(
     // --- Packet Handling ---
 
     private fun handlePacket(packet: Packet, sourceEndpointId: String) {
-        if (!messageCache.tryMarkSeen(packet.id)) {
-            log("PACKET_DEDUP id=${packet.id.take(8)} type=${packet.type} src='${packet.sourceId}'",
-                    com.fyp.resilientp2p.data.LogLevel.TRACE)
-            if (packet.type != PacketType.IDENTITY && packet.type != PacketType.ROUTE_ANNOUNCE) {
-                networkStats.totalPacketsDropped.incrementAndGet()
+        // Skip message-cache dedup for AUDIO_DATA — they arrive at high frequency
+        // (10+ per second) and use their own sequence numbers for ordering.
+        // Caching each UUID would thrash the 2000-entry message cache.
+        if (packet.type != PacketType.AUDIO_DATA) {
+            if (!messageCache.tryMarkSeen(packet.id)) {
+                log("PACKET_DEDUP id=${packet.id.take(8)} type=${packet.type} src='${packet.sourceId}'",
+                        com.fyp.resilientp2p.data.LogLevel.TRACE)
+                if (packet.type != PacketType.IDENTITY && packet.type != PacketType.ROUTE_ANNOUNCE) {
+                    networkStats.totalPacketsDropped.incrementAndGet()
+                }
+                return
             }
-            return
         }
 
         val peerName = if (sourceEndpointId == "LOCAL") "LOCAL" else (neighbors[sourceEndpointId]?.peerName ?: "Unknown")
@@ -1258,7 +1321,19 @@ class P2PManager(
                 processPacket(packet, sourceEndpointId)
             }
             // Always flood emergency regardless of destination (entire mesh must see it)
-            if (packet.ttl > 0) {
+            // Forwarding budget still applies to prevent one peer from amplifying
+            // emergency floods (BATMAN-adv uses similar OGM forwarding limits).
+            if (packet.ttl > 0 && sourceEndpointId != null) {
+                val fwdAllowed = rateLimiter?.allowForward(sourceEndpointId) ?: true
+                if (fwdAllowed) {
+                    forwardPacket(packet, sourceEndpointId)
+                } else {
+                    log("FORWARD_BUDGET_EXCEEDED_EMERGENCY src=${packet.sourceId} via=$sourceEndpointId",
+                        com.fyp.resilientp2p.data.LogLevel.WARN)
+                    peerTrustScorer?.recordForwardBudgetExceeded(sourceEndpointId)
+                    networkStats.totalPacketsDropped.incrementAndGet()
+                }
+            } else if (packet.ttl > 0) {
                 forwardPacket(packet, sourceEndpointId)
             }
             return
@@ -1266,7 +1341,19 @@ class P2PManager(
 
         if (packet.destId != localUsername) {
             if (packet.ttl > 0) {
-                forwardPacket(packet, sourceEndpointId)
+                // Forwarding budget: limit how many packets any single peer can cause
+                // us to relay, preventing amplification attacks (libp2p GossipSub principle).
+                val fwdAllowed = if (sourceEndpointId != null) {
+                    rateLimiter?.allowForward(sourceEndpointId) ?: true
+                } else true  // locally originated — no budget limit
+                if (fwdAllowed) {
+                    forwardPacket(packet, sourceEndpointId)
+                } else {
+                    log("FORWARD_BUDGET_EXCEEDED id=${packet.id.take(8)} src=${packet.sourceId} via=$sourceEndpointId",
+                        com.fyp.resilientp2p.data.LogLevel.WARN)
+                    peerTrustScorer?.recordForwardBudgetExceeded(sourceEndpointId)
+                    networkStats.totalPacketsDropped.incrementAndGet()
+                }
             } else {
                 log("PACKET_TTL_EXCEEDED id=${packet.id.take(8)} dest='${packet.destId}' src='${packet.sourceId}'",
                         com.fyp.resilientp2p.data.LogLevel.WARN)
@@ -1279,13 +1366,19 @@ class P2PManager(
         scope.launch { _payloadEvents.emit(PayloadEvent(sourceEndpointId, packet)) }
 
         when (packet.type) {
-            PacketType.DATA ->
-                    log(
-                            "Message: ${String(packet.payload, StandardCharsets.UTF_8)}",
-                            com.fyp.resilientp2p.data.LogLevel.INFO,
-                            com.fyp.resilientp2p.data.LogType.CHAT,
-                            packet.sourceId
-                    )
+            PacketType.DATA -> {
+                log(
+                        "Message: ${String(packet.payload, StandardCharsets.UTF_8)}",
+                        com.fyp.resilientp2p.data.LogLevel.INFO,
+                        com.fyp.resilientp2p.data.LogType.CHAT,
+                        packet.sourceId
+                )
+                // Send ACK back to sender for end-to-end delivery confirmation.
+                // Payload = original packet ID so sender can correlate.
+                if (packet.destId == localUsername) {
+                    sendAck(packet.sourceId, packet.id)
+                }
+            }
             PacketType.IDENTITY -> {
                 // Prevent Self-Poisoning, but DO NOT disconnect the neighbor.
                 // If a neighbor echoes our identity back (e.g. routing loop), they are still a
@@ -1489,6 +1582,10 @@ class P2PManager(
             PacketType.GROUP_MESSAGE -> {
                 // Route to group chat handler
                 groupMessageHandler?.invoke(packet)
+                // Send ACK for unicast group messages
+                if (packet.destId == localUsername) {
+                    sendAck(packet.sourceId, packet.id)
+                }
             }
             PacketType.FILE_ANNOUNCE -> {
                 fileShareManager?.handleFileAnnounce(packet)
@@ -1514,13 +1611,91 @@ class P2PManager(
                     (System.currentTimeMillis() - packet.timestamp).toDouble()
                 )
             }
+            PacketType.AUDIO_DATA -> {
+                // Mesh-routed audio: AAC-encoded frames → MeshAudioManager → AudioPlayer
+                meshAudioManager?.handleAudioData(packet)
+            }
+            PacketType.AUDIO_CONTROL -> {
+                // Audio session start/stop signals
+                meshAudioManager?.handleAudioControl(packet)
+            }
+            PacketType.ACK -> {
+                // Delivery receipt: payload = the original packet ID that was delivered.
+                // 1. Log confirmation   2. Remove from store-forward queue   3. Track in stats.
+                val ackedId = String(packet.payload, StandardCharsets.UTF_8)
+                log("ACK_RECEIVED from='${packet.sourceId}' ackedId=${ackedId.take(8)}",
+                    com.fyp.resilientp2p.data.LogLevel.DEBUG, peerId = packet.sourceId)
+                networkStats.deliveryConfirmed.incrementAndGet()
+                peerTrustScorer?.recordDeliveryConfirmed(packet.sourceId)
+
+                // Clear the ACKed packet from in-memory store-forward queue (if still pending)
+                pendingMessages[packet.sourceId]?.removeAll { it.id == ackedId }
+
+                // Clear from Room DB store-forward table (async, best-effort)
+                scope.launch {
+                    try {
+                        packetDao?.deletePacket(ackedId)
+                    } catch (_: Exception) { /* best effort */ }
+                }
+            }
+            PacketType.STORE_FORWARD -> {
+                // Store-forward delivery attempt — treat as regular data
+                log("STORE_FORWARD from='${packet.sourceId}': ${String(packet.payload, StandardCharsets.UTF_8).take(100)}",
+                    com.fyp.resilientp2p.data.LogLevel.INFO, peerId = packet.sourceId)
+                if (packet.destId == localUsername) {
+                    sendAck(packet.sourceId, packet.id)
+                }
+            }
             else -> {}
         }
     }
 
+    /**
+     * Send a delivery receipt (ACK) back to the original sender.
+     * Payload = the original packet ID being acknowledged.
+     * TTL = DEFAULT_TTL for multi-hop return. ACKs are CONTROL-category
+     * rate-limited (50/sec) to prevent ACK storms.
+     */
+    private fun sendAck(destId: String, originalPacketId: String) {
+        val ackPacket = Packet(
+            id = java.util.UUID.randomUUID().toString(),
+            type = PacketType.ACK,
+            sourceId = localUsername,
+            destId = destId,
+            payload = originalPacketId.toByteArray(StandardCharsets.UTF_8),
+            timestamp = System.currentTimeMillis(),
+            ttl = Packet.DEFAULT_TTL
+        )
+        handlePacket(ackPacket, "LOCAL")
+    }
+
     private fun forwardPacket(packet: Packet, excludeEndpointId: String? = null) {
         val nextHop = synchronized(routingLock) { routingTable[packet.destId] }
-        val newPacket = packet.copy(ttl = packet.ttl - 1)
+        var newPacket = packet.copy(ttl = packet.ttl - 1)
+
+        // End-to-end security for locally-originated unicast packets:
+        //   1. ENCRYPT (AES-256-GCM) — confidentiality + authenticity
+        //   2. HMAC over ciphertext (Encrypt-then-MAC) — integrity for relays
+        //
+        // Relayers don't share the key, so they can't decrypt or verify HMAC.
+        // Only the final destination can strip HMAC → decrypt → get plaintext.
+        // This is the same Encrypt-then-MAC pattern used by Signal and Matrix.
+        if (packet.sourceId == localUsername && packet.destId != "BROADCAST") {
+            val security = securityManager
+            if (security != null && security.hasKeyForPeer(packet.destId)) {
+                // Step 1: Encrypt payload
+                val encrypted = security.encrypt(packet.destId, newPacket.payload)
+                if (encrypted != null) {
+                    newPacket = newPacket.copy(payload = encrypted)
+                }
+                // Step 2: HMAC over (possibly encrypted) payload
+                val hmac = security.computeHmac(packet.destId, newPacket.payload)
+                if (hmac != null) {
+                    newPacket = newPacket.copy(payload = newPacket.payload + hmac)
+                }
+            }
+        }
+
         val bytes =
                 try {
                     newPacket.toBytes()
@@ -1754,21 +1929,45 @@ class P2PManager(
             ttl = 0  // Direct only — FILE payloads can't be routed
         )
         connectionsClient.sendPayload(endpointId, Payload.fromBytes(metaPacket.toBytes()))
-
-        // Now send the actual file payload
-        // After this point, Nearby API owns PFD - do NOT close in callbacks
-        connectionsClient.sendPayload(endpointId, payload)
             .addOnSuccessListener {
-                log("FILE_SENT peer='$peerName' name='$resolvedFileName' mime='$mimeType' payloadId=$payloadId",
-                    com.fyp.resilientp2p.data.LogLevel.INFO, peerId = peerName)
+                // Chain file send AFTER metadata is dispatched to ensure ordering
+                connectionsClient.sendPayload(endpointId, payload)
+                    .addOnSuccessListener {
+                        log("FILE_SENT peer='$peerName' name='$resolvedFileName' mime='$mimeType' payloadId=$payloadId",
+                            com.fyp.resilientp2p.data.LogLevel.INFO, peerId = peerName)
+                    }
+                    .addOnFailureListener { e ->
+                        log("FILE_SEND_FAILED peer='$peerName' name='$resolvedFileName' error='${e.message}'",
+                            com.fyp.resilientp2p.data.LogLevel.ERROR, peerId = peerName)
+                    }
             }
             .addOnFailureListener { e ->
-                log("FILE_SEND_FAILED peer='$peerName' name='$resolvedFileName' error='${e.message}'",
+                log("FILE_META_SEND_FAILED peer='$peerName' name='$resolvedFileName' error='${e.message}'",
                     com.fyp.resilientp2p.data.LogLevel.ERROR, peerId = peerName)
             }
     }
 
     fun startAudioStreaming(peerName: String) {
+        val target = if (peerName == "BROADCAST") "BROADCAST" else peerName
+        log("Starting mesh audio stream to '$target'")
+
+        val mam = meshAudioManager
+        if (mam != null) {
+            val started = mam.startStreaming(target)
+            if (!started) {
+                log("Mesh audio failed to start, falling back to direct stream", com.fyp.resilientp2p.data.LogLevel.WARN)
+                startDirectAudioStreaming(peerName)
+            }
+        } else {
+            startDirectAudioStreaming(peerName)
+        }
+    }
+
+    /**
+     * Legacy direct audio streaming via Payload.fromStream (single hop only).
+     * Used as fallback when MeshAudioManager is unavailable.
+     */
+    private fun startDirectAudioStreaming(peerName: String) {
         val targetEndpointIds =
                 if (peerName == "BROADCAST") {
                     neighbors.keys.toList()
@@ -1786,7 +1985,7 @@ class P2PManager(
         }
 
         log(
-                "Starting audio stream to ${if(peerName == "BROADCAST") "ALL (${targetEndpointIds.size})" else peerName}"
+                "Starting direct audio stream to ${if(peerName == "BROADCAST") "ALL (${targetEndpointIds.size})" else peerName}"
         )
 
         val pfd = voiceManager?.startRecording()
@@ -1794,14 +1993,12 @@ class P2PManager(
             log("Audio recording started, sending payload...")
             val payload = Payload.fromStream(pfd)
 
-            // Nearby Connections sendPayload accepts a list of endpoints
             connectionsClient
                     .sendPayload(targetEndpointIds, payload)
                     .addOnSuccessListener { log("Audio payload sent to $targetEndpointIds") }
                     .addOnFailureListener { e ->
                         log("Failed to send audio payload: ${e.message}")
                         voiceManager?.stopRecording()
-                        // Do NOT close pfd - Nearby API owns it after Payload.fromStream()
                     }
         } else {
             log("Failed to start audio recording (returned null)")
@@ -1810,10 +2007,20 @@ class P2PManager(
 
     fun stopAudioStreaming() {
         log("Audio Streaming stopped")
+        meshAudioManager?.stopStreaming()
         voiceManager?.stopRecording()
     }
 
     fun getLocalDeviceName(): String = localUsername
+
+    /**
+     * Get the safety number for verifying the ECDH key exchange with [peerId].
+     * Both peers will compute the same number; compare out-of-band (e.g. read aloud)
+     * to confirm no MITM attack. Returns null if no key is exchanged with this peer.
+     *
+     * @see SecurityManager.computeSafetyNumber
+     */
+    fun getSafetyNumber(peerId: String): String? = securityManager?.computeSafetyNumber(peerId)
 
     fun disconnectFromEndpoint(endpointId: String) {
         val peer = neighbors[endpointId]

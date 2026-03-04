@@ -41,9 +41,12 @@ data class LogEntry(
         val payloadSizeBytes: Int? = null
 ) {
     val formattedTimestamp: String
-        get() =
-                java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
-                        .format(java.util.Date(timestamp))
+        get() = LOG_TIMESTAMP_FORMAT.format(java.util.Date(timestamp))
+
+    companion object {
+        /** Cached formatter — only used on the main thread, so thread safety is not a concern. */
+        private val LOG_TIMESTAMP_FORMAT = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
+    }
 }
 
 /**

@@ -366,42 +366,48 @@ private fun ChatInputBar(
         shadowElevation = 4.dp
     ) {
         Column(modifier = Modifier.fillMaxWidth().padding(8.dp)) {
+            // PTT (push-to-talk) row — always visible, works for both direct and broadcast
+            val interactionSource = remember { MutableInteractionSource() }
+            val isPressed by interactionSource.collectIsPressedAsState()
+            var wasEverPressed by remember { mutableStateOf(false) }
+            DisposableEffect(isPressed) {
+                if (isPressed) {
+                    wasEverPressed = true
+                    onStartAudio()
+                } else if (wasEverPressed) {
+                    onStopAudio()
+                }
+                onDispose {
+                    if (isPressed) {
+                        onStopAudio()
+                    }
+                }
+            }
+            Button(
+                onClick = {},
+                interactionSource = interactionSource,
+                modifier = Modifier.fillMaxWidth().height(44.dp),
+                contentPadding = PaddingValues(horizontal = 16.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (isPressed) Color.Red
+                                     else MaterialTheme.colorScheme.tertiary
+                )
+            ) {
+                Text(
+                    if (isPressed) "\uD83C\uDFA4 Recording... Release to stop"
+                    else "\uD83C\uDFA4 Hold to Talk${if (isBroadcast) " (All Peers)" else ""}",
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
+
             // Attachment row
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
-                // PTT button
-                if (!isBroadcast) {
-                    val interactionSource = remember { MutableInteractionSource() }
-                    val isPressed by interactionSource.collectIsPressedAsState()
-                    var wasEverPressed by remember { mutableStateOf(false) }
-                    DisposableEffect(isPressed) {
-                        if (isPressed) {
-                            wasEverPressed = true
-                            onStartAudio()
-                        } else if (wasEverPressed) {
-                            onStopAudio()
-                        }
-                        onDispose {
-                            if (isPressed) {
-                                onStopAudio()
-                            }
-                        }
-                    }
-                    Button(
-                        onClick = {},
-                        interactionSource = interactionSource,
-                        modifier = Modifier.height(36.dp),
-                        contentPadding = PaddingValues(horizontal = 12.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = if (isPressed) Color.Red
-                                             else MaterialTheme.colorScheme.tertiary
-                        )
-                    ) {
-                        Text(if (isPressed) "🎤 Recording" else "🎤 PTT", fontSize = 12.sp)
-                    }
-                }
 
                 IconButton(onClick = onPickImage, modifier = Modifier.size(36.dp)) {
                     Text("📷", fontSize = 18.sp)
@@ -447,9 +453,10 @@ private fun ChatInputBar(
     }
 }
 
+private val chatTimestampFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
+
 private fun formatTimestamp(timestamp: Long): String {
-    val sdf = SimpleDateFormat("HH:mm", Locale.getDefault())
-    return sdf.format(Date(timestamp))
+    return chatTimestampFormat.format(Date(timestamp))
 }
 
 private fun formatFileSize(bytes: Long): String {

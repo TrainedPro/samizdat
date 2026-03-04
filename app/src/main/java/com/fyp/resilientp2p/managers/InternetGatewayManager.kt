@@ -49,6 +49,10 @@ class InternetGatewayManager(
     private val _isGateway = MutableStateFlow(false)
     val isGateway: StateFlow<Boolean> = _isGateway.asStateFlow()
 
+    /** User-controlled toggle: when false, gateway is disabled even if internet is available. */
+    private val _gatewayEnabled = MutableStateFlow(true)
+    val gatewayEnabled: StateFlow<Boolean> = _gatewayEnabled.asStateFlow()
+
     // Rate limiting
     private val sendTimestamps = mutableListOf<Long>()
 
@@ -66,11 +70,11 @@ class InternetGatewayManager(
         registerNetworkCallback()
         // Initial check
         _hasInternet.value = checkInternetNow()
-        _isGateway.value = _hasInternet.value
+        updateGatewayState()
         if (_isGateway.value) {
             startRelayPolling()
         }
-        Log.i(TAG, "InternetGatewayManager started. hasInternet=${_hasInternet.value}")
+        Log.i(TAG, "InternetGatewayManager started. hasInternet=${_hasInternet.value}, gatewayEnabled=${_gatewayEnabled.value}")
     }
 
     fun destroy() {
@@ -85,6 +89,23 @@ class InternetGatewayManager(
      * Called by P2PManager when building ROUTE_ANNOUNCE payloads.
      */
     fun shouldAdvertiseGateway(): Boolean = _isGateway.value
+
+    /**
+     * Toggle gateway behaviour on/off. When disabled, this device will not
+     * advertise as a gateway even if internet is available.
+     */
+    fun setGatewayEnabled(enabled: Boolean) {
+        _gatewayEnabled.value = enabled
+        updateGatewayState()
+        Log.i(TAG, "Gateway enabled=$enabled, isGateway=${_isGateway.value}")
+    }
+
+    /** Recompute [_isGateway] from [_hasInternet] and [_gatewayEnabled]. */
+    private fun updateGatewayState() {
+        val shouldBeGateway = _hasInternet.value && _gatewayEnabled.value
+        _isGateway.value = shouldBeGateway
+        if (shouldBeGateway) startRelayPolling() else stopRelayPolling()
+    }
 
     /**
      * Relay a mesh packet to the cloud relay (Firestore) for cross-mesh delivery.
@@ -213,8 +234,7 @@ class InternetGatewayManager(
             override fun onAvailable(network: Network) {
                 Log.i(TAG, "Internet available")
                 _hasInternet.value = true
-                _isGateway.value = true
-                startRelayPolling()
+                updateGatewayState()
             }
 
             override fun onLost(network: Network) {
@@ -222,16 +242,13 @@ class InternetGatewayManager(
                 val stillHasInternet = checkInternetNow()
                 Log.i(TAG, "Network lost. Still has internet: $stillHasInternet")
                 _hasInternet.value = stillHasInternet
-                _isGateway.value = stillHasInternet
-                if (!stillHasInternet) {
-                    stopRelayPolling()
-                }
+                updateGatewayState()
             }
 
             override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
                 val validated = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
                 _hasInternet.value = validated
-                _isGateway.value = validated
+                updateGatewayState()
             }
         }
         networkCallback = callback

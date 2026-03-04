@@ -2136,6 +2136,14 @@ class P2PManager(
         restartRadio()
     }
 
+    /**
+     * Toggle the internet gateway on or off.
+     * When disabled, this device will not relay for the mesh even if it has internet.
+     */
+    fun setGatewayEnabled(enabled: Boolean) {
+        internetGatewayManager?.setGatewayEnabled(enabled)
+    }
+
     private fun restartRadio() {
         val wasAdvertising = _state.value.isAdvertising
         val wasDiscovering = _state.value.isDiscovering
@@ -2221,7 +2229,13 @@ class P2PManager(
         // Check if this device is an internet gateway
         val isGateway = internetGatewayManager?.shouldAdvertiseGateway() == true
         // Update state for UI
-        updateState { it.copy(isGateway = isGateway, hasInternet = internetGatewayManager?.hasInternet?.value == true) }
+        updateState {
+            it.copy(
+                isGateway = isGateway,
+                hasInternet = internetGatewayManager?.hasInternet?.value == true,
+                gatewayEnabled = internetGatewayManager?.gatewayEnabled?.value != false
+            )
+        }
 
         neighborsSnapshot.keys.forEach { endpointId ->
             var routeData = synchronized(routingLock) {

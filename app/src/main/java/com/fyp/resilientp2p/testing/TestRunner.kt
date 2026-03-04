@@ -169,9 +169,9 @@ class TestRunner(
                     }
                     results.add(result)
 
-                    val status = if (result.passed) "✅ PASS" else "❌ FAIL"
+                    val status = if (result.passed) "[PASS]" else "[FAIL]"
                     tlog("  Result: $status (${result.durationMs}ms)")
-                    result.warnings.forEach { w -> tlog("  ⚠️ $w") }
+                    result.warnings.forEach { w -> tlog("  WARN: $w") }
                     result.error?.let { e -> tlog("  Error: $e") }
 
                     _state.update { it.copy(
@@ -439,8 +439,10 @@ class TestRunner(
         if (neighbors.size != state.connectedEndpoints.size) {
             warnings.add("Neighbor count (${neighbors.size}) != connectedEndpoints (${state.connectedEndpoints.size})")
         }
-        if (!state.isAdvertising && !state.isDiscovering) {
-            warnings.add("Neither advertising nor discovering is active")
+        // Not actively advertising/discovering is normal after connection established — soft warning only
+        val advDiscInactive = !state.isAdvertising && !state.isDiscovering
+        if (advDiscInactive) {
+            tlog("  INFO: Neither advertising nor discovering — normal if already connected")
         }
         neighbors.forEach { (eid, neighbor) ->
             if (eid.isBlank()) warnings.add("Blank endpoint ID found")
@@ -789,7 +791,9 @@ class TestRunner(
             appendLine("Device: ${p2pManager.getLocalDeviceName()}")
             repeat(100) { appendLine("Test data line $it — ${UUID.randomUUID()}") }
         }
-        val testFile = File(context.cacheDir, "test_transfer_${System.currentTimeMillis()}.txt")
+        // file_paths.xml exposes <cache-path path="test_files/" />, so create inside that subdirectory
+        val testDir = File(context.cacheDir, "test_files").apply { mkdirs() }
+        val testFile = File(testDir, "test_transfer_${System.currentTimeMillis()}.txt")
 
         try {
             testFile.writeText(testContent)
@@ -1034,16 +1038,14 @@ class TestRunner(
 
         val testPeer = "__test_peer_rl__"
 
-        // 1. EXEMPT packets should always be allowed (unlimited)
-        var exemptPassed = true
-        for (i in 1..600) {
-            if (!limiter.allowPacket(testPeer, PacketType.IDENTITY)) {
-                exemptPassed = false
-                tlog("  FAIL: IDENTITY blocked at iteration $i (should be EXEMPT)")
-                break
-            }
+        // 1. PROTOCOL packets (IDENTITY) should be limited to ~10/sec (anti-flooding)
+        var protocolAllowed = 0
+        for (i in 1..100) {
+            if (limiter.allowPacket(testPeer, PacketType.IDENTITY)) protocolAllowed++
         }
-        tlog("  EXEMPT (IDENTITY x600): ${if (exemptPassed) "PASS" else "FAIL"}")
+        val protocolPass = protocolAllowed in 8..12  // Allow small tolerance around 10
+        tlog("  PROTOCOL (IDENTITY x100): allowed=$protocolAllowed expected≈10 ${if (protocolPass) "PASS" else "FAIL"}")
+        if (!protocolPass) warnings.add("PROTOCOL budget: allowed=$protocolAllowed, expected 8-12")
 
         // 2. CONTROL should allow 50/sec then reject
         limiter.resetPeer(testPeer)
@@ -1076,14 +1078,14 @@ class TestRunner(
         // Cleanup
         limiter.resetPeer(testPeer)
 
-        val allPass = exemptPassed && controlPass && bulkPass && dataAfterControl
+        val allPass = protocolPass && controlPass && bulkPass && dataAfterControl
         val duration = System.currentTimeMillis() - start
         return TestResult(
             testName = "Rate Limiter Tiering",
             passed = allPass,
             durationMs = duration,
             details = mapOf(
-                "exemptPassed" to exemptPassed,
+                "protocolAllowed" to protocolAllowed,
                 "controlAllowed" to controlAllowed,
                 "bulkAllowed" to bulkAllowed,
                 "categoryIsolation" to dataAfterControl

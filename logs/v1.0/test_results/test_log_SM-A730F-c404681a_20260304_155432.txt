@@ -1,0 +1,141 @@
+Starting mesh networking (auto-start mode)...
+Waiting for at least one peer to connect...
+Found 1 peer(s): P2P-Node-7842
+═══════════════════════════════════════════════════
+Starting comprehensive test suite
+Device: SM-A730F-c404681a
+Peers: P2P-Node-7842
+Tests: 20
+═══════════════════════════════════════════════════
+─── Test 1/20: Packet Serialization ───
+  Serialize PING: OK (166B)
+  Serialize PONG: OK (166B)
+  Serialize ACK: OK (164B)
+  Serialize DATA: OK (166B)
+  Serialize GOSSIP: OK (170B)
+  Serialize IDENTITY: OK (174B)
+  Serialize AUDIO_DATA: OK (178B)
+  Serialize AUDIO_CONTROL: OK (184B)
+  Serialize ROUTE_ANNOUNCE: OK (186B)
+  Serialize STORE_FORWARD: OK (184B)
+  Serialize FILE_META: OK (176B)
+  Serialize EMERGENCY: OK (176B)
+  Serialize GROUP_MESSAGE: OK (184B)
+  Serialize FILE_ANNOUNCE: OK (184B)
+  Serialize FILE_REQUEST: OK (182B)
+  Serialize FILE_CHUNK: OK (178B)
+  Serialize ENCOUNTER_LOG: OK (184B)
+  Serialize LOCATION_PING: OK (184B)
+  Empty payload: OK
+  Long name (200 chars): OK
+  Large payload (100KB): OK
+  Invalid data rejection: OK
+  Result: ✅ PASS (129ms)
+─── Test 2/20: Message Cache Dedup ───
+  Dedup checks: 6 run, 0 issue(s). Concurrent=100/100
+  Result: ✅ PASS (216ms)
+─── Test 3/20: Connection Verification ───
+  Expected peers: 1, Neighbors: 1 (PL6O)
+  Peer names: P2P-Node-7842
+  State.connectedEndpoints: 1
+  Result: ✅ PASS (3ms)
+─── Test 4/20: Identity Exchange ───
+  Expected: 1 peers, Resolved: P2P-Node-7842
+  Local device name: SM-A730F-c404681a
+  Result: ✅ PASS (2ms)
+─── Test 5/20: Text Messaging ───
+  Sending 10 messages to P2P-Node-7842...
+  Sent: 10/10, Errors: 0
+  Result: ✅ PASS (4756ms)
+─── Test 6/20: Message Reception ───
+  Received test messages from 1 peer(s), total: 8
+    P2P-Node-7842: 8 messages
+  Result: ✅ PASS (2004ms)
+─── Test 7/20: Ping / RTT ───
+  Sending 20 pings to 1 peer(s)...
+  Waiting for PONGs (15s)...
+  P2P-Node-7842: 33/20 PONGs, RTT min=87ms avg=470ms med=303ms p95=1427ms max=1841ms
+  Result: ✅ PASS (25338ms)
+─── Test 8/20: Broadcast Messaging ───
+  Sending 5 broadcasts...
+  Sent: 5 (errors: 0), received from others: 6
+  Result: ✅ PASS (4603ms)
+─── Test 9/20: Routing Table Integrity ───
+  Direct neighbors: P2P-Node-7842
+  Routed peers: 
+  Result: ✅ PASS (17ms)
+─── Test 10/20: Store-and-Forward Queue ───
+  Sending to non-existent 'FakeDevice-1a69c323' to trigger S&F...
+  S&F queued: 0→0 (Δ0), delivered total: 0
+  Result: ✅ PASS (2027ms)
+─── Test 11/20: File Transfer ───
+  Generated: test_transfer_1772621656852.txt (5985B, sha256=a02ead8fca7deaa1...)
+  Sending to P2P-Node-7842 via sendFile...
+  File transfer error: Failed to find configured root that contains /data/data/com.fyp.resilientp2p/cache/test_transfer_1772621656852.txt
+  Result: ❌ FAIL (266ms)
+  ⚠️ File transfer failed: Failed to find configured root that contains /data/data/com.fyp.resilientp2p/cache/test_transfer_1772621656852.txt
+  Error: File transfer failed: Failed to find configured root that contains /data/data/com.fyp.resilientp2p/cache/test_transfer_1772621656852.txt
+─── Test 12/20: Network Stats Counters ───
+  uptimeMs > 0: OK
+  packetsSent > 0: OK
+  packetsReceived > 0: OK
+  bytesSent > 0: OK
+  bytesReceived > 0: OK
+  connections > 0: OK
+  packetsSent increased: OK
+  packetsReceived increased: OK
+  Test traffic delta: sent=102 pkts, recv=113 pkts
+  Totals: sent=107, recv=119, fwd=87, drop=11
+  Result: ✅ PASS (2ms)
+─── Test 13/20: Per-Peer Stats ───
+  Per-peer entries: 1
+  P2P-Node-7842: rtt=166ms sent=107pkts/20973B recv=119pkts/4802B disc=0
+  Result: ✅ PASS (3ms)
+─── Test 14/20: Connection Stability ───
+  Initial: P2P-Node-7842
+  Current: P2P-Node-7842
+  Session connections lost: 0
+  Result: ✅ PASS (1ms)
+─── Test 15/20: Heartbeat Active ───
+  RTT before: P2P-Node-7842=166ms
+  Waiting 8s for heartbeat cycle...
+  RTT after: P2P-Node-7842=102ms
+  Fresh neighbors (<15s): 1/1
+  Result: ✅ PASS (8003ms)
+─── Test 16/20: Rate Limiter Tiering ───
+── Rate Limiter Tiering ──
+  FAIL: IDENTITY blocked at iteration 11 (should be EXEMPT)
+  EXEMPT (IDENTITY x600): FAIL
+  CONTROL (PING x100): allowed=50 expected≈50 PASS
+  BULK (FILE_CHUNK x600): allowed=500 expected≈500 PASS
+  Category isolation (DATA after CONTROL exhausted): PASS
+  Result: ❌ FAIL (49ms)
+  Error: Tiered rate limiting misconfigured
+─── Test 17/20: Blacklist & Violations ───
+── Blacklist & Violations ──
+  Initially clean: true
+  Not blacklisted at 10 violations: true
+  HMAC violations (x100) no auto-ban: true
+  Reset violations: count=0 PASS
+  Manual blacklist/unblacklist: bl=true unbl=true
+  Result: ✅ PASS (66ms)
+─── Test 18/20: Emergency Broadcast ───
+── Emergency Broadcast ──
+  Sent emergency-like broadcast: __TEST__EMERGENCY_1772621665184
+  Packets sent after broadcast: 121 (emergencyCount: 0 -> 0)
+  Result: ✅ PASS (3008ms)
+─── Test 19/20: Group Messaging ───
+── Group Messaging ──
+  Sent group msg to P2P-Node-7842
+  Messages sent: 18 (expected ≥1)
+  Result: ✅ PASS (2015ms)
+─── Test 20/20: Concurrent Operations ───
+── Concurrent Operations ──
+  Chat stream: 5 messages sent
+  Ping stream: 10 pings sent
+  Broadcast stream: 3 messages sent
+  Total packets sent concurrently: 20 (expected ≥18)
+  Connection to P2P-Node-7842 after test: ALIVE
+  Result: ✅ PASS (2636ms)
+Exported JSON: /storage/emulated/0/Android/data/com.fyp.resilientp2p/files/test_results/test_SM-A730F-c404681a_20260304_155432.json
+Exported CSV: /storage/emulated/0/Android/data/com.fyp.resilientp2p/files/test_results/test_SM-A730F-c404681a_20260304_155432.csv

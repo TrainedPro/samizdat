@@ -13,6 +13,12 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.PhotoCamera
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -104,8 +110,8 @@ fun ChatScreen(
                     }
                 },
                 navigationIcon = {
-                    TextButton(onClick = onBack) {
-                        Text("← Back")
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
                     }
                 },
                 actions = {
@@ -273,7 +279,7 @@ private fun ChatBubble(message: ChatMessage) {
                                 .background(Color.Gray.copy(alpha = 0.3f), RoundedCornerShape(8.dp)),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text("🖼️ ${message.fileName ?: "Image"}", color = textColor)
+                            Text("Image: ${message.fileName ?: "Image"}", color = textColor)
                         }
                     }
 
@@ -295,7 +301,12 @@ private fun ChatBubble(message: ChatMessage) {
                 }
                 MessageType.FILE -> {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("📎", fontSize = 24.sp)
+                        Icon(
+                            Icons.Default.AttachFile,
+                            contentDescription = "File",
+                            modifier = Modifier.size(24.dp),
+                            tint = textColor
+                        )
                         Spacer(modifier = Modifier.width(8.dp))
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
@@ -392,9 +403,11 @@ private fun ChatInputBar(
                                      else MaterialTheme.colorScheme.tertiary
                 )
             ) {
+                Icon(Icons.Default.Mic, contentDescription = null, modifier = Modifier.size(20.dp))
+                Spacer(modifier = Modifier.width(8.dp))
                 Text(
-                    if (isPressed) "\uD83C\uDFA4 Recording... Release to stop"
-                    else "\uD83C\uDFA4 Hold to Talk${if (isBroadcast) " (All Peers)" else ""}",
+                    if (isPressed) "Recording... Release to stop"
+                    else "Hold to Talk${if (isBroadcast) " (All Peers)" else ""}",
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Bold
                 )
@@ -409,10 +422,10 @@ private fun ChatInputBar(
             ) {
 
                 IconButton(onClick = onPickImage, modifier = Modifier.size(36.dp)) {
-                    Text("📷", fontSize = 18.sp)
+                    Icon(Icons.Default.PhotoCamera, contentDescription = "Take photo", modifier = Modifier.size(20.dp))
                 }
                 IconButton(onClick = onPickFile, modifier = Modifier.size(36.dp)) {
-                    Text("📎", fontSize = 18.sp)
+                    Icon(Icons.Default.AttachFile, contentDescription = "Attach file", modifier = Modifier.size(20.dp))
                 }
             }
 
@@ -445,7 +458,7 @@ private fun ChatInputBar(
                     shape = CircleShape,
                     contentPadding = PaddingValues(0.dp)
                 ) {
-                    Text("➤", fontSize = 20.sp)
+                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send", modifier = Modifier.size(20.dp))
                 }
             }
         }

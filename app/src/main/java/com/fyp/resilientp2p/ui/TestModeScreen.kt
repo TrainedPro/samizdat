@@ -1,5 +1,6 @@
 package com.fyp.resilientp2p.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -7,6 +8,10 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -43,6 +48,9 @@ fun TestModeScreen(
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     val anyRunning = testState.isRunning || enduranceState.isRunning
 
+    // System back button closes test mode (only when no test is running)
+    BackHandler(enabled = !anyRunning) { onDismiss() }
+
     Surface(
         modifier = Modifier.fillMaxSize(),
         color = MaterialTheme.colorScheme.background
@@ -63,10 +71,16 @@ fun TestModeScreen(
                     style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.Bold
                 )
-                if (!anyRunning) {
-                    TextButton(onClick = onDismiss) {
-                        Text("Close")
-                    }
+                IconButton(
+                    onClick = onDismiss,
+                    enabled = !anyRunning
+                ) {
+                    Icon(
+                        Icons.Default.Close,
+                        contentDescription = "Close test mode",
+                        tint = if (anyRunning) MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
+                               else MaterialTheme.colorScheme.onSurface
+                    )
                 }
             }
 
@@ -324,7 +338,7 @@ private fun EnduranceStatsCard(state: EnduranceTestState) {
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(
-                    if (state.isRunning) "⏱ Running — ${state.duration.label}" else "Complete",
+                    if (state.isRunning) "Running \u2014 ${state.duration.label}" else "Complete",
                     style = MaterialTheme.typography.titleSmall,
                     fontWeight = FontWeight.Bold
                 )
@@ -493,10 +507,9 @@ private fun LogPanel(messages: List<String>, modifier: Modifier) {
         items(messages) { line ->
             val color = when {
                 "EXCEPTION" in line || "FAIL" in line || "FATAL" in line || "ERROR" in line -> Color(0xFFFF6B6B)
-                "⚠" in line || "WARN" in line -> Color(0xFFFFD93D)
+                "WARN" in line -> Color(0xFFFFD93D)
                 line.contains("═") || line.contains("───") -> Color(0xFF6BCB77)
-                "✅" in line || "COMPLETE" in line -> Color(0xFF4CAF50)
-                "❌" in line -> Color(0xFFEF5350)
+                "PASS" in line || "COMPLETE" in line -> Color(0xFF4CAF50)
                 "SNAPSHOT" in line -> Color(0xFF64B5F6)
                 else -> Color(0xFFCCCCCC)
             }
@@ -531,9 +544,11 @@ private fun TestResultCard(result: TestResult) {
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text(
-                        text = if (result.passed) "✅" else "❌",
-                        fontSize = 18.sp
+                    Icon(
+                        imageVector = if (result.passed) Icons.Default.Check else Icons.Default.Close,
+                        contentDescription = if (result.passed) "Passed" else "Failed",
+                        tint = if (result.passed) Color(0xFF2E7D32) else Color(0xFFC62828),
+                        modifier = Modifier.size(20.dp)
                     )
                     Text(
                         text = result.testName,
@@ -556,12 +571,23 @@ private fun TestResultCard(result: TestResult) {
             if (result.warnings.isNotEmpty()) {
                 Spacer(modifier = Modifier.height(4.dp))
                 result.warnings.forEach { warn ->
-                    Text(
-                        text = "⚠️ $warn",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color(0xFFE65100),
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.padding(start = 4.dp)
-                    )
+                    ) {
+                        Icon(
+                            Icons.Default.Warning,
+                            contentDescription = "Warning",
+                            tint = Color(0xFFE65100),
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = warn,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFFE65100)
+                        )
+                    }
                 }
             }
 

@@ -1,5 +1,6 @@
 package com.fyp.resilientp2p.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
@@ -12,7 +13,24 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.BarChart
+import androidx.compose.material.icons.filled.CellTower
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Cloud
+import androidx.compose.material.icons.filled.CloudOff
+import androidx.compose.material.icons.filled.Forum
+import androidx.compose.material.icons.filled.Language
+import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Science
+import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Sos
+import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Timer
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.material3.MaterialTheme.colorScheme
 import androidx.compose.runtime.*
@@ -122,7 +140,7 @@ fun ResilientP2PApp(
                 receivedFile?.let { event ->
                         android.widget.Toast.makeText(
                                 context,
-                                "📥 File from ${event.senderName}: ${event.fileName}",
+                                "File from ${event.senderName}: ${event.fileName}",
                                 android.widget.Toast.LENGTH_LONG
                         ).show()
                 }
@@ -165,7 +183,14 @@ fun ResilientP2PApp(
                                                         }
                                                 )
                                                 DropdownMenuItem(
-                                                        text = { Text("\uD83D\uDCCA Health Dashboard") },
+                                                        leadingIcon = {
+                                                                Icon(
+                                                                        Icons.Default.BarChart,
+                                                                        contentDescription = null,
+                                                                        modifier = Modifier.size(18.dp)
+                                                                )
+                                                        },
+                                                        text = { Text("Health Dashboard") },
                                                         onClick = {
                                                                 showMenu = false
                                                                 showHealthDashboard = true
@@ -173,7 +198,14 @@ fun ResilientP2PApp(
                                                 )
                                                 if (chatGroupDao != null && groupMessageDao != null) {
                                                         DropdownMenuItem(
-                                                                text = { Text("\uD83D\uDCAC Group Chat") },
+                                                                leadingIcon = {
+                                                                        Icon(
+                                                                                Icons.Default.Forum,
+                                                                                contentDescription = null,
+                                                                                modifier = Modifier.size(18.dp)
+                                                                        )
+                                                                },
+                                                                text = { Text("Group Chat") },
                                                                 onClick = {
                                                                         showMenu = false
                                                                         showGroupChat = true
@@ -182,7 +214,14 @@ fun ResilientP2PApp(
                                                 }
                                                 if (testRunner != null) {
                                                         DropdownMenuItem(
-                                                                text = { Text("🧪 Run Tests") },
+                                                                leadingIcon = {
+                                                                        Icon(
+                                                                                Icons.Default.Science,
+                                                                                contentDescription = null,
+                                                                                modifier = Modifier.size(18.dp)
+                                                                        )
+                                                                },
+                                                                text = { Text("Run Tests") },
                                                                 onClick = {
                                                                         showMenu = false
                                                                         showTestMode = true
@@ -237,7 +276,12 @@ fun ResilientP2PApp(
                                                 modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                                                 verticalAlignment = Alignment.CenterVertically
                                         ) {
-                                                Text("\u23F1\uFE0F", fontSize = 16.sp)
+                                                Icon(
+                                                        Icons.Default.Timer,
+                                                        contentDescription = "Endurance test",
+                                                        modifier = Modifier.size(16.dp),
+                                                        tint = Color(0xFF0D47A1)
+                                                )
                                                 Spacer(modifier = Modifier.width(8.dp))
                                                 Text(
                                                         "Endurance Test Running",
@@ -247,7 +291,7 @@ fun ResilientP2PApp(
                                                 )
                                                 Spacer(modifier = Modifier.weight(1f))
                                                 Text(
-                                                        "\u2022 ${enduranceState?.value?.messagesSent ?: 0} msgs",
+                                                        "${enduranceState?.value?.messagesSent ?: 0} msgs",
                                                         style = MaterialTheme.typography.labelSmall,
                                                         color = Color(0xFF1565C0)
                                                 )
@@ -270,24 +314,41 @@ fun ResilientP2PApp(
                                         modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                                         verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                        Text(
-                                                when {
-                                                        state.isGateway -> "\uD83C\uDF10"
-                                                        state.hasInternet -> "\uD83C\uDF10"
-                                                        else -> "\uD83D\uDEAB"
+                                        Icon(
+                                                imageVector = when {
+                                                        state.isGateway -> Icons.Default.Language
+                                                        state.hasInternet -> Icons.Default.Language
+                                                        else -> Icons.Default.CloudOff
                                                 },
-                                                fontSize = 16.sp
+                                                contentDescription = "Network status",
+                                                modifier = Modifier.size(20.dp),
+                                                tint = if (state.hasInternet) Color(0xFF1B5E20) else Color(0xFF5D4037)
                                         )
                                         Spacer(modifier = Modifier.width(8.dp))
                                         Text(
                                                 when {
-                                                        state.isGateway -> "Internet Gateway Active \u2014 relaying for mesh"
+                                                        state.isGateway -> "Internet Gateway Active"
                                                         state.hasInternet -> "Internet Available"
                                                         else -> "Offline \u2014 mesh-only mode"
                                                 },
                                                 style = MaterialTheme.typography.bodySmall,
-                                                color = if (state.hasInternet) Color(0xFF1B5E20) else Color(0xFF5D4037)
+                                                color = if (state.hasInternet) Color(0xFF1B5E20) else Color(0xFF5D4037),
+                                                modifier = Modifier.weight(1f)
                                         )
+                                        // Gateway toggle (only when internet is available)
+                                        if (state.hasInternet) {
+                                                Text(
+                                                        "Gateway",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = colorScheme.onSurfaceVariant
+                                                )
+                                                Spacer(modifier = Modifier.width(4.dp))
+                                                Switch(
+                                                        checked = state.gatewayEnabled,
+                                                        onCheckedChange = { p2pManager.setGatewayEnabled(it) },
+                                                        modifier = Modifier.height(24.dp)
+                                                )
+                                        }
                                 }
                         }
 
@@ -301,12 +362,21 @@ fun ResilientP2PApp(
                                         border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFB71C1C))
                                 ) {
                                         Column(modifier = Modifier.padding(12.dp)) {
-                                                Text(
-                                                        "\u26a0\ufe0f EMERGENCY ALERTS (${emergencyHistory?.value?.size ?: 0})",
-                                                        fontWeight = FontWeight.Bold,
-                                                        color = Color(0xFFB71C1C),
-                                                        fontSize = 14.sp
-                                                )
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                        Icon(
+                                                                Icons.Default.Warning,
+                                                                contentDescription = "Emergency",
+                                                                tint = Color(0xFFB71C1C),
+                                                                modifier = Modifier.size(18.dp)
+                                                        )
+                                                        Spacer(modifier = Modifier.width(4.dp))
+                                                        Text(
+                                                                "EMERGENCY ALERTS (${emergencyHistory?.value?.size ?: 0})",
+                                                                fontWeight = FontWeight.Bold,
+                                                                color = Color(0xFFB71C1C),
+                                                                fontSize = 14.sp
+                                                        )
+                                                }
                                                 recentEmergencies.forEach { msg ->
                                                         Spacer(modifier = Modifier.height(4.dp))
                                                         Text(
@@ -316,13 +386,20 @@ fun ResilientP2PApp(
                                                                 maxLines = 2
                                                         )
                                                         if (msg.hasLocation) {
-                                                                Text(
-                                                                        "\uD83D\uDCCD " +
-                                                            "${String.format(java.util.Locale.US, "%.5f", msg.latitude)}, " +
-                                                            String.format(java.util.Locale.US, "%.5f", msg.longitude),
-                                                                        style = MaterialTheme.typography.labelSmall,
-                                                                        color = Color(0xFFD32F2F)
-                                                                )
+                                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                                        Icon(
+                                                                                Icons.Default.LocationOn,
+                                                                                contentDescription = "Location",
+                                                                                tint = Color(0xFFD32F2F),
+                                                                                modifier = Modifier.size(14.dp)
+                                                                        )
+                                                                        Text(
+                                                                                "${String.format(java.util.Locale.US, "%.5f", msg.latitude)}, " +
+                                                                    String.format(java.util.Locale.US, "%.5f", msg.longitude),
+                                                                                style = MaterialTheme.typography.labelSmall,
+                                                                                color = Color(0xFFD32F2F)
+                                                                        )
+                                                                }
                                                         }
                                                 }
                                         }
@@ -348,8 +425,15 @@ fun ResilientP2PApp(
                                 shape = RoundedCornerShape(12.dp),
                                 elevation = ButtonDefaults.buttonElevation(8.dp)
                         ) {
+                                Icon(
+                                        imageVector = if (isMeshActive) Icons.Default.Stop else Icons.Default.PlayArrow,
+                                        contentDescription = if (isMeshActive) "Stop mesh" else "Start mesh",
+                                        tint = Color.White,
+                                        modifier = Modifier.size(24.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
                                 Text(
-                                        text = if (isMeshActive) "\uD83D\uDED1  MESH OFF" else "\uD83D\uDFE2  MESH ON",
+                                        text = if (isMeshActive) "MESH OFF" else "MESH ON",
                                         fontWeight = FontWeight.Bold,
                                         fontSize = 16.sp,
                                         color = Color.White
@@ -363,27 +447,54 @@ fun ResilientP2PApp(
                                         horizontalArrangement = Arrangement.Center
                                 ) {
                                         if (state.isAdvertising) {
-                                                Text(
-                                                        "\uD83D\uDCE1 Advertising",
-                                                        style = MaterialTheme.typography.labelSmall,
-                                                        color = colorScheme.primary
-                                                )
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                        Icon(
+                                                                Icons.Default.CellTower,
+                                                                contentDescription = null,
+                                                                modifier = Modifier.size(14.dp),
+                                                                tint = colorScheme.primary
+                                                        )
+                                                        Spacer(modifier = Modifier.width(2.dp))
+                                                        Text(
+                                                                "Advertising",
+                                                                style = MaterialTheme.typography.labelSmall,
+                                                                color = colorScheme.primary
+                                                        )
+                                                }
                                                 Spacer(modifier = Modifier.width(12.dp))
                                         }
                                         if (state.isDiscovering) {
-                                                Text(
-                                                        "\uD83D\uDD0D Discovering",
-                                                        style = MaterialTheme.typography.labelSmall,
-                                                        color = colorScheme.secondary
-                                                )
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                        Icon(
+                                                                Icons.Default.Search,
+                                                                contentDescription = null,
+                                                                modifier = Modifier.size(14.dp),
+                                                                tint = colorScheme.secondary
+                                                        )
+                                                        Spacer(modifier = Modifier.width(2.dp))
+                                                        Text(
+                                                                "Discovering",
+                                                                style = MaterialTheme.typography.labelSmall,
+                                                                color = colorScheme.secondary
+                                                        )
+                                                }
                                                 Spacer(modifier = Modifier.width(12.dp))
                                         }
                                         if (state.connectedEndpoints.isNotEmpty()) {
-                                                Text(
-                                                        "\uD83D\uDD17 ${state.connectedEndpoints.size} peers",
-                                                        style = MaterialTheme.typography.labelSmall,
-                                                        color = colorScheme.tertiary
-                                                )
+                                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                                        Icon(
+                                                                Icons.Default.Link,
+                                                                contentDescription = null,
+                                                                modifier = Modifier.size(14.dp),
+                                                                tint = colorScheme.tertiary
+                                                        )
+                                                        Spacer(modifier = Modifier.width(2.dp))
+                                                        Text(
+                                                                "${state.connectedEndpoints.size} peers",
+                                                                style = MaterialTheme.typography.labelSmall,
+                                                                color = colorScheme.tertiary
+                                                        )
+                                                }
                                         }
                                 }
                         }
@@ -409,8 +520,15 @@ fun ResilientP2PApp(
                                                 ),
                                                 shape = RoundedCornerShape(12.dp)
                                         ) {
+                                                Icon(
+                                                        imageVector = if (sosActive.value) Icons.Default.Stop else Icons.Default.Sos,
+                                                        contentDescription = "SOS",
+                                                        tint = Color.White,
+                                                        modifier = Modifier.size(18.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(4.dp))
                                                 Text(
-                                                        if (sosActive.value) "\uD83D\uDED1 STOP SOS" else "\uD83C\uDD98 SOS BEACON",
+                                                        if (sosActive.value) "STOP SOS" else "SOS BEACON",
                                                         fontWeight = FontWeight.Bold,
                                                         fontSize = 13.sp,
                                                         color = Color.White
@@ -425,8 +543,15 @@ fun ResilientP2PApp(
                                                 ),
                                                 shape = RoundedCornerShape(12.dp)
                                         ) {
+                                                Icon(
+                                                        Icons.Default.Warning,
+                                                        contentDescription = "Emergency",
+                                                        tint = Color.White,
+                                                        modifier = Modifier.size(18.dp)
+                                                )
+                                                Spacer(modifier = Modifier.width(4.dp))
                                                 Text(
-                                                        "\u26a0\ufe0f EMERGENCY",
+                                                        "EMERGENCY",
                                                         fontWeight = FontWeight.Bold,
                                                         fontSize = 13.sp,
                                                         color = Color.White
@@ -480,6 +605,18 @@ fun ResilientP2PApp(
                                 },
                                 telemetryManager = telemetryManager
                         )
+                }
+        }
+
+        // Back handler for overlay navigation — system back closes the topmost overlay
+        BackHandler(
+                enabled = showTestMode || showHealthDashboard || showGroupChat || showChatDialog
+        ) {
+                when {
+                        showTestMode -> showTestMode = false
+                        showHealthDashboard -> showHealthDashboard = false
+                        showGroupChat -> showGroupChat = false
+                        showChatDialog -> showChatDialog = false
                 }
         }
 
@@ -1041,12 +1178,21 @@ fun NetworkStatsSection(stats: NetworkStatsSnapshot) {
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                         ) {
-                                Text(
-                                        text = "\uD83D\uDCCA Network Stats",
-                                        style = MaterialTheme.typography.titleMedium,
-                                        fontWeight = FontWeight.Bold,
-                                        color = colorScheme.onSurface
-                                )
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                                Icons.Default.BarChart,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(20.dp),
+                                                tint = colorScheme.onSurface
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(
+                                                text = "Network Stats",
+                                                style = MaterialTheme.typography.titleMedium,
+                                                fontWeight = FontWeight.Bold,
+                                                color = colorScheme.onSurface
+                                        )
+                                }
                                 Text(
                                         text = if (isExpanded) "▲" else "▼",
                                         color = colorScheme.onSurfaceVariant,
@@ -1364,16 +1510,27 @@ fun TelemetrySection(telemetryManager: TelemetryManager) {
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                         ) {
-                                Text(
-                                        text = "\u2601 Cloud Telemetry",
-                                        style = MaterialTheme.typography.titleMedium,
-                                        fontWeight = FontWeight.Bold,
-                                        color = colorScheme.onSurface
-                                )
                                 Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                                Icons.Default.Cloud,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(20.dp),
+                                                tint = colorScheme.onSurface
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
                                         Text(
-                                                text = if (telemetryManager.isEnabled) "\u2705" else "\u274C",
-                                                fontSize = 14.sp
+                                                text = "Cloud Telemetry",
+                                                style = MaterialTheme.typography.titleMedium,
+                                                fontWeight = FontWeight.Bold,
+                                                color = colorScheme.onSurface
+                                        )
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                                imageVector = if (telemetryManager.isEnabled) Icons.Default.Check else Icons.Default.Close,
+                                                contentDescription = if (telemetryManager.isEnabled) "Enabled" else "Disabled",
+                                                modifier = Modifier.size(16.dp),
+                                                tint = if (telemetryManager.isEnabled) Color(0xFF2E7D32) else colorScheme.error
                                         )
                                         Spacer(modifier = Modifier.width(8.dp))
                                         Text(

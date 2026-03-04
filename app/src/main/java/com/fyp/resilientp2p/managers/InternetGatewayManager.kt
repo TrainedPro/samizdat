@@ -10,7 +10,6 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import org.json.JSONArray
 import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.InputStreamReader
@@ -33,6 +32,7 @@ class InternetGatewayManager(
 ) {
     companion object {
         private const val TAG = "InternetGateway"
+        private const val FIRESTORE_STRING_VALUE = "stringValue"
         const val GATEWAY_FLAG = "__GATEWAY__"
         private const val RELAY_COLLECTION = "mesh_relay"
         private const val MAX_PENDING_PER_DEVICE = 100
@@ -113,13 +113,13 @@ class InternetGatewayManager(
         return try {
             val doc = JSONObject().apply {
                 put("fields", JSONObject().apply {
-                    put("packetId", JSONObject().put("stringValue", packetId))
-                    put("sourceId", JSONObject().put("stringValue", sourceId))
-                    put("destId", JSONObject().put("stringValue", destId))
-                    put("payload", JSONObject().put("stringValue", payload))
+                    put("packetId", JSONObject().put(FIRESTORE_STRING_VALUE, packetId))
+                    put("sourceId", JSONObject().put(FIRESTORE_STRING_VALUE, sourceId))
+                    put("destId", JSONObject().put(FIRESTORE_STRING_VALUE, destId))
+                    put("payload", JSONObject().put(FIRESTORE_STRING_VALUE, payload))
                     put("timestamp", JSONObject().put("integerValue", System.currentTimeMillis().toString()))
                     put("ttl", JSONObject().put("integerValue", MESSAGE_TTL_MS.toString()))
-                    put("gatewayId", JSONObject().put("stringValue", p2pManager.getLocalDeviceName()))
+                    put("gatewayId", JSONObject().put(FIRESTORE_STRING_VALUE, p2pManager.getLocalDeviceName()))
                 })
             }
 
@@ -148,7 +148,8 @@ class InternetGatewayManager(
             localPeers.addAll(state.knownPeers.keys)
 
             // Fetch all relay messages (we filter client-side — Firestore REST has limited query)
-            val url = "https://firestore.googleapis.com/v1/projects/$projectId/databases/(default)/documents/$RELAY_COLLECTION?key=$apiKey&pageSize=100"
+            val url = "https://firestore.googleapis.com/v1/projects/$projectId" +
+                "/databases/(default)/documents/$RELAY_COLLECTION?key=$apiKey&pageSize=100"
             val (code, body) = httpGet(url)
 
             if (code !in 200..299 || body == null) return
@@ -157,13 +158,17 @@ class InternetGatewayManager(
             val documents = json.optJSONArray("documents") ?: return
 
             for (i in 0 until documents.length()) {
+                if (i >= MAX_PENDING_PER_DEVICE) {
+                    Log.w(TAG, "RELAY_POLL capped at $MAX_PENDING_PER_DEVICE messages per poll")
+                    break
+                }
                 val doc = documents.getJSONObject(i)
                 val fields = doc.getJSONObject("fields")
-                val destId = fields.getJSONObject("destId").getString("stringValue")
-                val sourceId = fields.getJSONObject("sourceId").getString("stringValue")
-                val payload = fields.getJSONObject("payload").getString("stringValue")
+                val destId = fields.getJSONObject("destId").getString(FIRESTORE_STRING_VALUE)
+                val sourceId = fields.getJSONObject("sourceId").getString(FIRESTORE_STRING_VALUE)
+                val payload = fields.getJSONObject("payload").getString(FIRESTORE_STRING_VALUE)
                 val timestamp = fields.getJSONObject("timestamp").getString("integerValue").toLong()
-                val packetId = fields.optJSONObject("packetId")?.optString("stringValue") ?: ""
+                val packetId = fields.optJSONObject("packetId")?.optString(FIRESTORE_STRING_VALUE) ?: ""
 
                 // Check TTL
                 if (System.currentTimeMillis() - timestamp > MESSAGE_TTL_MS) {
@@ -310,7 +315,9 @@ class InternetGatewayManager(
             val code = conn.responseCode
             val body = if (code in 200..299) {
                 BufferedReader(InputStreamReader(conn.inputStream)).use { it.readText() }
-            } else null
+            } else {
+                null
+            }
             Pair(code, body)
         } finally {
             conn.disconnect()

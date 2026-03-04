@@ -204,9 +204,7 @@ class RateLimiter(
     /**
      * Legacy overload for backward compatibility (treats as DATA category).
      */
-    fun allowPacket(peerId: String): Boolean {
-        return allowPacket(peerId, PacketType.DATA)
-    }
+    fun allowPacket(peerId: String): Boolean = allowPacket(peerId, PacketType.DATA)
 
     /**
      * Reset rate tracking for a peer (e.g., on reconnect).

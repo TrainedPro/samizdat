@@ -24,12 +24,12 @@ class MessageCache(private val capacity: Int = 1000) {
     fun tryMarkSeen(packetId: String): Boolean {
         val now = System.currentTimeMillis()
         val previous = cache.putIfAbsent(packetId, now)
-        
+
         // Trigger eviction if needed (non-blocking, best effort)
         if (cache.size > capacity) {
             evictOldEntries()
         }
-        
+
         return previous == null
     }
 
@@ -40,7 +40,7 @@ class MessageCache(private val capacity: Int = 1000) {
             val now = System.currentTimeMillis()
             // Use removeIf for atomic removal based on condition — O(n)
             cache.entries.removeIf { now - it.value > ttl }
-            
+
             // If still over capacity, remove oldest entries using threshold scan — O(n)
             if (cache.size > capacity) {
                 val targetSize = capacity * 3 / 4
@@ -55,7 +55,7 @@ class MessageCache(private val capacity: Int = 1000) {
                 // Remove entries in the oldest quartile (below 25th percentile timestamp)
                 val threshold = minTs + (maxTs - minTs) / 4
                 cache.entries.removeIf { it.value <= threshold }
-                
+
                 // If still over, hard-evict by iteration until under target
                 if (cache.size > targetSize) {
                     val iter = cache.entries.iterator()

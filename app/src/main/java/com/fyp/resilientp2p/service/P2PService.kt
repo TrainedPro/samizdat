@@ -30,6 +30,7 @@ import com.fyp.resilientp2p.managers.P2PManager
  * @see P2PApplication
  * @see P2PManager
  */
+@Suppress("LateinitUsage") // Initialised in onStartCommand() from P2PApplication
 class P2PService : Service() {
 
     private val binder = LocalBinder()
@@ -49,14 +50,9 @@ class P2PService : Service() {
         startForegroundService()
     }
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // If the service is killed, restart it
-        return START_STICKY
-    }
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
 
-    override fun onBind(intent: Intent): IBinder {
-        return binder
-    }
+    override fun onBind(intent: Intent): IBinder = binder
 
     private fun startForegroundService() {
         val channelId = "P2P_SERVICE_CHANNEL"
@@ -97,8 +93,13 @@ class P2PService : Service() {
         super.onDestroy()
         stopForeground(STOP_FOREGROUND_REMOVE)
         val app = application as P2PApplication
+        // Tear down all managers in reverse-dependency order
+        app.p2pManager.meshAudioManager?.destroy()
+        app.fileShareManager.destroy()
+        app.encounterLogger.destroy()
         app.emergencyManager.destroy()
         app.internetGatewayManager.destroy()
+        app.securityManager.destroy()
         app.telemetryManager.destroy()
         app.heartbeatManager.destroy()
         p2pManager.stopAll()

@@ -13,7 +13,6 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
 import java.io.File
 import java.io.FileInputStream
-import java.io.FileOutputStream
 import java.io.RandomAccessFile
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
@@ -76,7 +75,7 @@ class FileShareManager(
 
     /** Share directory for downloaded files. */
     private val shareDir: File by lazy {
-        File(context.filesDir, "mesh_shared").also { it.mkdirs() }
+        File(context.filesDir, "mesh_shared").apply { mkdirs() }
     }
 
     /**

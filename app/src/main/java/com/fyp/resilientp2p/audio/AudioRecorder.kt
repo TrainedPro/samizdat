@@ -36,9 +36,7 @@ class AudioRecorder(
     private var thread: Thread? = null
 
     /** @return True if actively recording. False otherwise. */
-    fun isRecording(): Boolean {
-        return isAlive
-    }
+    fun isRecording(): Boolean = isAlive
 
     /** Starts recording audio. */
     fun start() {
@@ -142,9 +140,8 @@ class AudioRecorder(
     }
 
     private class Buffer(log: (String, LogLevel) -> Unit) : AudioBuffer(log) {
-        override fun validSize(size: Int): Boolean {
-            return size != AudioRecord.ERROR && size != AudioRecord.ERROR_BAD_VALUE
-        }
+        override fun validSize(size: Int): Boolean =
+            size != AudioRecord.ERROR && size != AudioRecord.ERROR_BAD_VALUE
 
         override fun getMinBufferSize(sampleRate: Int): Int {
             return AudioRecord.getMinBufferSize(

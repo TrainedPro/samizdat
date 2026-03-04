@@ -133,15 +133,13 @@ data class Packet(
 
         fun fromBytes(bytes: ByteArray): Packet {
             // Aggregate size check to prevent OOM DoS
-            if (bytes.size > MAX_TOTAL_PACKET_SIZE) {
-                throw IllegalArgumentException("Packet too large: ${bytes.size} bytes")
-            }
+            require(bytes.size <= MAX_TOTAL_PACKET_SIZE) { "Packet too large: ${bytes.size} bytes" }
             return DataInputStream(ByteArrayInputStream(bytes)).use { dis ->
             // Helper to read large strings with validation
             fun readString(): String {
                 val len = dis.readInt()
-                if (len < 0 || len > MAX_STRING_LENGTH || len > dis.available()) {
-                    throw IllegalArgumentException("Invalid string length: $len (available: ${dis.available()})")
+                require(len >= 0 && len <= MAX_STRING_LENGTH && len <= dis.available()) {
+                    "Invalid string length: $len (available: ${dis.available()})"
                 }
                 val b = ByteArray(len)
                 dis.readFully(b)
@@ -150,44 +148,34 @@ data class Packet(
 
             // Deserialize ID (String)
             val id = readString()
-            if (id.isBlank()) {
-                throw IllegalArgumentException("Packet ID cannot be blank")
-            }
+            require(id.isNotBlank()) { "Packet ID cannot be blank" }
 
             val typeStr = readString()
             val type =
                     try {
                         PacketType.valueOf(typeStr)
                     } catch (e: IllegalArgumentException) {
-                        throw IllegalArgumentException("Unknown packet type: $typeStr")
+                        throw IllegalArgumentException("Unknown packet type: $typeStr", e)
                     }
             val timestamp = dis.readLong()
             val sourceId = readString()
             val destId = readString()
-            if (sourceId.isBlank() || destId.isBlank()) {
-                throw IllegalArgumentException("Empty or blank sourceId or destId")
-            }
+            require(sourceId.isNotBlank() && destId.isNotBlank()) { "Empty or blank sourceId or destId" }
             val payloadSize = dis.readInt()
-            if (payloadSize < 0 || payloadSize > MAX_PAYLOAD_SIZE) {
-                throw IllegalArgumentException("Invalid payload size: $payloadSize")
-            }
+            require(payloadSize in 0..MAX_PAYLOAD_SIZE) { "Invalid payload size: $payloadSize" }
             val payload = ByteArray(payloadSize)
             if (payloadSize > 0) {
                 dis.readFully(payload)
             }
 
             val ttl = dis.readInt()
-            if (ttl < 0 || ttl > 255) {
-                throw IllegalArgumentException("Invalid TTL: $ttl")
-            }
+            require(ttl in 0..255) { "Invalid TTL: $ttl" }
             val sequenceNumber = dis.readLong()
 
             val traceSize = dis.readInt()
-            if (traceSize < 0 || traceSize > MAX_TRACE_SIZE) {
-                throw IllegalArgumentException("Invalid trace size: $traceSize")
-            }
+            require(traceSize in 0..MAX_TRACE_SIZE) { "Invalid trace size: $traceSize" }
             val trace = ArrayList<Hop>(traceSize)
-            for (i in 0 until traceSize) {
+            repeat(traceSize) {
                 val peerId = readString()
                 val rssi = dis.readInt()
                 trace.add(Hop(peerId, rssi))
@@ -242,7 +230,6 @@ data class Packet(
         return result
     }
 
-    override fun toString(): String {
-        return "Packet(id=${id.take(8)}, type=$type, src=$sourceId, dest=$destId, ts=$timestamp)"
-    }
+    override fun toString(): String =
+        "Packet(id=${id.take(8)}, type=$type, src=$sourceId, dest=$destId, ts=$timestamp)"
 }

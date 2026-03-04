@@ -45,6 +45,8 @@ class TestRunner(
         private const val PING_INTERVAL_MS = 500L
         private const val MSG_COUNT = 10
         private const val PING_WAIT_TIMEOUT_MS = 15_000L
+        private const val TEST_FILE_TRANSFER = "File Transfer"
+        private const val UNKNOWN_PEER_NAME = "Unknown"
     }
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
@@ -72,7 +74,7 @@ class TestRunner(
         "Broadcast Messaging",
         "Routing Table Integrity",
         "Store-and-Forward Queue",
-        "File Transfer",
+        TEST_FILE_TRANSFER,
         "Network Stats Counters",
         "Per-Peer Stats",
         "Connection Stability",
@@ -137,7 +139,11 @@ class TestRunner(
                 tlog("Tests: ${allTests.size}")
                 tlog("═══════════════════════════════════════════════════")
 
-                p2pManager.log("[TEST] ═══ Test suite starting ═══ Device: ${p2pManager.getLocalDeviceName()}, Peers: ${peers.joinToString()}, Tests: ${allTests.size}")
+                p2pManager.log(
+                    "[TEST] ═══ Test suite starting ═══ " +
+                        "Device: ${p2pManager.getLocalDeviceName()}, " +
+                        "Peers: ${peers.joinToString()}, Tests: ${allTests.size}"
+                )
 
                 // Capture stats baseline BEFORE tests
                 val baselineStats = p2pManager.networkStats.snapshot(
@@ -180,7 +186,11 @@ class TestRunner(
                 // Phase 5: Compile and export
                 stopPacketListener()
                 val totalDuration = System.currentTimeMillis() - startTime
-                val timestamp = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US).apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }.format(Date())
+                val timestamp = SimpleDateFormat(
+                    "yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US
+                ).apply {
+                    timeZone = java.util.TimeZone.getTimeZone("UTC")
+                }.format(Date())
                 val runResult = TestRunResult(
                     runTimestamp = timestamp,
                     deviceName = p2pManager.getLocalDeviceName(),
@@ -217,7 +227,7 @@ class TestRunner(
                     p2pManager.log("[TEST] FAILED: ${r.testName} — ${r.error}", LogLevel.WARN)
                 }
 
-            } catch (e: CancellationException) {
+            } catch (_: CancellationException) {
                 tlog("Test suite cancelled.")
                 _state.update { it.copy(isRunning = false, statusMessage = "Cancelled", logMessages = testLog.toList()) }
             } catch (e: Exception) {
@@ -254,7 +264,7 @@ class TestRunner(
             "Broadcast Messaging"     -> testBroadcast(peers)
             "Routing Table Integrity" -> testRoutingTableIntegrity(peers)
             "Store-and-Forward Queue" -> testStoreAndForward()
-            "File Transfer"           -> testFileTransfer(peers)
+            TEST_FILE_TRANSFER        -> testFileTransfer(peers)
             "Network Stats Counters"  -> testNetworkStats(baselineStats)
             "Per-Peer Stats"          -> testPerPeerStats(peers)
             "Connection Stability"    -> testConnectionStability(peers)
@@ -299,7 +309,7 @@ class TestRunner(
                     "type" to (original.type == restored.type),
                     "sourceId" to (original.sourceId == restored.sourceId),
                     "destId" to (original.destId == restored.destId),
-                    "payload" to (original.payload.contentEquals(restored.payload)),
+                    "payload" to original.payload.contentEquals(restored.payload),
                     "ttl" to (original.ttl == restored.ttl),
                     "seq" to (original.sequenceNumber == restored.sequenceNumber),
                     "traceSize" to (original.trace.size == restored.trace.size),
@@ -421,7 +431,7 @@ class TestRunner(
         val neighbors = p2pManager.getNeighborsSnapshot()
         val state = p2pManager.state.value
 
-        tlog("  Neighbors: ${neighbors.size} (${neighbors.keys.joinToString()})")
+        tlog("  Expected peers: ${peers.size}, Neighbors: ${neighbors.size} (${neighbors.keys.joinToString()})")
         tlog("  Peer names: ${neighbors.values.map { it.peerName }.joinToString()}")
         tlog("  State.connectedEndpoints: ${state.connectedEndpoints.size}")
 
@@ -463,17 +473,17 @@ class TestRunner(
         val warnings = mutableListOf<String>()
 
         val neighbors = p2pManager.getNeighborsSnapshot()
-        val unknownPeers = neighbors.values.filter { it.peerName == "Unknown" || it.peerName.isBlank() }
-        val resolvedPeers = neighbors.values.filter { it.peerName != "Unknown" && it.peerName.isNotBlank() }
+        val unknownPeers = neighbors.values.filter { it.peerName == UNKNOWN_PEER_NAME || it.peerName.isBlank() }
+        val resolvedPeers = neighbors.values.filter { it.peerName != UNKNOWN_PEER_NAME && it.peerName.isNotBlank() }
 
-        tlog("  Resolved: ${resolvedPeers.map { it.peerName }.joinToString()}")
+        tlog("  Expected: ${peers.size} peers, Resolved: ${resolvedPeers.map { it.peerName }.joinToString()}")
         if (unknownPeers.isNotEmpty()) {
             tlog("  Unknown: ${unknownPeers.size} (${unknownPeers.map { it.peerId }.joinToString()})")
             warnings.add("${unknownPeers.size} peer(s) still have name 'Unknown'")
         }
 
         val localName = p2pManager.getLocalDeviceName()
-        if (localName == "Unknown" || localName.isBlank()) warnings.add("Local device name is '$localName'")
+        if (localName == UNKNOWN_PEER_NAME || localName.isBlank()) warnings.add("Local device name is '$localName'")
         tlog("  Local device name: $localName")
 
         val selfNamed = resolvedPeers.filter { it.peerName == localName }
@@ -528,7 +538,7 @@ class TestRunner(
             details = mapOf(
                 "totalSent" to totalSent, "totalErrors" to totalErrors,
                 "peersCount" to peers.size, "msgsPerPeer" to MSG_COUNT,
-                "avgIntervalMs" to if (totalSent > 1) (duration / totalSent) else 0
+                "avgIntervalMs" to if (totalSent > 1) duration / totalSent else 0
             ),
             warnings = warnings,
             error = if (totalErrors > 0) "$totalErrors send errors" else null
@@ -621,7 +631,7 @@ class TestRunner(
         if (allRtts.isNotEmpty()) {
             details["overallAvg"] = allRtts.average().toLong()
             val actualSent = totalSent - sendErrors
-            val loss = if (actualSent > 0) ((1.0 - totalPongsReceived.toDouble() / actualSent) * 100) else 100.0
+            val loss = if (actualSent > 0) (1.0 - totalPongsReceived.toDouble() / actualSent) * 100 else 100.0
             details["lossPercent"] = String.format(Locale.US, "%.1f", loss)
             if (loss > 50) warnings.add("High packet loss: ${String.format(Locale.US, "%.1f", loss)}%")
         }
@@ -683,7 +693,7 @@ class TestRunner(
         val neighbors = p2pManager.getNeighborsSnapshot()
         val knownPeers = state.knownPeers
 
-        val directNames = neighbors.values.map { it.peerName }.filter { it != "Unknown" && it.isNotBlank() }
+        val directNames = neighbors.values.map { it.peerName }.filter { it != UNKNOWN_PEER_NAME && it.isNotBlank() }
         val routedPeers = knownPeers.keys.toList()
         val allReachable = (directNames + routedPeers).distinct()
 
@@ -719,7 +729,9 @@ class TestRunner(
                     if (unreachable.isNotEmpty()) append("Unreachable: ${unreachable.joinToString()}. ")
                     if (duplicates.isNotEmpty()) append("Duplicates: ${duplicates.joinToString()}.")
                 }.trimEnd()
-            } else null
+            } else {
+                null
+            }
         )
     }
 
@@ -768,7 +780,7 @@ class TestRunner(
         val warnings = mutableListOf<String>()
 
         if (peers.isEmpty()) {
-            return TestResult("File Transfer", false, 0, error = "No peers to send to")
+            return TestResult(TEST_FILE_TRANSFER, false, 0, error = "No peers to send to")
         }
 
         val testContent = buildString {
@@ -796,7 +808,7 @@ class TestRunner(
 
             val duration = System.currentTimeMillis() - start
             return TestResult(
-                testName = "File Transfer",
+                testName = TEST_FILE_TRANSFER,
                 passed = true,
                 durationMs = duration,
                 details = mapOf("fileName" to testFile.name, "fileSize" to testFile.length(), "target" to targetPeer),
@@ -807,7 +819,7 @@ class TestRunner(
             tlog("  File transfer error: ${e.message}")
             warnings.add("File transfer failed: ${e.message}")
             return TestResult(
-                testName = "File Transfer",
+                testName = TEST_FILE_TRANSFER,
                 passed = false,
                 error = "File transfer failed: ${e.message}",
                 durationMs = duration,
@@ -848,10 +860,15 @@ class TestRunner(
             tlog("  $name: ${if (ok) "OK" else "FAIL"}")
         }
 
-        val sentΔ = stats.totalPacketsSent - baselineStats.totalPacketsSent
-        val recvΔ = stats.totalPacketsReceived - baselineStats.totalPacketsReceived
-        tlog("  Test traffic Δ: sent=$sentΔ pkts, recv=$recvΔ pkts")
-        tlog("  Totals: sent=${stats.totalPacketsSent}, recv=${stats.totalPacketsReceived}, fwd=${stats.totalPacketsForwarded}, drop=${stats.totalPacketsDropped}")
+        val sentDelta = stats.totalPacketsSent - baselineStats.totalPacketsSent
+        val recvDelta = stats.totalPacketsReceived - baselineStats.totalPacketsReceived
+        tlog("  Test traffic delta: sent=$sentDelta pkts, recv=$recvDelta pkts")
+        tlog(
+            "  Totals: sent=${stats.totalPacketsSent}, " +
+                "recv=${stats.totalPacketsReceived}, " +
+                "fwd=${stats.totalPacketsForwarded}, " +
+                "drop=${stats.totalPacketsDropped}"
+        )
 
         val failedChecks = checks.count { !it.value }
         val duration = System.currentTimeMillis() - start
@@ -865,7 +882,7 @@ class TestRunner(
                 "bytesSent" to stats.totalBytesSent, "bytesReceived" to stats.totalBytesReceived,
                 "forwarded" to stats.totalPacketsForwarded, "dropped" to stats.totalPacketsDropped,
                 "connections" to stats.totalConnectionsEstablished, "avgRtt" to stats.avgRttMs,
-                "testSentΔ" to sentΔ, "testRecvΔ" to recvΔ, "failedChecks" to failedChecks
+                "testSentΔ" to sentDelta, "testRecvΔ" to recvDelta, "failedChecks" to failedChecks
             ),
             warnings = warnings,
             error = if (failedChecks > 0) "$failedChecks stat check(s) failed" else null
@@ -891,7 +908,12 @@ class TestRunner(
             if (ps == null) {
                 warnings.add("No stats for $peer"); tlog("  $peer: NO STATS"); continue
             }
-            tlog("  $peer: rtt=${ps.lastRttMs}ms sent=${ps.packetsSent}pkts/${ps.bytesSent}B recv=${ps.packetsReceived}pkts/${ps.bytesReceived}B disc=${ps.disconnectCount}")
+            tlog(
+                "  $peer: rtt=${ps.lastRttMs}ms " +
+                    "sent=${ps.packetsSent}pkts/${ps.bytesSent}B " +
+                    "recv=${ps.packetsReceived}pkts/${ps.bytesReceived}B " +
+                    "disc=${ps.disconnectCount}"
+            )
             if (ps.packetsSent == 0L) warnings.add("$peer: zero packets sent")
             if (ps.bytesSent == 0L) warnings.add("$peer: zero bytes sent")
             if (ps.connectedSinceMs > System.currentTimeMillis()) warnings.add("$peer: connectedSince in future")
@@ -918,7 +940,7 @@ class TestRunner(
         val warnings = mutableListOf<String>()
 
         val neighbors = p2pManager.getNeighborsSnapshot()
-        val currentPeers = neighbors.values.map { it.peerName }.filter { it != "Unknown" && it.isNotBlank() }
+        val currentPeers = neighbors.values.map { it.peerName }.filter { it != UNKNOWN_PEER_NAME && it.isNotBlank() }
 
         val lost = peers.filter { it !in currentPeers }
         val gained = currentPeers.filter { it !in peers }
@@ -942,7 +964,13 @@ class TestRunner(
             testName = "Connection Stability",
             passed = lost.isEmpty(),
             durationMs = duration,
-            details = mapOf("initial" to peers.size, "current" to currentPeers.size, "lost" to lost.size, "gained" to gained.size, "sessionLost" to totalLost),
+            details = mapOf(
+                "initial" to peers.size,
+                "current" to currentPeers.size,
+                "lost" to lost.size,
+                "gained" to gained.size,
+                "sessionLost" to totalLost
+            ),
             warnings = warnings,
             error = if (lost.isNotEmpty()) "Lost ${lost.size} peer(s) during tests" else null
         )
@@ -1156,15 +1184,8 @@ class TestRunner(
         // Check emergency count before
         val beforeCount = p2pManager.state.value.emergencyCount
 
-        // Build and send an emergency packet directly
+        // Send emergency-like broadcast
         val testMsg = "${TEST_MSG_PREFIX}EMERGENCY_${System.currentTimeMillis()}"
-        val emergencyPacket = Packet(
-            type = PacketType.EMERGENCY,
-            sourceId = p2pManager.getLocalDeviceName(),
-            destId = "BROADCAST",
-            payload = testMsg.toByteArray(StandardCharsets.UTF_8),
-            ttl = 10
-        )
         p2pManager.broadcastMessage(testMsg)
         tlog("  Sent emergency-like broadcast: ${testMsg.take(40)}")
 
@@ -1175,7 +1196,8 @@ class TestRunner(
         val afterStats = p2pManager.networkStats
         val pktsSent = afterStats.totalPacketsSent.get()
         val sent = pktsSent > 0
-        tlog("  Packets sent after broadcast: $pktsSent")
+        val afterCount = p2pManager.state.value.emergencyCount
+        tlog("  Packets sent after broadcast: $pktsSent (emergencyCount: $beforeCount -> $afterCount)")
 
         if (!sent) warnings.add("No packets sent — broadcast may have failed")
 
@@ -1363,8 +1385,9 @@ class TestRunner(
 
     private fun getConnectedPeerNames(): List<String> {
         return p2pManager.getNeighborsSnapshot()
-            .values.map { it.peerName }
-            .filter { it != "Unknown" && it.isNotBlank() }
+            .values
+            .map { it.peerName }
+            .filter { it != UNKNOWN_PEER_NAME && it.isNotBlank() }
     }
 
     private fun startPacketListener() {

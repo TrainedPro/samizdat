@@ -5,7 +5,6 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.*
@@ -455,9 +454,8 @@ private fun ChatInputBar(
 
 private val chatTimestampFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
 
-private fun formatTimestamp(timestamp: Long): String {
-    return chatTimestampFormat.format(Date(timestamp))
-}
+private fun formatTimestamp(timestamp: Long): String =
+    chatTimestampFormat.format(Date(timestamp))
 
 private fun formatFileSize(bytes: Long): String {
     return when {

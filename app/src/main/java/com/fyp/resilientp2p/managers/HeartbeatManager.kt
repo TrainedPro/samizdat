@@ -205,17 +205,17 @@ class HeartbeatManager(private val p2pManager: P2PManager) {
 
         neighbors.forEach { (id, neighbor) ->
             val diff = now - neighbor.lastSeen.get()
-            
+
             // Exempt endpoints with active transfers (audio streaming, file transfer)
             if (p2pManager.activeTransferEndpoints.containsKey(id)) {
                 log("Peer $id exempt from zombie check (active transfer).", LogLevel.TRACE)
                 return@forEach
             }
-            
+
             if (diff > threshold) {
                 // Double-check with live data to avoid false positives
                 val liveNeighbor = p2pManager.getNeighborsSnapshot()[id]
-                if (liveNeighbor != null && (now - liveNeighbor.lastSeen.get()) > threshold) {
+                if (liveNeighbor != null && now - liveNeighbor.lastSeen.get() > threshold) {
                     log(
                             "ZOMBIE_DETECTED endpoint=$id peerName='${neighbor.peerName}' " +
                             "lastSeen=${diff}ms threshold=${threshold}ms. Disconnecting...",

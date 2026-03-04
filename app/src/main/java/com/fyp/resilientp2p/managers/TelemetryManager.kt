@@ -5,8 +5,16 @@ import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.Build
 import android.util.Log
-import androidx.work.*
-import com.fyp.resilientp2p.data.*
+import androidx.work.BackoffPolicy
+import androidx.work.Constraints
+import androidx.work.ExistingPeriodicWorkPolicy
+import androidx.work.NetworkType
+import androidx.work.PeriodicWorkRequestBuilder
+import androidx.work.WorkManager
+import com.fyp.resilientp2p.data.LogDao
+import com.fyp.resilientp2p.data.TelemetryDao
+import com.fyp.resilientp2p.data.TelemetryEvent
+import com.fyp.resilientp2p.data.TelemetryEventType
 import kotlinx.coroutines.*
 import org.json.JSONArray
 import org.json.JSONObject
@@ -40,6 +48,8 @@ class TelemetryManager(
 ) {
     companion object {
         private const val TAG = "TelemetryManager"
+        private const val KEY_DEVICE_ID_FIELD = "deviceId"
+        private const val KEY_TIMESTAMP_FIELD = "timestamp"
         private const val PREFS_NAME = "telemetry_prefs"
         private const val KEY_DEVICE_REGISTERED = "device_registered"
         private const val KEY_LAST_SNAPSHOT_TIME = "last_snapshot_time"
@@ -161,7 +171,7 @@ class TelemetryManager(
 
     private suspend fun registerDevice() {
         val payload = JSONObject().apply {
-            put("deviceId", deviceId)
+            put(KEY_DEVICE_ID_FIELD, deviceId)
             put("model", Build.MODEL)
             put("manufacturer", Build.MANUFACTURER)
             put("androidVersion", Build.VERSION.RELEASE)
@@ -218,8 +228,8 @@ class TelemetryManager(
         val avgRtt = if (live.peerRtt.isNotEmpty()) live.peerRtt.values.average().toLong() else 0L
 
         val payload = JSONObject().apply {
-            put("deviceId", deviceId)
-            put("timestamp", now)
+            put(KEY_DEVICE_ID_FIELD, deviceId)
+            put(KEY_TIMESTAMP_FIELD, now)
             put("uptimeMs", now - live.startTimeMs)
             put("batteryLevel", live.batteryLevel)
             put("batteryTemperature", live.batteryTemperature.toDouble())
@@ -283,8 +293,8 @@ class TelemetryManager(
         if (state.knownPeers.isEmpty()) return
 
         val payload = JSONObject().apply {
-            put("deviceId", deviceId)
-            put("timestamp", System.currentTimeMillis())
+            put(KEY_DEVICE_ID_FIELD, deviceId)
+            put(KEY_TIMESTAMP_FIELD, System.currentTimeMillis())
             val routesArray = JSONArray()
             state.knownPeers.forEach { (dest, info) ->
                 routesArray.put(JSONObject().apply {
@@ -314,12 +324,12 @@ class TelemetryManager(
         if (logs.isEmpty()) return
 
         val payload = JSONObject().apply {
-            put("deviceId", deviceId)
-            put("timestamp", System.currentTimeMillis())
+            put(KEY_DEVICE_ID_FIELD, deviceId)
+            put(KEY_TIMESTAMP_FIELD, System.currentTimeMillis())
             val logsArray = JSONArray()
             logs.forEach { entry ->
                 logsArray.put(JSONObject().apply {
-                    put("timestamp", entry.timestamp)
+                    put(KEY_TIMESTAMP_FIELD, entry.timestamp)
                     put("level", entry.level.name)
                     put("type", entry.logType.name)
                     put("message", entry.message.take(256)) // Truncate for bandwidth
@@ -352,8 +362,8 @@ class TelemetryManager(
         if (!isEnabled) return
         scope.launch {
             val payload = JSONObject().apply {
-                put("deviceId", deviceId)
-                put("timestamp", System.currentTimeMillis())
+                put(KEY_DEVICE_ID_FIELD, deviceId)
+                put(KEY_TIMESTAMP_FIELD, System.currentTimeMillis())
                 put("peerId", peerId)
                 put("event", if (connected) "CONNECTED" else "DISCONNECTED")
                 endpointId?.let { put("endpointId", it) }
@@ -373,8 +383,8 @@ class TelemetryManager(
         if (!isEnabled) return
         scope.launch {
             val payload = JSONObject().apply {
-                put("deviceId", deviceId)
-                put("timestamp", deliveredAt)
+                put(KEY_DEVICE_ID_FIELD, deviceId)
+                put(KEY_TIMESTAMP_FIELD, deliveredAt)
                 put("messageId", messageId)
                 put("destId", destId)
                 put("queuedAt", queuedAt)
@@ -515,7 +525,7 @@ class TelemetryManager(
     private fun getAppVersion(): String {
         return try {
             context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "1.0"
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             "1.0"
         }
     }

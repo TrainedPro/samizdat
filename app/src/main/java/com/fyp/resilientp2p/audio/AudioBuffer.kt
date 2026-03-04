@@ -28,10 +28,12 @@ abstract class AudioBuffer(private val log: (String, LogLevel) -> Unit) {
     init {
         val calculatedSize = getMinBufferSize(sampleRate)
         if (!validSize(calculatedSize)) {
-            throw IllegalStateException("Failed to get valid audio buffer size with sample rate $sampleRate")
+            log("[$TAG] Failed to get valid audio buffer size with sample rate $sampleRate", LogLevel.ERROR)
+            error("Failed to get valid audio buffer size with sample rate $sampleRate")
         }
         this.size = calculatedSize
         data = ByteArray(size)
+        log("[$TAG] Initialised: size=$size sampleRate=$sampleRate", LogLevel.DEBUG)
     }
 
     protected abstract fun validSize(size: Int): Boolean

@@ -200,6 +200,7 @@ class EmergencyManager(
                 device = json.optString("device", "Unknown")
             )
         } catch (e: Exception) {
+            Log.w(TAG, "Failed to parse emergency payload, using raw fallback", e)
             EmergencyMessage(
                 id = UUID.randomUUID().toString(),
                 sourceId = sourceId,
@@ -241,6 +242,7 @@ class EmergencyManager(
 
         val lm = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return
 
+        @Suppress("EmptyFunctionBlock") // LocationListener stubs — only onLocationChanged is needed
         val listener = object : LocationListener {
             override fun onLocationChanged(location: Location) {
                 lastKnownLocation = location

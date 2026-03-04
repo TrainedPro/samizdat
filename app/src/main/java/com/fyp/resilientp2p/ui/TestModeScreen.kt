@@ -1,9 +1,7 @@
 package com.fyp.resilientp2p.ui
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -580,8 +578,18 @@ private fun TestResultCard(result: TestResult) {
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween
                         ) {
-                            Text(text = key, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Text(text = value.toString(), style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
+                            Text(
+                                text = key,
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = FontFamily.Monospace,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                text = value.toString(),
+                                style = MaterialTheme.typography.bodySmall,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Bold
+                            )
                         }
                     }
                 }
@@ -608,7 +616,13 @@ private fun SummaryCard(passed: Int, failed: Int, durationMs: Long) {
                     Text("Passed", style = MaterialTheme.typography.bodySmall)
                 }
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text("$failed", fontSize = 24.sp, fontWeight = FontWeight.Bold, color = if (failed > 0) Color(0xFFC62828) else MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(
+                        "$failed",
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (failed > 0) Color(0xFFC62828)
+                            else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                     Text("Failed", style = MaterialTheme.typography.bodySmall)
                 }
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {

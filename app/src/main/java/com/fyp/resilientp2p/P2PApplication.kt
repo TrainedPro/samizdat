@@ -32,6 +32,7 @@ import java.nio.charset.StandardCharsets
  * Lifecycle: created once by Android, outlives any Activity/Service.
  * All managers are initialized in [onCreate] and shared via lateinit properties.
  */
+@Suppress("LateinitUsage") // Android lifecycle: managers initialised in onCreate()
 class P2PApplication : Application() {
     /** Room database singleton (lazy to defer until first DAO access). */
     val database by lazy { AppDatabase.getDatabase(this) }

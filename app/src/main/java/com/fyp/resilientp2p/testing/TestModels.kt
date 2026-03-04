@@ -68,7 +68,11 @@ data class TestRunResult(
         results.forEach { r ->
             val detailStr = r.details.entries.joinToString("; ") { "${it.key}=${it.value}" }
             val warnStr = r.warnings.joinToString("; ")
-            sb.appendLine("${csvEscape(r.testName)},${r.passed},${r.durationMs},${csvEscape(r.error ?: "")},${csvEscape(warnStr)},${csvEscape(detailStr)}")
+            sb.appendLine(
+                "${csvEscape(r.testName)},${r.passed},${r.durationMs}," +
+                    "${csvEscape(r.error ?: "")},${csvEscape(warnStr)}," +
+                    csvEscape(detailStr)
+            )
         }
         return sb.toString()
     }
@@ -90,4 +94,4 @@ data class TestState(
     val logMessages: List<String> = emptyList()  // Recent test log messages
 )
 
-private fun csvEscape(s: String) = "\"${s.replace("\"", "\"\"").replace("\n", " ").replace("\r", "")}\"" 
+private fun csvEscape(s: String) = "\"${s.replace("\"", "\"\"").replace("\n", " ").replace("\r", "")}\""

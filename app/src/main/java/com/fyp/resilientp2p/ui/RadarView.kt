@@ -17,10 +17,8 @@ import androidx.core.graphics.toColorInt
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.fyp.resilientp2p.managers.LocationEstimator
 import kotlin.math.min
-import kotlin.math.sqrt
 
 /**
  * Radar-style composable that visualises nearby mesh peers on a 2D plane.
@@ -196,7 +194,7 @@ private fun DrawScope.drawRadar(
     } else if (rttMap.isNotEmpty()) {
         // No trilateration yet — place peers at angular intervals based on RTT (as distance proxy)
         val maxRtt = rttMap.values.maxOrNull()?.coerceAtLeast(1.0) ?: 1.0
-        val angleDelta = (2 * Math.PI) / rttMap.size
+        val angleDelta = 2 * Math.PI / rttMap.size
 
         rttMap.entries.forEachIndexed { index, (peer, rtt) ->
             val angle = angleDelta * index - Math.PI / 2

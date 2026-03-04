@@ -59,6 +59,7 @@ import kotlinx.coroutines.withContext
  * @see P2PService
  * @see ResilientP2PApp
  */
+@Suppress("LateinitUsage") // Android lifecycle: initialised in onCreate() from P2PApplication
 class MainActivity : AppCompatActivity() {
 
     private lateinit var p2pManager: P2PManager
@@ -459,7 +460,7 @@ class MainActivity : AppCompatActivity() {
         if (isBound) {
             try {
                 unbindService(connection)
-            } catch (e: IllegalArgumentException) {
+            } catch (_: IllegalArgumentException) {
                 // Service was not registered - can happen if binding not complete
             }
             isBound = false
@@ -508,7 +509,12 @@ class MainActivity : AppCompatActivity() {
                     writer.append("# Export Time: ${SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())}\n")
                     writer.append("# Uptime: ${stats.uptimeMs}ms\n")
                     writer.append("# Battery: ${stats.batteryLevel}% (${stats.batteryTemperature}C)\n")
-                    writer.append("# Packets: sent=${stats.totalPacketsSent} recv=${stats.totalPacketsReceived} fwd=${stats.totalPacketsForwarded} drop=${stats.totalPacketsDropped}\n")
+                    writer.append(
+                        "# Packets: sent=${stats.totalPacketsSent} " +
+                            "recv=${stats.totalPacketsReceived} " +
+                            "fwd=${stats.totalPacketsForwarded} " +
+                            "drop=${stats.totalPacketsDropped}\n"
+                    )
                     writer.append("# Bytes: sent=${stats.totalBytesSent} recv=${stats.totalBytesReceived}\n")
                     writer.append("# Connections: established=${stats.totalConnectionsEstablished} lost=${stats.totalConnectionsLost}\n")
                     writer.append("# AvgRTT: ${stats.avgRttMs}ms\n")

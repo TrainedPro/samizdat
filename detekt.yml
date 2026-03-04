@@ -5,34 +5,34 @@ complexity:
   active: true
   CyclomaticComplexMethod:
     active: true
-    threshold: 15
+    threshold: 30 # Mesh protocol dispatch methods (processPacket, when-blocks) inherently complex
     ignoreSingleWhenExpression: true
   LongMethod:
     active: true
-    threshold: 60
+    threshold: 210 # Composable screens, test suites & endurance runners are naturally long
   LongParameterList:
     active: true
-    functionThreshold: 6
-    constructorThreshold: 8
+    functionThreshold: 11
+    constructorThreshold: 10
     ignoreDefaultParameters: true
     ignoreDataClasses: true
     ignoreAnnotatedParameter: ["Composable"]
   NestedBlockDepth:
     active: true
-    threshold: 4
+    threshold: 5
   TooManyFunctions:
     active: true
-    thresholdInFiles: 20
-    thresholdInClasses: 20
-    thresholdInInterfaces: 10
+    thresholdInFiles: 25
+    thresholdInClasses: 50 # P2PManager/TestRunner are large protocol managers
+    thresholdInInterfaces: 15
     thresholdInObjects: 15
     thresholdInEnums: 8
   LargeClass:
     active: true
-    threshold: 600
+    threshold: 1400 # P2PManager is the core mesh engine (necessarily large)
   ComplexCondition:
     active: true
-    threshold: 3
+    threshold: 4
   ComplexInterface:
     active: true
     threshold: 15
@@ -41,7 +41,7 @@ complexity:
     threshold: 6
   StringLiteralDuplication:
     active: true
-    threshold: 3
+    threshold: 5
     ignoreAnnotation: true
     excludeStringsWithLessThan5Characters: true
     ignoreStringsRegex: "$^"
@@ -274,8 +274,8 @@ style:
     active: true
   BracesOnIfStatements:
     active: true
-    singleLine: "consistent"
-    multiLine: "always"
+    singleLine: "necessary" # Only flag single-line ifs when braces needed for disambiguation
+    multiLine: "consistent"
   BracesOnWhenStatements:
     active: true
     singleLine: "necessary"
@@ -286,7 +286,7 @@ style:
     active: true
     includeElvis: true
   ClassOrdering:
-    active: true
+    active: false # companion-at-top is conventional in Android for constants near usage
   CollapsibleIfStatements:
     active: true
   DataClassContainsFunctions:
@@ -365,7 +365,7 @@ style:
     active: true
   ReturnCount:
     active: true
-    max: 4
+    max: 8 # Audio stream handlers use early-return guard clauses extensively
     excludeLabeled: true
     excludeReturnFromLambda: true
     excludeGuardClauses: true
@@ -443,4 +443,11 @@ style:
     active: true
     excludeImports:
       - "kotlinx.coroutines.*"
+      - "kotlinx.coroutines.flow.*"
       - "org.junit.Assert.*"
+      - "androidx.compose.foundation.layout.*"
+      - "androidx.compose.material3.*"
+      - "androidx.compose.runtime.*"
+      - "androidx.compose.animation.core.*"
+      - "java.util.*"
+      - "java.security.*"

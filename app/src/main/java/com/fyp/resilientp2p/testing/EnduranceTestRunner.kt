@@ -3,7 +3,6 @@ package com.fyp.resilientp2p.testing
 import android.content.Context
 import android.util.Log
 import com.fyp.resilientp2p.data.LogLevel
-import com.fyp.resilientp2p.data.NetworkStatsSnapshot
 import com.fyp.resilientp2p.managers.P2PManager
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
@@ -340,11 +339,14 @@ class EnduranceTestRunner(
             val drain = computeDrain(startSnap.estimatedRemainingMah, endSnap.estimatedRemainingMah)
             val mahPerHour = if (actualDuration > 60_000) {
                 drain / (actualDuration / 3_600_000.0)
-            } else drain
+            } else {
+                drain
+            }
 
             val mAhSource = when {
                 startSnap.batteryChargeUah > 0 && endSnap.batteryChargeUah > 0 -> "CHARGE_COUNTER (direct)"
-                p2pManager.networkStats.batteryDesignCapacityMah > 0 -> "INTERPOLATED (${p2pManager.networkStats.batteryDesignCapacityMah}mAh design × %)"
+                p2pManager.networkStats.batteryDesignCapacityMah > 0 ->
+                    "INTERPOLATED (${p2pManager.networkStats.batteryDesignCapacityMah}mAh design × %)"
                 else -> "UNAVAILABLE"
             }
 
@@ -352,9 +354,16 @@ class EnduranceTestRunner(
             val allRtts = snapshotList.filter { it.avgRttMs > 0 }
             val globalMinRtt = allRtts.minOfOrNull { it.minRttMs } ?: 0L
             val globalMaxRtt = allRtts.maxOfOrNull { it.maxRttMs } ?: 0L
-            val meanJitter = if (allRtts.isNotEmpty()) allRtts.map { it.jitterMs }.average() else 0.0
-            val avgThroughput = if (actualDuration > 0)
-                (endSnap.totalBytesSent + endSnap.totalBytesReceived).toDouble() / (actualDuration / 1000.0) else 0.0
+            val meanJitter = if (allRtts.isNotEmpty()) {
+                allRtts.map { it.jitterMs }.average()
+            } else {
+                0.0
+            }
+            val avgThroughput = if (actualDuration > 0) {
+                (endSnap.totalBytesSent + endSnap.totalBytesReceived).toDouble() / (actualDuration / 1000.0)
+            } else {
+                0.0
+            }
 
             val report = EnduranceReport(
                 deviceName = p2pManager.getLocalDeviceName(),
@@ -397,7 +406,12 @@ class EnduranceTestRunner(
             tlog("  RTT: avg=${endSnap.avgRttMs}ms min=${globalMinRtt}ms max=${globalMaxRtt}ms jitter=${"%.1f".format(meanJitter)}ms")
             tlog("  Packet loss: ${"%.2f".format(endSnap.packetLossRate * 100)}%")
             tlog("  Throughput: ${"%.1f".format(avgThroughput / 1024)}KB/s")
-            tlog("  Packets: ↑${report.totalPacketsSent} ↓${report.totalPacketsReceived} ↻${report.totalPacketsForwarded} ✗${report.totalPacketsDropped}")
+            tlog(
+                "  Packets: ↑${report.totalPacketsSent} " +
+                    "↓${report.totalPacketsReceived} " +
+                    "↻${report.totalPacketsForwarded} " +
+                    "✗${report.totalPacketsDropped}"
+            )
             tlog("  Connections: ↑${report.totalConnectionsEstablished} ↓${report.totalConnectionsLost}")
             tlog("  Store-Forward: Q${report.storeForwardQueued} D${report.storeForwardDelivered}")
             tlog("  Snapshots: ${snapshotList.size}")
@@ -440,11 +454,19 @@ class EnduranceTestRunner(
         val jitter = if (peerRtts.size >= 2) {
             val mean = peerRtts.average()
             kotlin.math.sqrt(peerRtts.map { (it - mean) * (it - mean) }.average())
-        } else 0.0
-        val lossRate = if (stats.totalPacketsSent > 0)
-            stats.totalPacketsDropped.toDouble() / stats.totalPacketsSent else 0.0
-        val throughput = if (elapsed > 0)
-            (stats.totalBytesSent + stats.totalBytesReceived).toDouble() / (elapsed / 1000.0) else 0.0
+        } else {
+            0.0
+        }
+        val lossRate = if (stats.totalPacketsSent > 0) {
+            stats.totalPacketsDropped.toDouble() / stats.totalPacketsSent
+        } else {
+            0.0
+        }
+        val throughput = if (elapsed > 0) {
+            (stats.totalBytesSent + stats.totalBytesReceived).toDouble() / (elapsed / 1000.0)
+        } else {
+            0.0
+        }
 
         return BatterySnapshot(
             timestampMs = now,
@@ -675,14 +697,29 @@ class EnduranceTestRunner(
         appendLine("# mAh: ${report.startMah} -> ${report.endMah} (drain: ${report.mahDrained})")
         appendLine("# Drain rate: ${report.mahPerHour} mAh/hour")
         appendLine("# Source: ${report.mAhSource}")
-        appendLine("# Packets: sent=${report.totalPacketsSent} received=${report.totalPacketsReceived} forwarded=${report.totalPacketsForwarded} dropped=${report.totalPacketsDropped}")
+        appendLine(
+            "# Packets: sent=${report.totalPacketsSent} " +
+                "received=${report.totalPacketsReceived} " +
+                "forwarded=${report.totalPacketsForwarded} " +
+                "dropped=${report.totalPacketsDropped}"
+        )
         appendLine("# Bytes: sent=${report.totalBytesSent} received=${report.totalBytesReceived}")
         appendLine("# RTT: avg=${report.avgRttMs}ms min=${report.minRttMs}ms max=${report.maxRttMs}ms jitter=${"%.1f".format(report.meanJitterMs)}ms")
-        appendLine("# Loss: ${"%.2f".format(report.overallPacketLossRate * 100)}%  Throughput: ${"%.1f".format(report.avgThroughputBytesPerSec / 1024)}KB/s")
+        appendLine(
+            "# Loss: ${"%.2f".format(report.overallPacketLossRate * 100)}%  " +
+                "Throughput: ${"%.1f".format(report.avgThroughputBytesPerSec / 1024)}KB/s"
+        )
         appendLine("# Connections: established=${report.totalConnectionsEstablished} lost=${report.totalConnectionsLost}")
         appendLine("# Store-Forward: queued=${report.storeForwardQueued} delivered=${report.storeForwardDelivered}")
         appendLine("#")
-        appendLine("ElapsedMs,BatteryLevel,BatteryTempC,ChargeUah,VoltageMv,EstMah,PacketsSent,PacketsRecv,PacketsFwd,PacketsDrop,BytesSent,BytesRecv,AvgRttMs,MinRttMs,MaxRttMs,JitterMs,LossRate,ThroughputBps,Neighbors,Routes,ConnEstab,ConnLost,SfQueued,SfDelivered")
+        appendLine(
+            "ElapsedMs,BatteryLevel,BatteryTempC,ChargeUah," +
+                "VoltageMv,EstMah,PacketsSent,PacketsRecv," +
+                "PacketsFwd,PacketsDrop,BytesSent,BytesRecv," +
+                "AvgRttMs,MinRttMs,MaxRttMs,JitterMs,LossRate," +
+                "ThroughputBps,Neighbors,Routes,ConnEstab," +
+                "ConnLost,SfQueued,SfDelivered"
+        )
         report.snapshots.forEach { s ->
             appendLine("${s.elapsedMs},${s.batteryLevel},${s.batteryTemperature}," +
                        "${s.batteryChargeUah},${s.batteryVoltageMilliV},${s.estimatedRemainingMah}," +

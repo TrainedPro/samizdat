@@ -188,9 +188,8 @@ class PeerBlacklist(
     /**
      * Get the current violation count for a specific peer and reason.
      */
-    fun getViolationCount(peerId: String, reason: String = "rate_limit"): Int {
-        return violationCounts["$peerId:$reason"] ?: 0
-    }
+    fun getViolationCount(peerId: String, reason: String = "rate_limit"): Int =
+        violationCounts["$peerId:$reason"] ?: 0
 
     /**
      * Get the number of times a peer has been auto-banned (for exponential backoff).

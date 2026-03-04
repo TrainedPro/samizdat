@@ -31,9 +31,7 @@ open class AudioPlayer(
     private var thread: Thread? = null
 
     /** @return True if currently playing. */
-    fun isPlaying(): Boolean {
-        return isAlive
-    }
+    fun isPlaying(): Boolean = isAlive
 
     /** Starts playing the stream. */
     fun start() {
@@ -88,9 +86,9 @@ open class AudioPlayer(
                     peerRttMs <= 0 -> 200L   // unknown RTT, safe default
                     peerRttMs < 50 -> 100L   // very low latency link
                     peerRttMs > 300 -> 500L  // high latency, cap to avoid delay
-                    else -> (peerRttMs * 3) / 2  // 1.5x RTT
+                    else -> peerRttMs * 3 / 2  // 1.5x RTT
                 }
-                val jitterBytes = ((buffer.sampleRate * 2 * jitterMs) / 1000).toInt()
+                val jitterBytes = (buffer.sampleRate * 2 * jitterMs / 1000).toInt()
                 val jitterBuf = java.io.ByteArrayOutputStream(jitterBytes)
                 var jitterFilled = 0
                 while (isPlaying() && jitterFilled < jitterBytes) {
@@ -103,7 +101,13 @@ open class AudioPlayer(
                 if (jitterFilled > 0) {
                     val prefill = jitterBuf.toByteArray()
                     audioTrack.write(prefill, 0, prefill.size)
-                    log("[$TAG] Jitter buffer pre-filled ${prefill.size} bytes (${jitterMs}ms, peerRtt=${if (peerRttMs > 0) "${peerRttMs}ms" else "unknown"})", LogLevel.DEBUG)
+                    log(
+                        "[$TAG] Jitter buffer pre-filled ${prefill.size} bytes " +
+                            "(${jitterMs}ms, peerRtt=${
+                                if (peerRttMs > 0) "${peerRttMs}ms" else "unknown"
+                            })",
+                        LogLevel.DEBUG
+                    )
                 }
 
                 // --- Normal streaming loop ---
@@ -145,9 +149,8 @@ open class AudioPlayer(
     protected open fun onFinish() {}
 
     private class Buffer(log: (String, LogLevel) -> Unit) : AudioBuffer(log) {
-        override fun validSize(size: Int): Boolean {
-            return size != AudioTrack.ERROR && size != AudioTrack.ERROR_BAD_VALUE
-        }
+        override fun validSize(size: Int): Boolean =
+            size != AudioTrack.ERROR && size != AudioTrack.ERROR_BAD_VALUE
 
         override fun getMinBufferSize(sampleRate: Int): Int {
             return AudioTrack.getMinBufferSize(

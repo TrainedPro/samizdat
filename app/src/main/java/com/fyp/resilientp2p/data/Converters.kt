@@ -19,7 +19,7 @@ class Converters {
     @TypeConverter
     fun toLogLevel(value: String): LogLevel = try {
         LogLevel.valueOf(value)
-    } catch (e: Exception) {
+    } catch (_: Exception) {
         LogLevel.INFO
     }
 
@@ -29,7 +29,7 @@ class Converters {
     @TypeConverter
     fun toLogType(value: String): LogType = try {
         LogType.valueOf(value)
-    } catch (e: Exception) {
+    } catch (_: Exception) {
         LogType.SYSTEM
     }
 
@@ -39,7 +39,7 @@ class Converters {
     @TypeConverter
     fun toMessageType(value: String): MessageType = try {
         MessageType.valueOf(value)
-    } catch (e: Exception) {
+    } catch (_: Exception) {
         MessageType.TEXT
     }
 
@@ -49,7 +49,7 @@ class Converters {
     @TypeConverter
     fun toTelemetryEventType(value: String): TelemetryEventType = try {
         TelemetryEventType.valueOf(value)
-    } catch (e: Exception) {
+    } catch (_: Exception) {
         TelemetryEventType.STATS_SNAPSHOT
     }
 }

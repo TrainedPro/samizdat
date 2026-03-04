@@ -82,9 +82,8 @@ class SecurityManager {
      * Returns this device's ECDH public key as a Base64-encoded string.
      * Sent in IDENTITY packet payloads during the handshake.
      */
-    fun getPublicKeyBase64(): String {
-        return Base64.encodeToString(localKeyPair.public.encoded, Base64.NO_WRAP)
-    }
+    fun getPublicKeyBase64(): String =
+        Base64.encodeToString(localKeyPair.public.encoded, Base64.NO_WRAP)
 
     /**
      * Registers a peer's ECDH public key and derives the shared AES + HMAC keys.
@@ -108,11 +107,11 @@ class SecurityManager {
             val sharedSecret = keyAgreement.generateSecret()
 
             // Derive AES key (HKDF-SHA256 with "samizdat-aes" info)
-            val aesKeyBytes = hkdfExpand(sharedSecret, HKDF_INFO_AES.toByteArray(), 32)
+            val aesKeyBytes = hkdfExpand(sharedSecret, HKDF_INFO_AES.toByteArray(), AES_KEY_SIZE / 8)
             aesKeys[peerId] = SecretKeySpec(aesKeyBytes, "AES")
 
             // Derive HMAC key (HKDF-SHA256 with "samizdat-hmac" info)
-            val hmacKeyBytes = hkdfExpand(sharedSecret, HKDF_INFO_HMAC.toByteArray(), 32)
+            val hmacKeyBytes = hkdfExpand(sharedSecret, HKDF_INFO_HMAC.toByteArray(), AES_KEY_SIZE / 8)
             hmacKeys[peerId] = SecretKeySpec(hmacKeyBytes, HMAC_ALGO)
 
             Log.i(TAG, "KEY_EXCHANGE_OK peer=$peerId")
@@ -247,7 +246,7 @@ class SecurityManager {
         val sb = StringBuilder()
         for (i in 0 until 6) {
             val value = hash[i].toInt() and 0xFF
-            sb.append(String.format("%02d", value % 100))
+            sb.append(String.format(java.util.Locale.US, "%02d", value % 100))
         }
         // Format as "XXX XXX XXX XXX" for readability
         return sb.toString().chunked(3).joinToString(" ")

@@ -5,7 +5,6 @@ import com.fyp.resilientp2p.transport.Packet
 import com.fyp.resilientp2p.transport.PacketType
 import org.junit.Assert.*
 import org.junit.Test
-import java.util.UUID
 
 /**
  * Unit tests for the mesh routing protocol logic.
@@ -62,9 +61,7 @@ class RoutingTest {
     fun `route score computation - higher TTL is better`() {
         // Score formula: min(TTL, 10) * 100 + RSSI/10
         // (This tests the expected scoring policy)
-        fun computeScore(ttl: Int, rssi: Int): Int {
-            return minOf(ttl, 10) * 100 + rssi / 10
-        }
+        fun computeScore(ttl: Int, rssi: Int): Int = minOf(ttl, 10) * 100 + rssi / 10
 
         val score1Hop = computeScore(4, -50) // 400 + (-5) = 395
         val score3Hop = computeScore(2, -50) // 200 + (-5) = 195
@@ -74,9 +71,7 @@ class RoutingTest {
 
     @Test
     fun `route score - RSSI affects score within same hop count`() {
-        fun computeScore(ttl: Int, rssi: Int): Int {
-            return minOf(ttl, 10) * 100 + rssi / 10
-        }
+        fun computeScore(ttl: Int, rssi: Int): Int = minOf(ttl, 10) * 100 + rssi / 10
 
         val goodSignal = computeScore(4, -30) // 400 + (-3) = 397
         val weakSignal = computeScore(4, -90) // 400 + (-9) = 391

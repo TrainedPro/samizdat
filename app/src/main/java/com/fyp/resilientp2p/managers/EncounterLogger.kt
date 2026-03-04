@@ -1,6 +1,5 @@
 package com.fyp.resilientp2p.managers
 
-import android.content.Context
 import android.util.Log
 import com.fyp.resilientp2p.data.EncounterDao
 import com.fyp.resilientp2p.data.EncounterLog

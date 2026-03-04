@@ -13,6 +13,7 @@ import org.json.JSONObject
 import java.io.BufferedWriter
 import java.io.File
 import java.io.FileWriter
+import java.io.IOException
 import androidx.core.content.edit
 import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
@@ -143,6 +144,7 @@ class TelemetryUploadWorker(
     // Firebase Firestore Upload (REST API — no google-services.json needed)
     // ─────────────────────────────────────────────────────────────────
 
+    @Suppress("NestedBlockDepth")
     private fun uploadToFirestore(events: List<TelemetryEvent>) {
         // Group events by type for organized Firestore collections
         val grouped = events.groupBy { it.eventType }
@@ -176,7 +178,7 @@ class TelemetryUploadWorker(
                     val responseCode = connection.responseCode
                     if (responseCode !in 200..299) {
                         val errorBody = connection.errorStream?.bufferedReader()?.readText() ?: "no body"
-                        throw Exception("Firestore upload failed: HTTP $responseCode — $errorBody")
+                        throw IOException("Firestore upload failed: HTTP $responseCode — $errorBody")
                     }
                 } finally {
                     connection.disconnect()

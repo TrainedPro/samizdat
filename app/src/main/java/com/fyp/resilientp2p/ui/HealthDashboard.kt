@@ -3,8 +3,6 @@ package com.fyp.resilientp2p.ui
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -18,9 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.DrawScope
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -173,20 +169,21 @@ private fun TopologyGraph(state: P2PState, stats: NetworkStats) {
             if (peers.isEmpty()) {
                 Text("No peers connected", color = MaterialTheme.colorScheme.onSurfaceVariant)
             } else {
+                val rttMap = stats.peerRtt.toMap()
                 Canvas(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(200.dp)
                         .background(Color(0xFF1A1A2E), RoundedCornerShape(8.dp))
                 ) {
-                    drawTopology(peers.toList(), state.localDeviceName)
+                    drawTopology(peers.toList(), state.localDeviceName, rttMap)
                 }
             }
         }
     }
 }
 
-private fun DrawScope.drawTopology(peers: List<String>, localName: String) {
+private fun DrawScope.drawTopology(peers: List<String>, localName: String, peerRtt: Map<String, Long> = emptyMap()) {
     val cx = size.width / 2f
     val cy = size.height / 2f
     val radius = min(cx, cy) - 40f
@@ -195,7 +192,7 @@ private fun DrawScope.drawTopology(peers: List<String>, localName: String) {
     drawCircle(Color(0xFF4CAF50), 12f, Offset(cx, cy))
 
     // Draw peers around in a circle, each connected to the local node
-    val angleStep = (2 * Math.PI) / peers.size
+    val angleStep = 2 * Math.PI / peers.size
     peers.forEachIndexed { i, peer ->
         val angle = angleStep * i - Math.PI / 2
         val px = cx + (radius * Math.cos(angle)).toFloat()
@@ -214,6 +211,20 @@ private fun DrawScope.drawTopology(peers: List<String>, localName: String) {
                 textAlign = android.graphics.Paint.Align.CENTER
             }
             drawText(peer, px, py - 14f, paint)
+        }
+
+        // RTT label on edge midpoint
+        peerRtt[peer]?.let { rtt ->
+            val mx = (cx + px) / 2f
+            val my = (cy + py) / 2f
+            drawContext.canvas.nativeCanvas.apply {
+                val rttPaint = android.graphics.Paint().apply {
+                    color = android.graphics.Color.YELLOW
+                    textSize = 20f
+                    textAlign = android.graphics.Paint.Align.CENTER
+                }
+                drawText("${rtt}ms", mx, my - 4f, rttPaint)
+            }
         }
     }
 
@@ -273,8 +284,14 @@ private fun PeerStatsTable(peerSnapshots: List<PeerStatsSnapshot>) {
                             // Approximate loss: asymmetry between sent and received
                             // A perfectly symmetric link has sent ≈ received
                             val ratio = peer.packetsReceived.toDouble() / peer.packetsSent
-                            if (ratio < 0.8) "${"%.0f".format((1.0 - ratio) * 100)}%" else "0%"
-                        } else "-"
+                            if (ratio < 0.8) {
+                                "${"%.0f".format((1.0 - ratio) * 100)}%"
+                            } else {
+                                "0%"
+                            }
+                        } else {
+                            "-"
+                        }
                         Text(lossRate, fontSize = 11.sp, modifier = Modifier.weight(1f),
                             color = if (lossRate != "-" && lossRate != "0%") Color(0xFFF44336) else Color.Unspecified)
                     }
@@ -351,7 +368,9 @@ private fun DrawScope.drawHeatmap(peers: List<PeerStatsSnapshot>) {
                 // Use recv/sent ratio: a balanced link has ratio ≈ 1.0
                 val ratio = peers[i].packetsReceived.toFloat() / peers[i].packetsSent
                 (1f - ratio.coerceAtMost(1f)).coerceIn(0f, 1f)
-            } else 0f
+            } else {
+                0f
+            }
 
             val cellColor = lerpHeatColor(lossRate)
             drawRect(
@@ -365,14 +384,15 @@ private fun DrawScope.drawHeatmap(peers: List<PeerStatsSnapshot>) {
 
 /** Linearly interpolate between green (0% loss) → yellow → red (100% loss). */
 private fun lerpHeatColor(t: Float): Color {
-    return when {
-        t < 0.5f -> Color(
-            red = (t * 2f),
+    return if (t < 0.5f) {
+        Color(
+            red = t * 2f,
             green = 0.8f,
             blue = 0.1f,
             alpha = 0.8f
         )
-        else -> Color(
+    } else {
+        Color(
             red = 0.9f,
             green = (1f - t) * 1.6f,
             blue = 0.1f,

@@ -76,7 +76,7 @@ class LocationEstimator(
      */
     fun estimateDistance(peerId: String): Double? {
         val rtt = smoothedRtt[peerId] ?: return null
-        return (rtt / 1000.0) * speedOfLight / 2.0
+        return rtt / 1000.0 * speedOfLight / 2.0
     }
 
     /**
@@ -137,7 +137,7 @@ class LocationEstimator(
 
         val anchors = peerPositions.mapNotNull { (peer, pos) ->
             val dist = estimateDistance(peer)
-            if (dist != null) Anchor(peer, pos, dist) else null
+            dist?.let { Anchor(peer, pos, it) }
         }
 
         if (anchors.size < MIN_ANCHORS) {

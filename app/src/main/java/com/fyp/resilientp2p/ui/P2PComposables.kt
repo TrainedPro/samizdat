@@ -60,8 +60,20 @@ import kotlinx.coroutines.launch
  * @param emergencyManager Optional emergency broadcast manager (SOS + alerts).
  */
 @OptIn(ExperimentalMaterial3Api::class)
+@Suppress("CyclomaticComplexMethod", "LongMethod")
 @Composable
-fun ResilientP2PApp(p2pManager: P2PManager, onExportLogs: () -> Unit, testRunner: TestRunner? = null, enduranceTestRunner: EnduranceTestRunner? = null, chatDao: ChatDao? = null, telemetryManager: TelemetryManager? = null, emergencyManager: com.fyp.resilientp2p.managers.EmergencyManager? = null, chatGroupDao: com.fyp.resilientp2p.data.ChatGroupDao? = null, groupMessageDao: com.fyp.resilientp2p.data.GroupMessageDao? = null, locationEstimator: com.fyp.resilientp2p.managers.LocationEstimator? = null) {
+fun ResilientP2PApp(
+    p2pManager: P2PManager,
+    onExportLogs: () -> Unit,
+    testRunner: TestRunner? = null,
+    enduranceTestRunner: EnduranceTestRunner? = null,
+    chatDao: ChatDao? = null,
+    telemetryManager: TelemetryManager? = null,
+    emergencyManager: com.fyp.resilientp2p.managers.EmergencyManager? = null,
+    chatGroupDao: com.fyp.resilientp2p.data.ChatGroupDao? = null,
+    groupMessageDao: com.fyp.resilientp2p.data.GroupMessageDao? = null,
+    locationEstimator: com.fyp.resilientp2p.managers.LocationEstimator? = null
+) {
         val state by p2pManager.state.collectAsState()
         val context = androidx.compose.ui.platform.LocalContext.current
 
@@ -209,7 +221,7 @@ fun ResilientP2PApp(p2pManager: P2PManager, onExportLogs: () -> Unit, testRunner
                                 deviceName =
                                         state.localDeviceName, // Use actual local name from state
                                 connectionQuality =
-                                        if (isConnected) (bandwidthInfo?.quality ?: 0) else 0
+                                        if (isConnected) bandwidthInfo?.quality ?: 0 else 0
                         )
 
                         // --- Endurance Test Running Indicator ---
@@ -274,10 +286,7 @@ fun ResilientP2PApp(p2pManager: P2PManager, onExportLogs: () -> Unit, testRunner
                                                         else -> "Offline \u2014 mesh-only mode"
                                                 },
                                                 style = MaterialTheme.typography.bodySmall,
-                                                color = when {
-                                                        state.hasInternet -> Color(0xFF1B5E20)
-                                                        else -> Color(0xFF5D4037)
-                                                }
+                                                color = if (state.hasInternet) Color(0xFF1B5E20) else Color(0xFF5D4037)
                                         )
                                 }
                         }
@@ -308,7 +317,9 @@ fun ResilientP2PApp(p2pManager: P2PManager, onExportLogs: () -> Unit, testRunner
                                                         )
                                                         if (msg.hasLocation) {
                                                                 Text(
-                                                                        "\uD83D\uDCCD ${String.format(java.util.Locale.US, "%.5f", msg.latitude)}, ${String.format(java.util.Locale.US, "%.5f", msg.longitude)}",
+                                                                        "\uD83D\uDCCD " +
+                                                            "${String.format(java.util.Locale.US, "%.5f", msg.latitude)}, " +
+                                                            String.format(java.util.Locale.US, "%.5f", msg.longitude),
                                                                         style = MaterialTheme.typography.labelSmall,
                                                                         color = Color(0xFFD32F2F)
                                                                 )
@@ -352,15 +363,27 @@ fun ResilientP2PApp(p2pManager: P2PManager, onExportLogs: () -> Unit, testRunner
                                         horizontalArrangement = Arrangement.Center
                                 ) {
                                         if (state.isAdvertising) {
-                                                Text("\uD83D\uDCE1 Advertising", style = MaterialTheme.typography.labelSmall, color = colorScheme.primary)
+                                                Text(
+                                                        "\uD83D\uDCE1 Advertising",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = colorScheme.primary
+                                                )
                                                 Spacer(modifier = Modifier.width(12.dp))
                                         }
                                         if (state.isDiscovering) {
-                                                Text("\uD83D\uDD0D Discovering", style = MaterialTheme.typography.labelSmall, color = colorScheme.secondary)
+                                                Text(
+                                                        "\uD83D\uDD0D Discovering",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = colorScheme.secondary
+                                                )
                                                 Spacer(modifier = Modifier.width(12.dp))
                                         }
                                         if (state.connectedEndpoints.isNotEmpty()) {
-                                                Text("\uD83D\uDD17 ${state.connectedEndpoints.size} peers", style = MaterialTheme.typography.labelSmall, color = colorScheme.tertiary)
+                                                Text(
+                                                        "\uD83D\uDD17 ${state.connectedEndpoints.size} peers",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = colorScheme.tertiary
+                                                )
                                         }
                                 }
                         }
@@ -520,7 +543,9 @@ fun ResilientP2PApp(p2pManager: P2PManager, onExportLogs: () -> Unit, testRunner
                                                         if (c.moveToFirst()) {
                                                                 val idx = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
                                                                 if (idx >= 0) c.getString(idx) else null
-                                                        } else null
+                                                        } else {
+                                                                null
+                                                        }
                                                 } ?: uri.lastPathSegment ?: "file"
                                                 val mime = cr.getType(uri) ?: "application/octet-stream"
                                                 val msgType = if (mime.startsWith("image/")) MessageType.IMAGE else MessageType.FILE
@@ -741,10 +766,12 @@ fun DeviceStatusCard(deviceName: String, connectionQuality: Int) {
                                                                         colorScheme.outlineVariant
                                                                 connectionQuality == 3 ->
                                                                         com.fyp.resilientp2p.ui
-                                                                                .theme.StatusGreen
+                                                                                .theme
+                                                                                .StatusGreen
                                                                 connectionQuality == 2 ->
                                                                         com.fyp.resilientp2p.ui
-                                                                                .theme.StatusOrange
+                                                                                .theme
+                                                                                .StatusOrange
                                                                 else -> colorScheme.error
                                                         }
                                                 Box(
@@ -779,9 +806,49 @@ fun DashboardContent(
         telemetryManager: TelemetryManager? = null
 ) {
         Column(modifier = Modifier.fillMaxWidth()) {
-                // --- Radar Section ---
+                // --- Active Transfer Progress ---
+                if (transferProgress > 0) {
+                        Card(
+                                colors = CardDefaults.cardColors(containerColor = colorScheme.surfaceVariant),
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.fillMaxWidth()
+                        ) {
+                                Column(modifier = Modifier.padding(16.dp)) {
+                                        Text("File Transfer", style = MaterialTheme.typography.titleMedium)
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        LinearProgressIndicator(
+                                                progress = { transferProgress / 100f },
+                                                modifier = Modifier.fillMaxWidth(),
+                                        )
+                                        Text(
+                                                "${transferProgress}%",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                modifier = Modifier.padding(top = 4.dp)
+                                        )
+                                }
+                        }
+                        Spacer(modifier = Modifier.height(16.dp))
+                }
 
-                Spacer(modifier = Modifier.height(16.dp))
+                // --- Last Trace Path ---
+                if (tracePath.isNotBlank()) {
+                        Card(
+                                colors = CardDefaults.cardColors(containerColor = colorScheme.surfaceVariant),
+                                shape = RoundedCornerShape(12.dp),
+                                modifier = Modifier.fillMaxWidth()
+                        ) {
+                                Column(modifier = Modifier.padding(16.dp)) {
+                                        Text("Route Trace", style = MaterialTheme.typography.titleMedium)
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                        Text(
+                                                tracePath,
+                                                style = MaterialTheme.typography.bodyMedium,
+                                                color = colorScheme.onSurfaceVariant
+                                        )
+                                }
+                        }
+                        Spacer(modifier = Modifier.height(16.dp))
+                }
 
                 // --- Mesh Contacts Section ---
                 MeshContactsSection(
@@ -921,10 +988,12 @@ fun MeshContactsSection(
                                                                         val dur = System.currentTimeMillis() - stats.connectedSinceMs
                                                                         when {
                                                                                 dur < 60_000 -> "${dur / 1000}s"
-                                                                                dur < 3_600_000 -> "${dur / 60_000}m${(dur % 60_000) / 1000}s"
-                                                                                else -> "${dur / 3_600_000}h${(dur % 3_600_000) / 60_000}m"
+                                                                                dur < 3_600_000 -> "${dur / 60_000}m${dur % 60_000 / 1000}s"
+                                                                                else -> "${dur / 3_600_000}h${dur % 3_600_000 / 60_000}m"
                                                                         }
-                                                                } else "--"
+                                                                } else {
+                                                                        "--"
+                                                                }
                                                                 val traffic = formatTrafficCompact(stats.bytesSent + stats.bytesReceived)
                                                                 Text(
                                                                         text = "RTT: $rttText  |  Up: $connDuration  |  Traffic: $traffic",
@@ -960,7 +1029,7 @@ private fun formatTrafficCompact(bytes: Long): String = when {
 @Composable
 fun NetworkStatsSection(stats: NetworkStatsSnapshot) {
         var isExpanded by remember { mutableStateOf(false) }
-        
+
         Card(
                 colors = CardDefaults.cardColors(containerColor = colorScheme.surfaceVariant),
                 shape = RoundedCornerShape(12.dp),
@@ -1003,7 +1072,7 @@ fun NetworkStatsSection(stats: NetworkStatsSnapshot) {
                                         val uptimeStr = formatStatsDuration(stats.uptimeMs)
                                         StatsRow("Uptime", uptimeStr)
                                         StatsRow("Battery Temp", "${stats.batteryTemperature}\u00B0C")
-                                        
+
                                         Spacer(modifier = Modifier.height(8.dp))
                                         Text("Traffic", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = colorScheme.primary)
                                         StatsRow("Packets Sent", "${stats.totalPacketsSent}")
@@ -1012,24 +1081,28 @@ fun NetworkStatsSection(stats: NetworkStatsSnapshot) {
                                         StatsRow("Packets Dropped", "${stats.totalPacketsDropped}")
                                         StatsRow("Bytes Sent", formatStatsBytes(stats.totalBytesSent))
                                         StatsRow("Bytes Received", formatStatsBytes(stats.totalBytesReceived))
-                                        
+
                                         Spacer(modifier = Modifier.height(8.dp))
                                         Text("Connections", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = colorScheme.primary)
                                         StatsRow("Total Established", "${stats.totalConnectionsEstablished}")
                                         StatsRow("Total Lost", "${stats.totalConnectionsLost}")
-                                        
+
                                         Spacer(modifier = Modifier.height(8.dp))
                                         Text("Store & Forward", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = colorScheme.primary)
                                         StatsRow("Queued", "${stats.storeForwardQueued}")
                                         StatsRow("Delivered", "${stats.storeForwardDelivered}")
-                                        
+                                        StatsRow("ACKs Confirmed", "${stats.deliveryConfirmed}")
+
                                         if (stats.peerStats.isNotEmpty()) {
                                                 Spacer(modifier = Modifier.height(8.dp))
                                                 Text("Per-Peer", fontWeight = FontWeight.SemiBold, fontSize = 13.sp, color = colorScheme.primary)
                                                 stats.peerStats.forEach { (name, peer) ->
                                                         val rttStr = if (peer.lastRttMs >= 0) "${peer.lastRttMs}ms" else "-"
                                                         Text(
-                                                                text = "$name  RTT=$rttStr  \u2191${peer.packetsSent}\u2193${peer.packetsReceived}  dc=${peer.disconnectCount}",
+                                                                text = "$name  RTT=$rttStr  " +
+                                                                    "\u2191${peer.packetsSent}" +
+                                                                    "\u2193${peer.packetsReceived}" +
+                                                                    "  dc=${peer.disconnectCount}",
                                                                 fontSize = 11.sp,
                                                                 fontFamily = FontFamily.Monospace,
                                                                 color = colorScheme.onSurfaceVariant,
@@ -1173,81 +1246,86 @@ fun LogsSection(
                                                 key = { "${it.timestamp}_${it.message.hashCode()}_${System.identityHashCode(it)}" }
                                         ) { entry ->
                                                 val color =
-                                                        when (entry.logType) {
-                                                                com.fyp.resilientp2p.data.LogType
-                                                                        .CHAT -> {
-                                                                        if (entry.message
-                                                                                        .startsWith(
-                                                                                                "[SENT]"
-                                                                                        )
+                                                if (entry.logType == com.fyp.resilientp2p.data.LogType.CHAT) {
+                                                        if (entry.message
+                                                                        .startsWith(
+                                                                                "[SENT]"
                                                                         )
-                                                                                com.fyp.resilientp2p
-                                                                                        .ui.theme
-                                                                                        .TechBluePrimary // Blue for Sent
-                                                                        else
-                                                                                com.fyp.resilientp2p
-                                                                                        .ui.theme
-                                                                                        .TechTealSecondary // Teal for Received
-                                                                }
-                                                                else ->
-                                                                        when (entry.level) {
-                                                                                com.fyp.resilientp2p
-                                                                                        .data
-                                                                                        .LogLevel
-                                                                                        .ERROR ->
-                                                                                        colorScheme
-                                                                                                .error
-                                                                                com.fyp.resilientp2p
-                                                                                        .data
-                                                                                        .LogLevel
-                                                                                        .WARN ->
-                                                                                        com.fyp
-                                                                                                .resilientp2p
-                                                                                                .ui
-                                                                                                .theme
-                                                                                                .StatusOrange
-                                                                                com.fyp.resilientp2p
-                                                                                        .data
-                                                                                        .LogLevel
-                                                                                        .INFO ->
-                                                                                        MaterialTheme.colorScheme.onSurface
-                                                                                com.fyp.resilientp2p
-                                                                                        .data
-                                                                                        .LogLevel
-                                                                                        .DEBUG ->
-                                                                                        com.fyp
-                                                                                                .resilientp2p
-                                                                                                .ui
-                                                                                                .theme
-                                                                                                .StatusGray
-                                                                                com.fyp.resilientp2p
-                                                                                        .data
-                                                                                        .LogLevel
-                                                                                        .TRACE ->
-                                                                                        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
-                                                                                com.fyp.resilientp2p
-                                                                                        .data
-                                                                                        .LogLevel
-                                                                                        .METRIC ->
-                                                                                        com.fyp
-                                                                                                .resilientp2p
-                                                                                                .ui
-                                                                                                .theme
-                                                                                                .TechTealSecondary
-                                                                                else -> Color.Gray
-                                                                        }
+                                                        )
+                                                                com.fyp.resilientp2p
+                                                                        .ui
+                                                                        .theme
+                                                                        .TechBluePrimary // Blue for Sent
+                                                        else
+                                                                com.fyp.resilientp2p
+                                                                        .ui
+                                                                        .theme
+                                                                        .TechTealSecondary // Teal for Received
+                                                } else {
+                                                        when (entry.level) {
+                                                                com.fyp.resilientp2p
+                                                                        .data
+                                                                        .LogLevel
+                                                                        .ERROR ->
+                                                                        colorScheme
+                                                                                .error
+                                                                com.fyp.resilientp2p
+                                                                        .data
+                                                                        .LogLevel
+                                                                        .WARN ->
+                                                                        com.fyp
+                                                                                .resilientp2p
+                                                                                .ui
+                                                                                .theme
+                                                                                .StatusOrange
+                                                                com.fyp.resilientp2p
+                                                                        .data
+                                                                        .LogLevel
+                                                                        .INFO ->
+                                                                        MaterialTheme.colorScheme.onSurface
+                                                                com.fyp.resilientp2p
+                                                                        .data
+                                                                        .LogLevel
+                                                                        .DEBUG ->
+                                                                        com.fyp
+                                                                                .resilientp2p
+                                                                                .ui
+                                                                                .theme
+                                                                                .StatusGray
+                                                                com.fyp.resilientp2p
+                                                                        .data
+                                                                        .LogLevel
+                                                                        .TRACE ->
+                                                                        MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
+                                                                com.fyp.resilientp2p
+                                                                        .data
+                                                                        .LogLevel
+                                                                        .METRIC ->
+                                                                        com.fyp
+                                                                                .resilientp2p
+                                                                                .ui
+                                                                                .theme
+                                                                                .TechTealSecondary
+                                                                else -> Color.Gray
                                                         }
+                                                }
 
                                                 // Format: HH:MM:SS [LEVEL] Message
                                                 // Chat: HH:MM:SS [CHAT] Message
                                                 val tag =
                                                         if (entry.logType ==
                                                                         com.fyp.resilientp2p.data
-                                                                                .LogType.CHAT
+                                                                                .LogType
+                                                                                .CHAT
                                                         ) {
-                                                                if (entry.peerId != null) "[${entry.peerId}]"
-                                                                else "[CHAT]"
-                                                        } else "[${entry.level.name}]"
+                                                                if (entry.peerId != null) {
+                                                                        "[${entry.peerId}]"
+                                                                } else {
+                                                                        "[CHAT]"
+                                                                }
+                                                        } else {
+                                                                "[${entry.level.name}]"
+                                                        }
 
                                                 Text(
                                                         text =

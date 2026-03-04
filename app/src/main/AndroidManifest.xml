@@ -44,6 +44,7 @@
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
     <uses-feature android:name="android.hardware.wifi.direct" android:required="false" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
 
     <!-- Package visibility for battery optimization settings intent -->
     <queries>

@@ -209,7 +209,8 @@ class P2PApplication : Application() {
                     val payloadId = "${pkt.sourceId}:${pkt.id}"
                     if (seenPayloadIds.add(payloadId)) {
                         val text = String(pkt.payload, StandardCharsets.UTF_8)
-                        if (!text.startsWith("__TEST__")) {
+                        if (!text.startsWith("__TEST__") &&
+                        !text.startsWith("__ENDURANCE__")) {
                             val isBroadcast = pkt.destId == "BROADCAST"
                             chatDao.insert(com.fyp.resilientp2p.data.ChatMessage(
                                 peerId = pkt.sourceId,

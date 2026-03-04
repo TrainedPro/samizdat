@@ -146,6 +146,34 @@ fun ResilientP2PApp(
                 }
         }
 
+        // Incoming text message notification (only when chat is not open for that peer)
+        LaunchedEffect(latestPayload) {
+                latestPayload?.let { event ->
+                        val pkt = event.packet
+                        if (pkt.type == com.fyp.resilientp2p.transport.PacketType.DATA &&
+                                pkt.sourceId != state.localDeviceName
+                        ) {
+                                val text = String(pkt.payload, java.nio.charset.StandardCharsets.UTF_8)
+                                if (!text.startsWith("__TEST__") && !text.startsWith("__ENDURANCE__")) {
+                                        val isBroadcast = pkt.destId == "BROADCAST"
+                                        val chatIsOpen = showChatDialog && chatTargetId == pkt.sourceId ||
+                                                showGroupChat && isBroadcast
+                                        if (!chatIsOpen) {
+                                                val preview = text.take(40).let {
+                                                        if (text.length > 40) "$it..." else it
+                                                }
+                                                val label = if (isBroadcast) "[Broadcast]" else pkt.sourceId
+                                                android.widget.Toast.makeText(
+                                                        context,
+                                                        "$label: $preview",
+                                                        android.widget.Toast.LENGTH_SHORT
+                                                ).show()
+                                        }
+                                }
+                        }
+                }
+        }
+
         val isConnected = state.connectedEndpoints.isNotEmpty()
         val scrollState = rememberScrollState()
 
@@ -943,8 +971,8 @@ fun DashboardContent(
         telemetryManager: TelemetryManager? = null
 ) {
         Column(modifier = Modifier.fillMaxWidth()) {
-                // --- Active Transfer Progress ---
-                if (transferProgress > 0) {
+                // --- Active Transfer Progress (only during active transfer, not after completion) ---
+                if (transferProgress in 1..99) {
                         Card(
                                 colors = CardDefaults.cardColors(containerColor = colorScheme.surfaceVariant),
                                 shape = RoundedCornerShape(12.dp),

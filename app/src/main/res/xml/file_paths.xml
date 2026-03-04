@@ -4,4 +4,5 @@
     <cache-path name="test_cache" path="test_files/" />
     <external-files-path name="test_results" path="test_results/" />
     <external-files-path name="telemetry" path="telemetry/" />
+    <cache-path name="camera_photos" path="camera_photos/" />
 </paths>

@@ -1,5 +1,7 @@
 package com.fyp.resilientp2p.ui
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -33,6 +35,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import coil.compose.AsyncImage
 import com.fyp.resilientp2p.data.ChatMessage
 import com.fyp.resilientp2p.data.MessageType
@@ -60,13 +63,34 @@ fun ChatScreen(
     val isBroadcast = peerId == "BROADCAST"
     var messageText by remember { mutableStateOf("") }
 
-    // Image picker
-    val imagePickerLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.GetContent()
-    ) { uri: Uri? ->
-        uri?.let {
-            onSendFile(it)
-            Toast.makeText(context, "Sending image...", Toast.LENGTH_SHORT).show()
+    // Camera capture — creates a temp file and launches the system camera
+    var cameraPhotoUri by remember { mutableStateOf<Uri?>(null) }
+    val cameraLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.TakePicture()
+    ) { success ->
+        if (success) {
+            cameraPhotoUri?.let { uri ->
+                onSendFile(uri)
+                Toast.makeText(context, "Sending photo...", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+    val cameraPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            val photoFile = File(
+                context.cacheDir, "camera_photos"
+            ).apply { mkdirs() }.let {
+                File(it, "IMG_${System.currentTimeMillis()}.jpg")
+            }
+            val uri = FileProvider.getUriForFile(
+                context, "${context.packageName}.fileprovider", photoFile
+            )
+            cameraPhotoUri = uri
+            cameraLauncher.launch(uri)
+        } else {
+            Toast.makeText(context, "Camera permission required", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -133,7 +157,26 @@ fun ChatScreen(
                         messageText = ""
                     }
                 },
-                onPickImage = { imagePickerLauncher.launch("image/*") },
+                onPickImage = {
+                    // Launch camera: check permission first
+                    if (ContextCompat.checkSelfPermission(
+                            context, Manifest.permission.CAMERA
+                        ) == PackageManager.PERMISSION_GRANTED
+                    ) {
+                        val photoFile = File(
+                            context.cacheDir, "camera_photos"
+                        ).apply { mkdirs() }.let {
+                            File(it, "IMG_${System.currentTimeMillis()}.jpg")
+                        }
+                        val uri = FileProvider.getUriForFile(
+                            context, "${context.packageName}.fileprovider", photoFile
+                        )
+                        cameraPhotoUri = uri
+                        cameraLauncher.launch(uri)
+                    } else {
+                        cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                    }
+                },
                 onPickFile = { filePickerLauncher.launch("*/*") },
                 onStartAudio = {
                     if (ContextCompat.checkSelfPermission(context,

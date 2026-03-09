@@ -19,7 +19,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.CloudOff
-import androidx.compose.material.icons.filled.Forum
+// import androidx.compose.material.icons.filled.Forum  // Phase 4
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.LocationOn
@@ -88,18 +88,18 @@ fun ResilientP2PApp(
     chatDao: ChatDao? = null,
     telemetryManager: TelemetryManager? = null,
     emergencyManager: com.fyp.resilientp2p.managers.EmergencyManager? = null,
-    chatGroupDao: com.fyp.resilientp2p.data.ChatGroupDao? = null,
-    groupMessageDao: com.fyp.resilientp2p.data.GroupMessageDao? = null,
-    locationEstimator: com.fyp.resilientp2p.managers.LocationEstimator? = null
+    @Suppress("UNUSED_PARAMETER") chatGroupDao: com.fyp.resilientp2p.data.ChatGroupDao? = null,
+    @Suppress("UNUSED_PARAMETER") groupMessageDao: com.fyp.resilientp2p.data.GroupMessageDao? = null,
+    @Suppress("UNUSED_PARAMETER") locationEstimator: com.fyp.resilientp2p.managers.LocationEstimator? = null
 ) {
         val state by p2pManager.state.collectAsState()
         val context = androidx.compose.ui.platform.LocalContext.current
 
         // Test mode state
         var showTestMode by rememberSaveable { mutableStateOf(false) }
-        // Phase 4 screen states
-        var showHealthDashboard by rememberSaveable { mutableStateOf(false) }
-        var showGroupChat by rememberSaveable { mutableStateOf(false) }
+        // Phase 4 screen states (hidden for midterm)
+        // var showHealthDashboard by rememberSaveable { mutableStateOf(false) }
+        // var showGroupChat by rememberSaveable { mutableStateOf(false) }
 
         // Auto-launch test mode when compiled with TEST_MODE=true
         LaunchedEffect(Unit) {
@@ -157,7 +157,7 @@ fun ResilientP2PApp(
                                 if (!text.startsWith("__TEST__") && !text.startsWith("__ENDURANCE__")) {
                                         val isBroadcast = pkt.destId == "BROADCAST"
                                         val chatIsOpen = showChatDialog && chatTargetId == pkt.sourceId ||
-                                                showGroupChat && isBroadcast
+                                                false // showGroupChat hidden for midterm
                                         if (!chatIsOpen) {
                                                 val preview = text.take(40).let {
                                                         if (text.length > 40) "$it..." else it
@@ -210,6 +210,7 @@ fun ResilientP2PApp(
                                                                 showAdvancedOptions = true
                                                         }
                                                 )
+                                                /* Phase 4 — hidden for midterm
                                                 DropdownMenuItem(
                                                         leadingIcon = {
                                                                 Icon(
@@ -240,6 +241,7 @@ fun ResilientP2PApp(
                                                                 }
                                                         )
                                                 }
+                                                */
                                                 if (testRunner != null) {
                                                         DropdownMenuItem(
                                                                 leadingIcon = {
@@ -638,12 +640,12 @@ fun ResilientP2PApp(
 
         // Back handler for overlay navigation — system back closes the topmost overlay
         BackHandler(
-                enabled = showTestMode || showHealthDashboard || showGroupChat || showChatDialog
+                enabled = showTestMode || showChatDialog
         ) {
                 when {
                         showTestMode -> showTestMode = false
-                        showHealthDashboard -> showHealthDashboard = false
-                        showGroupChat -> showGroupChat = false
+                        // showHealthDashboard -> showHealthDashboard = false  // Phase 4
+                        // showGroupChat -> showGroupChat = false  // Phase 4
                         showChatDialog -> showChatDialog = false
                 }
         }
@@ -750,6 +752,7 @@ fun ResilientP2PApp(
                 )
         }
 
+        /* Phase 4 — hidden for midterm
         // Health dashboard overlay
         if (showHealthDashboard) {
                 HealthDashboard(
@@ -769,6 +772,7 @@ fun ResilientP2PApp(
                         onBack = { showGroupChat = false }
                 )
         }
+        */
 }
 
 @Composable

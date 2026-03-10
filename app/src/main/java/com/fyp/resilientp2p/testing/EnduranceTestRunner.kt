@@ -1,7 +1,6 @@
 package com.fyp.resilientp2p.testing
 
 import android.content.Context
-import android.util.Log
 import com.fyp.resilientp2p.data.LogLevel
 import com.fyp.resilientp2p.managers.P2PManager
 import kotlinx.coroutines.*
@@ -149,7 +148,6 @@ class EnduranceTestRunner(
     private val p2pManager: P2PManager
 ) {
     companion object {
-        private const val TAG = "EnduranceTest"
         /** Interval between broadcast messages for generating steady traffic. */
         private const val TRAFFIC_INTERVAL_MS = 30_000L       // 30 seconds
         /** Interval between battery/stats snapshots. */
@@ -190,7 +188,7 @@ class EnduranceTestRunner(
      */
     fun start(duration: EnduranceDuration) {
         if (_state.value.isRunning) {
-            Log.w(TAG, "Endurance test already running")
+            p2pManager.log("Endurance test already running", LogLevel.WARN)
             return
         }
 
@@ -319,7 +317,7 @@ class EnduranceTestRunner(
                         try {
                             onEnduranceSnapshotReady?.invoke(snapshotToJson(snap).toString())
                         } catch (e: Exception) {
-                            Log.w(TAG, "Failed to queue snapshot for cloud upload", e)
+                            p2pManager.log("Failed to queue snapshot for cloud upload: ${e.message}", LogLevel.WARN)
                         }
                     }
                 }
@@ -328,7 +326,7 @@ class EnduranceTestRunner(
             // Normal stop — either duration expired or user pressed stop
         } catch (e: Exception) {
             tlog("ENDURANCE_ERROR: ${e.message}")
-            Log.e(TAG, "Endurance test error", e)
+            p2pManager.log("Endurance test error: ${e.message}", LogLevel.ERROR)
         } finally {
             // Always generate report
             val endTime = System.currentTimeMillis()
@@ -424,7 +422,7 @@ class EnduranceTestRunner(
                 onEnduranceReportReady?.invoke(reportToJson(report).toString())
                 tlog("Endurance report queued for cloud upload")
             } catch (e: Exception) {
-                Log.w(TAG, "Failed to queue endurance report for cloud upload", e)
+                p2pManager.log("Failed to queue endurance report for cloud upload: ${e.message}", LogLevel.WARN)
                 tlog("Cloud upload queue failed: ${e.message}")
             }
 
@@ -524,7 +522,6 @@ class EnduranceTestRunner(
         val ts = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date())
         val line = "[$ts] $msg"
         logLines.add(line)
-        Log.d(TAG, msg)
         p2pManager.log("[ENDURANCE] $msg", LogLevel.METRIC)
 
         // Keep last 500 lines in UI state
@@ -558,7 +555,7 @@ class EnduranceTestRunner(
 
             p2pManager.log("[ENDURANCE] Results exported to ${dir.absolutePath}")
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to export endurance results", e)
+            p2pManager.log("Failed to export endurance results: ${e.message}", LogLevel.ERROR)
             tlog("Export failed: ${e.message}")
         }
     }

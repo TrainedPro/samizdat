@@ -2,6 +2,7 @@ package com.fyp.resilientp2p.managers
 
 import android.content.Context
 import android.util.Log
+import com.fyp.resilientp2p.data.LogLevel
 import com.fyp.resilientp2p.data.SharedFile
 import com.fyp.resilientp2p.data.SharedFileDao
 import com.fyp.resilientp2p.transport.Packet
@@ -54,6 +55,13 @@ class FileShareManager(
     /** Callback to send a packet onto the mesh (set by P2PManager). */
     var sendPacket: ((Packet) -> Unit)? = null
 
+    /** Log callback — routes through P2PManager.log() when wired. */
+    var logFn: ((String, LogLevel) -> Unit)? = null
+
+    private fun log(msg: String, level: LogLevel = LogLevel.DEBUG) {
+        logFn?.invoke(msg, level) ?: Log.d(TAG, msg)
+    }
+
     /** Tracks which chunks we've received per file hash (thread-safe sets). */
     private val receivedChunks = ConcurrentHashMap<String, MutableSet<Int>>()
 
@@ -90,7 +98,7 @@ class FileShareManager(
     fun announceFile(filePath: String, fileName: String, mimeType: String): String? {
         val file = File(filePath)
         if (!file.exists() || !file.canRead()) {
-            Log.w(TAG, "Cannot announce: file not readable: $filePath")
+            log("Cannot announce: file not readable: $filePath", LogLevel.WARN)
             return null
         }
 
@@ -126,7 +134,7 @@ class FileShareManager(
                 timestamp = System.currentTimeMillis()
             )
             sendPacket?.invoke(packet)
-            Log.d(TAG, "Announced file: $fileName ($sha256) ${fileSize}B $totalChunks chunks")
+            log("Announced file: $fileName ($sha256) ${fileSize}B $totalChunks chunks")
         }
 
         return sha256
@@ -139,7 +147,7 @@ class FileShareManager(
     fun handleFileAnnounce(packet: Packet) {
         val parts = String(packet.payload, StandardCharsets.UTF_8).split(SEPARATOR)
         if (parts.size < 6) {
-            Log.w(TAG, "Malformed FILE_ANNOUNCE from ${packet.sourceId}")
+            log("Malformed FILE_ANNOUNCE from ${packet.sourceId}", LogLevel.WARN)
             return
         }
         val sha256 = parts[0]
@@ -157,7 +165,7 @@ class FileShareManager(
         scope.launch {
             if (sharedFileDao.exists(sha256) > 0) {
                 // File already known — we just recorded the additional source above.
-                Log.d(TAG, "Additional source for $sha256: ${packet.sourceId} (total: ${fileSources[sha256]?.size})")
+                log("Additional source for $sha256: ${packet.sourceId} (total: ${fileSources[sha256]?.size})")
                 return@launch
             }
             val sharedFile = SharedFile(
@@ -170,7 +178,7 @@ class FileShareManager(
                 sharedBy = packet.sourceId
             )
             sharedFileDao.insert(sharedFile)
-            Log.d(TAG, "Registered file announce: $fileName from ${packet.sourceId}")
+            log("Registered file announce: $fileName from ${packet.sourceId}")
         }
     }
 
@@ -186,7 +194,7 @@ class FileShareManager(
         scope.launch {
             val file = sharedFileDao.getFile(sha256)
             if (file == null) {
-                Log.w(TAG, "requestFile: Unknown file $sha256 — not in database")
+                log("requestFile: Unknown file $sha256 — not in database", LogLevel.WARN)
                 return@launch
             }
             val received = receivedChunks.computeIfAbsent(sha256) {
@@ -198,7 +206,7 @@ class FileShareManager(
                 val persisted = downloadedChunkDao.getReceivedChunks(sha256)
                 if (persisted.isNotEmpty()) {
                     received.addAll(persisted)
-                    Log.d(TAG, "Resumed $sha256: ${persisted.size}/${file.totalChunks} chunks already on disk")
+                    log("Resumed $sha256: ${persisted.size}/${file.totalChunks} chunks already on disk")
                 }
             }
 
@@ -224,7 +232,7 @@ class FileShareManager(
                 sendPacket?.invoke(packet)
                 requested++
             }
-            Log.d(TAG, "Requested $requested chunks for $sha256 from $sourceCount source(s) (${received.size} already received)")
+            log("Requested $requested chunks for $sha256 from $sourceCount source(s) (${received.size} already received)")
         }
     }
 
@@ -264,10 +272,10 @@ class FileShareManager(
                         timestamp = System.currentTimeMillis()
                     )
                     sendPacket?.invoke(responsePacket)
-                    Log.d(TAG, "Sent chunk $chunkIndex of $sha256 to ${packet.sourceId}")
+                    log("Sent chunk $chunkIndex of $sha256 to ${packet.sourceId}")
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Error reading chunk $chunkIndex of $sha256: ${e.message}")
+                log("Error reading chunk $chunkIndex of $sha256: ${e.message}", LogLevel.ERROR)
             }
         }
     }
@@ -317,7 +325,7 @@ class FileShareManager(
                     // Verify file integrity against announced SHA-256
                     val actualHash = computeSha256(destFile)
                     if (actualHash != null && actualHash != sha256) {
-                        Log.e(TAG, "SHA-256 MISMATCH for ${file.fileName}: expected=$sha256 actual=$actualHash — deleting corrupt file")
+                        log("SHA-256 MISMATCH for ${file.fileName}: expected=$sha256 actual=$actualHash — deleting corrupt file", LogLevel.ERROR)
                         destFile.delete()
                         received.clear()
                         receivedChunks.remove(sha256)
@@ -333,12 +341,12 @@ class FileShareManager(
                     localFiles[sha256] = localPath
                     receivedChunks.remove(sha256) // Cleanup tracking after complete download
                     downloadedChunkDao?.clearChunks(sha256) // Cleanup persisted chunks
-                    Log.d(TAG, "File download complete: ${file.fileName} ($sha256)")
+                    log("File download complete: ${file.fileName} ($sha256)")
                 } else {
-                    Log.d(TAG, "Chunk $chunkIndex/${file.totalChunks} of ${file.fileName}")
+                    log("Chunk $chunkIndex/${file.totalChunks} of ${file.fileName}")
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Error writing chunk $chunkIndex of $sha256: ${e.message}")
+                log("Error writing chunk $chunkIndex of $sha256: ${e.message}", LogLevel.ERROR)
             }
         }
     }
@@ -368,7 +376,7 @@ class FileShareManager(
             }
             digest.digest().joinToString("") { "%02x".format(it) }
         } catch (e: Exception) {
-            Log.e(TAG, "SHA-256 computation failed: ${e.message}")
+            log("SHA-256 computation failed: ${e.message}", LogLevel.ERROR)
             null
         }
     }

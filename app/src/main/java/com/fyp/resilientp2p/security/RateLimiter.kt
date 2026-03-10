@@ -1,6 +1,7 @@
 package com.fyp.resilientp2p.security
 
 import android.util.Log
+import com.fyp.resilientp2p.data.LogLevel
 import com.fyp.resilientp2p.transport.PacketType
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
@@ -138,6 +139,13 @@ class RateLimiter(
     /** Total packets dropped due to rate limiting (for telemetry). */
     val totalDropped = AtomicLong(0)
 
+    /** Log callback — routes through P2PManager.log() when wired. */
+    var logFn: ((String, LogLevel) -> Unit)? = null
+
+    private fun log(msg: String, level: LogLevel = LogLevel.DEBUG) {
+        logFn?.invoke(msg, level) ?: Log.d(TAG, msg)
+    }
+
     /**
      * Classify a packet type into a rate-limit category.
      */
@@ -174,7 +182,7 @@ class RateLimiter(
         val count = window.incrementAndGet(now, WINDOW_MS)
         if (count > limit) {
             totalDropped.incrementAndGet()
-            Log.w(TAG, "RATE_LIMITED peer=$peerId category=$category count=$count limit=$limit")
+            log("RATE_LIMITED peer=$peerId category=$category count=$count limit=$limit", LogLevel.WARN)
             return false
         }
         return true
@@ -195,7 +203,7 @@ class RateLimiter(
         val count = window.incrementAndGet(now, WINDOW_MS)
         if (count > forwardBudget) {
             totalDropped.incrementAndGet()
-            Log.w(TAG, "FORWARD_BUDGET_EXCEEDED peer=$peerId count=$count limit=$forwardBudget")
+            log("FORWARD_BUDGET_EXCEEDED peer=$peerId count=$count limit=$forwardBudget", LogLevel.WARN)
             return false
         }
         return true

@@ -4,8 +4,10 @@ import android.app.Application
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
+import com.fyp.resilientp2p.audio.AudioCodecManager
 import com.fyp.resilientp2p.data.AppDatabase
 import com.fyp.resilientp2p.data.GroupMessage
+import com.fyp.resilientp2p.data.LogLevel
 import com.fyp.resilientp2p.managers.CloudLogManager
 import com.fyp.resilientp2p.managers.EmergencyManager
 import com.fyp.resilientp2p.managers.EncounterLogger
@@ -129,6 +131,17 @@ class P2PApplication : Application() {
         p2pManager.encounterLogger = encounterLogger
         p2pManager.fileShareManager = fileShareManager
         p2pManager.cloudLogManager = cloudLogManager
+
+        // Wire log callbacks so all managers route through p2pManager.log()
+        val logFn: (String, LogLevel) -> Unit = { msg, level -> p2pManager.log(msg, level) }
+        securityManager.logFn = logFn
+        rateLimiter.logFn = logFn
+        peerBlacklist.logFn = logFn
+        peerTrustScorer.logFn = logFn
+        locationEstimator.logFn = logFn
+        encounterLogger.logFn = logFn
+        fileShareManager.logFn = logFn
+        AudioCodecManager.logFn = logFn
 
         // Group message handler: persist + auto-join unknown groups
         val groupMessageDao = database.groupMessageDao()

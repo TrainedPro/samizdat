@@ -1,7 +1,6 @@
 package com.fyp.resilientp2p.testing
 
 import android.content.Context
-import android.util.Log
 import com.fyp.resilientp2p.data.LogLevel
 import com.fyp.resilientp2p.data.NetworkStatsSnapshot
 import com.fyp.resilientp2p.managers.P2PManager
@@ -38,7 +37,6 @@ class TestRunner(
     var onTestResultsReady: ((String) -> Unit)? = null
 ) {
     companion object {
-        private const val TAG = "TestRunner"
         private const val PEER_WAIT_TIMEOUT_MS = 120_000L   // 2 min to find peers
         private const val TEST_MSG_PREFIX = "__TEST__"
         private const val PING_COUNT = 20
@@ -90,7 +88,7 @@ class TestRunner(
 
     fun runTests(autoStart: Boolean = false) {
         if (_state.value.isRunning) {
-            Log.w(TAG, "Tests already running")
+            p2pManager.log("Tests already running", LogLevel.WARN)
             return
         }
 
@@ -232,7 +230,7 @@ class TestRunner(
                 _state.update { it.copy(isRunning = false, statusMessage = "Cancelled", logMessages = testLog.toList()) }
             } catch (e: Exception) {
                 tlog("FATAL ERROR: ${e.message}")
-                Log.e(TAG, "Test suite error", e)
+                p2pManager.log("Test suite error: ${e.message}", LogLevel.ERROR)
                 _state.update { it.copy(isRunning = false, statusMessage = "ERROR: ${e.message}", logMessages = testLog.toList()) }
                 p2pManager.log("[TEST] Suite error: ${e.message}", LogLevel.ERROR)
             }
@@ -565,7 +563,13 @@ class TestRunner(
             tlog("    $peer: ${receivedTestMessages[peer]?.size ?: 0} messages")
         }
 
-        if (totalReceived == 0) warnings.add("No test messages received — other devices may not be in test mode")
+        val peerCount = p2pManager.getNeighborsSnapshot().size
+        if (totalReceived == 0) {
+            warnings.add(
+                "No test messages received — requires 2+ devices running tests simultaneously " +
+                "(connected peers: $peerCount)"
+            )
+        }
 
         val duration = System.currentTimeMillis() - start
         return TestResult(
@@ -574,7 +578,11 @@ class TestRunner(
             durationMs = duration,
             details = mapOf("totalReceived" to totalReceived, "peersWhoSent" to peersWhoSent.size),
             warnings = warnings,
-            error = if (totalReceived == 0) "No test messages received from any peer" else null,
+            error = if (totalReceived == 0) {
+                "No test messages received (need 2+ devices in test mode simultaneously)"
+            } else {
+                null
+            },
         )
     }
 
@@ -1366,7 +1374,7 @@ class TestRunner(
         while (testLog.size > 500) {
             testLog.removeAt(0)
         }
-        Log.d(TAG, msg)
+        p2pManager.log("[TEST] $msg", LogLevel.DEBUG)
         _state.update { it.copy(logMessages = testLog.toList()) }
     }
 
@@ -1460,7 +1468,7 @@ class TestRunner(
 
             p2pManager.log("[TEST] Results exported to ${dir.absolutePath}")
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to export results", e)
+            p2pManager.log("Failed to export results: ${e.message}", LogLevel.ERROR)
             p2pManager.log("[TEST] Export failed: ${e.message}", LogLevel.ERROR)
         }
     }

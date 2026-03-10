@@ -2,11 +2,11 @@ package com.fyp.resilientp2p.managers
 
 import android.content.Context
 import android.os.Build
-import android.util.Log
 import androidx.core.content.edit
 import com.fyp.resilientp2p.BuildConfig
 import com.fyp.resilientp2p.data.LogDao
 import com.fyp.resilientp2p.data.LogEntry
+import com.fyp.resilientp2p.data.LogLevel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -40,7 +40,6 @@ class CloudLogManager(
     private val p2pManager: P2PManager
 ) {
     companion object {
-        private const val TAG = "CloudLogManager"
         private const val PREFS_NAME = "cloud_log_prefs"
         private const val KEY_LAST_UPLOADED_ID = "last_uploaded_log_id"
         private const val KEY_ENABLED = "cloud_log_enabled"
@@ -99,15 +98,20 @@ class CloudLogManager(
     @Volatile var lastUploadTime: Long = 0L
         private set
 
+    /** Last upload error message (null = no error) for UI display */
+    @Volatile var uploadError: String? = null
+        private set
+
     fun start() {
+        p2pManager.log("CloudLogManager starting. enabled=$isEnabled " +
+            "firebaseConfigured=$isFirebaseConfigured projectId='$projectId'")
         if (isEnabled) startUploadLoop()
-        Log.i(TAG, "CloudLogManager started. enabled=$isEnabled")
     }
 
     fun destroy() {
         stopUploadLoop()
         scope.cancel()
-        Log.i(TAG, "CloudLogManager destroyed")
+        p2pManager.log("CloudLogManager destroyed")
     }
 
     private fun startUploadLoop() {
@@ -119,7 +123,7 @@ class CloudLogManager(
                 try {
                     uploadPendingLogs()
                 } catch (e: Exception) {
-                    Log.e(TAG, "Upload cycle error: ${e.message}")
+                    p2pManager.log("Upload cycle error: ${e.message}", LogLevel.ERROR)
                 }
             }
         }
@@ -133,10 +137,16 @@ class CloudLogManager(
     /** Force an immediate upload attempt (for UI "Sync Now" button) */
     fun forceUpload() {
         scope.launch {
+            p2pManager.log("FORCE_UPLOAD_START firebase=$isFirebaseConfigured " +
+                "internet=${p2pManager.internetGatewayManager?.hasInternet?.value == true} " +
+                "enabled=$isEnabled")
             try {
+                uploadError = null
                 uploadPendingLogs()
             } catch (e: Exception) {
-                Log.e(TAG, "Force upload error: ${e.message}")
+                val errorMsg = "Upload failed: ${e.message}"
+                p2pManager.log("FORCE_UPLOAD_FAILED: ${e.message}", LogLevel.ERROR)
+                uploadError = errorMsg
             }
         }
     }
@@ -144,10 +154,16 @@ class CloudLogManager(
     private suspend fun uploadPendingLogs() {
         val lastId = prefs.getLong(KEY_LAST_UPLOADED_ID, 0)
         val logs = logDao.getLogsSince(lastId, BATCH_SIZE)
-        if (logs.isEmpty()) return
+        if (logs.isEmpty()) {
+            p2pManager.log("UPLOAD_SKIP reason=NO_PENDING_LOGS lastId=$lastId", LogLevel.DEBUG)
+            return
+        }
 
         val gateway = p2pManager.internetGatewayManager
         val hasInternet = gateway?.hasInternet?.value == true
+
+        p2pManager.log("UPLOAD_PENDING count=${logs.size} internet=$hasInternet " +
+            "firebase=$isFirebaseConfigured", LogLevel.DEBUG)
 
         if (hasInternet && isFirebaseConfigured) {
             uploadBatchToFirestore(logs, deviceId)
@@ -155,9 +171,15 @@ class CloudLogManager(
             prefs.edit { putLong(KEY_LAST_UPLOADED_ID, maxId) }
             totalUploaded += logs.size
             lastUploadTime = System.currentTimeMillis()
-            Log.i(TAG, "LOGS_UPLOADED count=${logs.size} lastId=$maxId")
+            uploadError = null
+            p2pManager.log("LOGS_UPLOADED count=${logs.size} lastId=$maxId total=$totalUploaded")
             runCleanupIfDue()
+        } else if (!isFirebaseConfigured) {
+            val reason = "Firebase not configured (projectId='$projectId')"
+            p2pManager.log("CLOUD_UPLOAD_SKIP reason=NOT_CONFIGURED projectId='$projectId'", LogLevel.WARN)
+            uploadError = reason
         } else {
+            p2pManager.log("UPLOAD_SKIP reason=NO_INTERNET, attempting mesh relay", LogLevel.DEBUG)
             relayLogsViaMesh(logs)
         }
     }
@@ -195,9 +217,19 @@ class CloudLogManager(
 
         val url = "${FIRESTORE_BASE}$projectId" +
             "/databases/(default)/documents/$COLLECTION?key=$apiKey"
-        val code = httpPost(url, doc.toString())
+        val (code, errorBody) = httpPost(url, doc.toString())
         if (code !in 200..299) {
-            throw java.io.IOException("Firestore upload failed: HTTP $code")
+            val hint = when (code) {
+                403 -> "Check Firestore security rules allow writes to '$COLLECTION'"
+                404 -> "Firestore database may not exist in project '$projectId'"
+                401 -> "API key may be invalid or Firestore API not enabled"
+                else -> ""
+            }
+            val errorMsg = "Firestore HTTP $code: ${errorBody?.take(200) ?: "no body"}" +
+                if (hint.isNotEmpty()) " — $hint" else ""
+            p2pManager.log("CLOUD_UPLOAD_FAILED HTTP $code projectId='$projectId'" +
+                if (hint.isNotEmpty()) " — $hint" else "", LogLevel.ERROR)
+            throw java.io.IOException(errorMsg)
         }
     }
 
@@ -242,7 +274,7 @@ class CloudLogManager(
         val maxId = batch.maxOf { it.id }
         prefs.edit { putLong(KEY_LAST_UPLOADED_ID, maxId) }
         totalUploaded += batch.size
-        Log.i(TAG, "LOGS_RELAYED_MESH count=${batch.size}")
+        p2pManager.log("LOGS_RELAYED_MESH count=${batch.size}")
     }
 
     /**
@@ -279,14 +311,14 @@ class CloudLogManager(
 
                 val url = "${FIRESTORE_BASE}$projectId" +
                     "/databases/(default)/documents/$COLLECTION?key=$apiKey"
-                val code = httpPost(url, doc.toString())
+                val (code, _) = httpPost(url, doc.toString())
                 if (code in 200..299) {
-                    Log.i(TAG, "RELAY_LOGS_UPLOADED for=$sourceDevice count=${logsArray.length()}")
+                    p2pManager.log("RELAY_LOGS_UPLOADED for=$sourceDevice count=${logsArray.length()}")
                 } else {
-                    Log.w(TAG, "RELAY_LOGS_UPLOAD_FAILED for=$sourceDevice HTTP=$code")
+                    p2pManager.log("RELAY_LOGS_UPLOAD_FAILED for=$sourceDevice HTTP=$code", LogLevel.WARN)
                 }
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to handle relayed logs: ${e.message}")
+                p2pManager.log("Failed to handle relayed logs: ${e.message}", LogLevel.ERROR)
             }
         }
     }
@@ -305,7 +337,7 @@ class CloudLogManager(
             try {
                 cleanupExpiredLogs()
             } catch (e: Exception) {
-                Log.e(TAG, "Cleanup error: ${e.message}")
+                p2pManager.log("Cleanup error: ${e.message}", LogLevel.ERROR)
             }
         }
     }
@@ -336,13 +368,13 @@ class CloudLogManager(
             }
         }
         if (deleted > 0) {
-            Log.i(TAG, "CLEANUP deleted=$deleted expired log batches")
+            p2pManager.log("CLEANUP deleted=$deleted expired log batches")
         }
     }
 
     // --- HTTP helpers (same pattern as InternetGatewayManager) ---
 
-    private fun httpPost(urlStr: String, body: String): Int {
+    private fun httpPost(urlStr: String, body: String): Pair<Int, String?> {
         val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
             setRequestProperty("Content-Type", "application/json")
@@ -352,7 +384,13 @@ class CloudLogManager(
         }
         return try {
             OutputStreamWriter(conn.outputStream, StandardCharsets.UTF_8).use { it.write(body) }
-            conn.responseCode
+            val code = conn.responseCode
+            val errorBody = if (code !in 200..299) {
+                try {
+                    conn.errorStream?.bufferedReader(StandardCharsets.UTF_8)?.use { it.readText() }
+                } catch (_: Exception) { null }
+            } else { null }
+            Pair(code, errorBody)
         } finally {
             conn.disconnect()
         }

@@ -3,6 +3,7 @@ package com.fyp.resilientp2p.security
 import android.content.Context
 import android.content.SharedPreferences
 import android.util.Log
+import com.fyp.resilientp2p.data.LogLevel
 import java.util.concurrent.ConcurrentHashMap
 import androidx.core.content.edit
 
@@ -67,6 +68,13 @@ class PeerBlacklist(
     /** Rate-limit violation counter per peer, keyed by "peerId:reason" (session-scoped). */
     private val violationCounts = ConcurrentHashMap<String, Int>()
 
+    /** Log callback — routes through P2PManager.log() when wired. */
+    var logFn: ((String, LogLevel) -> Unit)? = null
+
+    private fun log(msg: String, level: LogLevel = LogLevel.DEBUG) {
+        logFn?.invoke(msg, level) ?: Log.d(TAG, msg)
+    }
+
     init {
         // Load persisted blacklist
         val savedPeers = prefs.getStringSet(KEY_BLACKLIST, emptySet()) ?: emptySet()
@@ -102,7 +110,7 @@ class PeerBlacklist(
         // Ban expired — remove
         blacklist.remove(peerId)
         persist()
-        Log.i(TAG, "AUTO_UNBAN peer=$peerId (ban expired)")
+        log("AUTO_UNBAN peer=$peerId (ban expired)", LogLevel.INFO)
         return false
     }
 
@@ -117,7 +125,7 @@ class PeerBlacklist(
         blacklist[peerId] = expiryMs
         persist()
         val expiryStr = if (expiryMs == PERMANENT) "permanent" else "${(expiryMs - System.currentTimeMillis()) / 60000}min"
-        Log.w(TAG, "BLACKLISTED peer=$peerId reason=$reason expiry=$expiryStr")
+        log("BLACKLISTED peer=$peerId reason=$reason expiry=$expiryStr", LogLevel.WARN)
     }
 
     /**
@@ -127,7 +135,7 @@ class PeerBlacklist(
         if (blacklist.remove(peerId) != null) {
             resetViolations(peerId)
             persist()
-            Log.i(TAG, "UNBLACKLISTED peer=$peerId")
+            log("UNBLACKLISTED peer=$peerId", LogLevel.INFO)
         }
     }
 
@@ -156,7 +164,7 @@ class PeerBlacklist(
     fun recordViolation(peerId: String, reason: String = "rate_limit"): Boolean {
         val key = "$peerId:$reason"
         val count = violationCounts.merge(key, 1) { old, inc -> old + inc } ?: 1
-        Log.d(TAG, "Violation peer=$peerId reason=$reason count=$count")
+        log("Violation peer=$peerId reason=$reason count=$count")
 
         // Only rate-limit violations trigger auto-blacklisting
         if (reason == "rate_limit" && autoBlacklistAfterViolations > 0 &&
@@ -181,7 +189,7 @@ class PeerBlacklist(
     fun resetViolations(peerId: String) {
         val removed = violationCounts.keys.removeAll { it.startsWith("$peerId:") }
         if (removed) {
-            Log.d(TAG, "Reset violations for peer=$peerId")
+            log("Reset violations for peer=$peerId")
         }
     }
 
@@ -204,7 +212,7 @@ class PeerBlacklist(
         violationCounts.clear()
         banCounts.clear()
         persist()
-        Log.i(TAG, "Blacklist cleared")
+        log("Blacklist cleared", LogLevel.INFO)
     }
 
     private fun persist() {

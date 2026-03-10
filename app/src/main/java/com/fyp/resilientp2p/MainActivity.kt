@@ -14,7 +14,6 @@ import android.view.MenuItem
 import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.TextView
-import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
@@ -542,12 +541,18 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 withContext(Dispatchers.Main) {
-                    Toast.makeText(
-                                    this@MainActivity,
-                                    getString(R.string.logs_saved_toast, file.absolutePath),
-                                    Toast.LENGTH_LONG
-                            )
-                            .show()
+                    val uri = androidx.core.content.FileProvider.getUriForFile(
+                            this@MainActivity,
+                            "$packageName.fileprovider",
+                            file
+                    )
+                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                        type = "text/csv"
+                        putExtra(Intent.EXTRA_STREAM, uri)
+                        putExtra(Intent.EXTRA_SUBJECT, "P2P Logs — $fileName")
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                    startActivity(Intent.createChooser(shareIntent, "Share Logs"))
                     p2pManager.log("LOGS_EXPORTED path='${file.absolutePath}' entries=${logs.size}")
                 }
             } catch (e: Exception) {

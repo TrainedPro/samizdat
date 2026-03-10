@@ -19,6 +19,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.CloudOff
+import androidx.compose.material.icons.filled.CloudUpload
 // import androidx.compose.material.icons.filled.Forum  // Phase 4
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Link
@@ -88,6 +89,7 @@ fun ResilientP2PApp(
     chatDao: ChatDao? = null,
     telemetryManager: TelemetryManager? = null,
     emergencyManager: com.fyp.resilientp2p.managers.EmergencyManager? = null,
+    cloudLogManager: com.fyp.resilientp2p.managers.CloudLogManager? = null,
     @Suppress("UNUSED_PARAMETER") chatGroupDao: com.fyp.resilientp2p.data.ChatGroupDao? = null,
     @Suppress("UNUSED_PARAMETER") groupMessageDao: com.fyp.resilientp2p.data.GroupMessageDao? = null,
     @Suppress("UNUSED_PARAMETER") locationEstimator: com.fyp.resilientp2p.managers.LocationEstimator? = null
@@ -633,7 +635,8 @@ fun ResilientP2PApp(
                                         chatTargetId = peerId
                                         showChatDialog = true
                                 },
-                                telemetryManager = telemetryManager
+                                telemetryManager = telemetryManager,
+                                cloudLogManager = cloudLogManager
                         )
                 }
         }
@@ -972,7 +975,8 @@ fun DashboardContent(
         knownPeers: Map<String, RouteInfo>,
         connectedEndpoints: Set<String>,
         onPeerClick: (String) -> Unit,
-        telemetryManager: TelemetryManager? = null
+        telemetryManager: TelemetryManager? = null,
+        cloudLogManager: com.fyp.resilientp2p.managers.CloudLogManager? = null
 ) {
         Column(modifier = Modifier.fillMaxWidth()) {
                 // --- Active Transfer Progress (only during active transfer, not after completion) ---
@@ -1037,6 +1041,12 @@ fun DashboardContent(
                 // --- Telemetry Section ---
                 if (telemetryManager != null) {
                         TelemetrySection(telemetryManager = telemetryManager)
+                        Spacer(modifier = Modifier.height(16.dp))
+                }
+
+                // --- Cloud Log Sync Section ---
+                if (cloudLogManager != null) {
+                        CloudLogSection(cloudLogManager = cloudLogManager)
                         Spacer(modifier = Modifier.height(16.dp))
                 }
 
@@ -1645,6 +1655,114 @@ fun TelemetrySection(telemetryManager: TelemetryManager) {
                                                                 if (telemetryManager.wifiOnlyUpload) "Any Net" else "WiFi Only",
                                                                 fontSize = 11.sp
                                                         )
+                                                }
+                                        }
+                                }
+                        }
+                }
+        }
+}
+
+@Composable
+fun CloudLogSection(cloudLogManager: com.fyp.resilientp2p.managers.CloudLogManager) {
+        var isExpanded by remember { mutableStateOf(false) }
+
+        Card(
+                colors = CardDefaults.cardColors(containerColor = colorScheme.surfaceVariant),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth().clickable { isExpanded = !isExpanded }
+        ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                        Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                        ) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                                Icons.Default.CloudUpload,
+                                                contentDescription = null,
+                                                modifier = Modifier.size(20.dp),
+                                                tint = colorScheme.onSurface
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(
+                                                text = "Cloud Log Sync",
+                                                style = MaterialTheme.typography.titleMedium,
+                                                fontWeight = FontWeight.Bold,
+                                                color = colorScheme.onSurface
+                                        )
+                                }
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                                imageVector = if (cloudLogManager.isEnabled) Icons.Default.Check else Icons.Default.Close,
+                                                contentDescription = if (cloudLogManager.isEnabled) "Enabled" else "Disabled",
+                                                modifier = Modifier.size(16.dp),
+                                                tint = if (cloudLogManager.isEnabled) Color(0xFF2E7D32) else colorScheme.error
+                                        )
+                                        Spacer(modifier = Modifier.width(8.dp))
+                                        Text(
+                                                text = if (isExpanded) "\u25B2" else "\u25BC",
+                                                color = colorScheme.onSurfaceVariant,
+                                                fontSize = 12.sp
+                                        )
+                                }
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                                StatChip(label = "Uploaded", value = "${cloudLogManager.totalUploaded}")
+                                StatChip(
+                                        label = "Last Sync",
+                                        value = if (cloudLogManager.lastUploadTime > 0) {
+                                                val ago = (System.currentTimeMillis() - cloudLogManager.lastUploadTime) / 1000
+                                                "${ago}s ago"
+                                        } else {
+                                                "Never"
+                                        }
+                                )
+                                StatChip(
+                                        label = "Mode",
+                                        value = if (cloudLogManager.isEnabled) "Auto" else "Off"
+                                )
+                        }
+
+                        AnimatedVisibility(visible = isExpanded) {
+                                Column(modifier = Modifier.padding(top = 12.dp)) {
+                                        StatsRow("Enabled", if (cloudLogManager.isEnabled) "Yes" else "No")
+                                        StatsRow("Total Uploaded", "${cloudLogManager.totalUploaded}")
+                                        if (cloudLogManager.lastUploadTime > 0) {
+                                                val ago = (System.currentTimeMillis() - cloudLogManager.lastUploadTime) / 1000
+                                                StatsRow("Last Sync", "${ago}s ago")
+                                        }
+                                        StatsRow(
+                                                "Firebase",
+                                                if (com.fyp.resilientp2p.managers.TelemetryUploadWorker.isFirebaseConfigured)
+                                                        "Configured" else "Not configured"
+                                        )
+
+                                        Spacer(modifier = Modifier.height(8.dp))
+
+                                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                                OutlinedButton(
+                                                        onClick = {
+                                                                cloudLogManager.isEnabled = !cloudLogManager.isEnabled
+                                                        },
+                                                        modifier = Modifier.weight(1f)
+                                                ) {
+                                                        Text(
+                                                                if (cloudLogManager.isEnabled) "Disable" else "Enable",
+                                                                fontSize = 11.sp
+                                                        )
+                                                }
+                                                OutlinedButton(
+                                                        onClick = { cloudLogManager.forceUpload() },
+                                                        modifier = Modifier.weight(1f)
+                                                ) {
+                                                        Text("Sync Now", fontSize = 11.sp)
                                                 }
                                         }
                                 }

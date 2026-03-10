@@ -25,6 +25,7 @@ let autoRefreshTimer = null;
 let allDevices = [];
 let allEvents = [];
 let allRelayMessages = [];
+let allDeviceLogs = [];
 let charts = {};
 
 // ============================================================
@@ -150,19 +151,24 @@ async function refreshAll() {
   btn.disabled = true;
 
   try {
-    const [devices, events, relay] = await Promise.all([
+    const [devices, events, relay, deviceLogs] = await Promise.all([
       firestoreGet("devices").catch(() => []),
       firestoreGet("telemetry").catch(() => []),
       firestoreGet("mesh_relay").catch(() => []),
+      firestoreGet("device_logs").catch(() => []),
     ]);
 
     allDevices = devices;
     allEvents = events.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
     allRelayMessages = relay;
+    allDeviceLogs = deviceLogs.sort(
+      (a, b) => (b.batchTimestamp || 0) - (a.batchTimestamp || 0),
+    );
 
     renderDevices();
     renderEvents();
     renderRelayQueue();
+    renderDeviceLogs();
     updateSummaryCards();
     updateCharts();
     renderTestResults();
@@ -743,4 +749,133 @@ function formatDuration(ms) {
   if (h < 24) return `${h}h ${m % 60}m`;
   const d = Math.floor(h / 24);
   return `${d}d ${h % 24}h`;
+}
+
+// ============================================================
+// Device Logs (Cloud-Synced)
+// ============================================================
+
+async function refreshDeviceLogs() {
+  try {
+    allDeviceLogs = (await firestoreGet("device_logs")).sort(
+      (a, b) => (b.batchTimestamp || 0) - (a.batchTimestamp || 0),
+    );
+    renderDeviceLogs();
+  } catch (err) {
+    console.error("Device logs refresh failed:", err);
+  }
+}
+
+function renderDeviceLogs() {
+  const container = document.getElementById("device-log-container");
+  const deviceFilter = document.getElementById("device-log-device-filter");
+
+  // Populate device filter dropdown
+  const deviceIds = [
+    ...new Set(allDeviceLogs.map((b) => b.deviceId).filter(Boolean)),
+  ];
+  const currentFilter = deviceFilter.value;
+  deviceFilter.innerHTML = '<option value="">All Devices</option>';
+  deviceIds.forEach((id) => {
+    const opt = document.createElement("option");
+    opt.value = id;
+    opt.textContent = id;
+    deviceFilter.appendChild(opt);
+  });
+  deviceFilter.value = currentFilter;
+
+  filterDeviceLogs();
+}
+
+function filterDeviceLogs() {
+  const container = document.getElementById("device-log-container");
+  const deviceFilter = document.getElementById(
+    "device-log-device-filter",
+  ).value;
+  const levelFilter = document.getElementById(
+    "device-log-level-filter",
+  ).value;
+  const searchText = document
+    .getElementById("device-log-search")
+    .value.toLowerCase();
+
+  // Flatten all log batches into individual entries
+  let entries = [];
+  for (const batch of allDeviceLogs) {
+    if (deviceFilter && batch.deviceId !== deviceFilter) continue;
+    let logs;
+    try {
+      logs = typeof batch.logs === "string" ? JSON.parse(batch.logs) : [];
+    } catch {
+      continue;
+    }
+    for (const log of logs) {
+      entries.push({
+        device: batch.deviceId || "unknown",
+        uploadedBy: batch.uploadedBy || batch.deviceId || "unknown",
+        ts: log.ts || 0,
+        lvl: log.lvl || "INFO",
+        type: log.type || "SYSTEM",
+        msg: log.msg || "",
+        peer: log.peer || "",
+        rssi: log.rssi,
+        lat: log.lat,
+      });
+    }
+  }
+
+  // Apply level filter
+  if (levelFilter) {
+    entries = entries.filter((e) => e.lvl === levelFilter);
+  }
+
+  // Apply search filter
+  if (searchText) {
+    entries = entries.filter(
+      (e) =>
+        e.msg.toLowerCase().includes(searchText) ||
+        e.device.toLowerCase().includes(searchText) ||
+        e.peer.toLowerCase().includes(searchText),
+    );
+  }
+
+  // Sort by timestamp descending
+  entries.sort((a, b) => b.ts - a.ts);
+
+  // Limit display
+  const maxDisplay = 500;
+  const displayed = entries.slice(0, maxDisplay);
+
+  if (displayed.length === 0) {
+    container.innerHTML = '<div class="empty-row">No logs match filters</div>';
+    return;
+  }
+
+  const levelColors = {
+    ERROR: "#ef5350",
+    WARN: "#ffa726",
+    METRIC: "#7e57c2",
+    INFO: "#66bb6a",
+    DEBUG: "#78909c",
+    TRACE: "#90a4ae",
+  };
+
+  container.innerHTML = displayed
+    .map((e) => {
+      const time = new Date(e.ts).toLocaleTimeString();
+      const color = levelColors[e.lvl] || "#ccc";
+      const relayed = e.device !== e.uploadedBy ? " ☁" : "";
+      const peerTag = e.peer ? ` [${escapeHtml(e.peer)}]` : "";
+      return `<div class="event-entry">
+        <span class="event-time">${time}</span>
+        <span class="event-badge" style="background:${color}">${e.lvl}</span>
+        <span class="event-device">${escapeHtml(e.device)}${relayed}</span>
+        <span class="event-msg">${peerTag} ${escapeHtml(e.msg)}</span>
+      </div>`;
+    })
+    .join("");
+
+  if (entries.length > maxDisplay) {
+    container.innerHTML += `<div class="empty-row">Showing ${maxDisplay} of ${entries.length} logs</div>`;
+  }
 }

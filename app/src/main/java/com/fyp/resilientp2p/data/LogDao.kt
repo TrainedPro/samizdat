@@ -30,4 +30,7 @@ interface LogDao {
 
     @Query("SELECT * FROM logs WHERE (level = 'ERROR' OR level = 'WARN') AND timestamp > :since ORDER BY timestamp ASC LIMIT :limit")
     suspend fun getErrorLogsSince(since: Long, limit: Int): List<LogEntry>
+
+    @Query("SELECT * FROM logs WHERE id > :afterId ORDER BY id ASC LIMIT :limit")
+    suspend fun getLogsSince(afterId: Long, limit: Int): List<LogEntry>
 }

@@ -238,6 +238,39 @@
           </div>
         </div>
       </div>
+
+      <!-- Device Logs (Cloud-Synced) -->
+      <div class="panel">
+        <div class="panel-header">
+          <h2>📄 Device Logs (Cloud-Synced)</h2>
+          <div class="log-controls">
+            <select id="device-log-device-filter" onchange="filterDeviceLogs()">
+              <option value="">All Devices</option>
+            </select>
+            <select id="device-log-level-filter" onchange="filterDeviceLogs()">
+              <option value="">All Levels</option>
+              <option value="ERROR">ERROR</option>
+              <option value="WARN">WARN</option>
+              <option value="METRIC">METRIC</option>
+              <option value="INFO">INFO</option>
+            </select>
+            <input
+              type="text"
+              id="device-log-search"
+              placeholder="Search logs..."
+              oninput="filterDeviceLogs()"
+            />
+            <button class="btn btn-sm btn-outline" onclick="refreshDeviceLogs()">
+              Refresh
+            </button>
+          </div>
+        </div>
+        <div class="panel-body log-panel">
+          <div id="device-log-container" class="event-log">
+            <div class="empty-row">No cloud logs loaded</div>
+          </div>
+        </div>
+      </div>
     </section>
 
     <footer>

@@ -183,6 +183,8 @@ class P2PManager(
     var encounterLogger: EncounterLogger? = null
     /** Content-addressable file sharing manager. Set by [P2PApplication]. */
     var fileShareManager: FileShareManager? = null
+    /** Cloud log upload manager. Set by [P2PApplication]. */
+    var cloudLogManager: CloudLogManager? = null
     /** Group message handler callback — set to a lambda that persists and distributes. */
     var groupMessageHandler: ((com.fyp.resilientp2p.transport.Packet) -> Unit)? = null
 
@@ -1410,8 +1412,18 @@ class P2PManager(
 
         when (packet.type) {
             PacketType.DATA -> {
+                val textContent = String(packet.payload, StandardCharsets.UTF_8)
+
+                // Intercept log relay packets — gateways upload on behalf of offline peers
+                if (textContent.startsWith(CloudLogManager.LOG_RELAY_PREFIX)) {
+                    cloudLogManager?.handleRelayedLogs(
+                        textContent.removePrefix(CloudLogManager.LOG_RELAY_PREFIX)
+                    )
+                    return
+                }
+
                 log(
-                        "Message: ${String(packet.payload, StandardCharsets.UTF_8)}",
+                        "Message: $textContent",
                         com.fyp.resilientp2p.data.LogLevel.INFO,
                         com.fyp.resilientp2p.data.LogType.CHAT,
                         packet.sourceId

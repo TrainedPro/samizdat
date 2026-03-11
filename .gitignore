@@ -14,4 +14,25 @@
 .cxx
 local.properties
 samples
+
+# Logs — device exports, test results
+logs/
+
+# LaTeX intermediary files
+documents/**/*.aux
+documents/**/*.log
+documents/**/*.nav
+documents/**/*.out
+documents/**/*.snm
+documents/**/*.toc
+documents/**/*.atfi
+documents/**/*.synctex.gz
+documents/**/*.fls
+documents/**/*.fdb_latexmk
+documents/**/*.bbl
+documents/**/*.blg
+
+# Generated slide/test data docs
+SLIDE_DATA.md
+TESTING_GUIDE.md
 *.log

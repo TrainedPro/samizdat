@@ -792,9 +792,7 @@ function filterDeviceLogs() {
   const deviceFilter = document.getElementById(
     "device-log-device-filter",
   ).value;
-  const levelFilter = document.getElementById(
-    "device-log-level-filter",
-  ).value;
+  const levelFilter = document.getElementById("device-log-level-filter").value;
   const searchText = document
     .getElementById("device-log-search")
     .value.toLowerCase();

@@ -1744,6 +1744,17 @@ fun CloudLogSection(cloudLogManager: com.fyp.resilientp2p.managers.CloudLogManag
                                                         "Configured" else "Not configured"
                                         )
 
+                                        val uploadErr = cloudLogManager.uploadError
+                                        if (uploadErr != null) {
+                                                Spacer(modifier = Modifier.height(4.dp))
+                                                Text(
+                                                        text = uploadErr,
+                                                        color = colorScheme.error,
+                                                        fontSize = 11.sp,
+                                                        maxLines = 2
+                                                )
+                                        }
+
                                         Spacer(modifier = Modifier.height(8.dp))
 
                                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

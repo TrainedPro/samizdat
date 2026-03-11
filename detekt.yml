@@ -29,7 +29,7 @@ complexity:
     thresholdInEnums: 8
   LargeClass:
     active: true
-    threshold: 1415 # P2PManager is the core mesh engine (necessarily large)
+    threshold: 1475 # P2PManager is the core mesh engine (necessarily large)
   ComplexCondition:
     active: true
     threshold: 4

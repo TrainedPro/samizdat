@@ -10,33 +10,108 @@ import json
 import sys
 
 def generate_erd_content():
-    # Manual definition based on AppDatabase.kt, LogEntry.kt, PacketEntity.kt
+    # Complete schema: AppDatabase v9 — 9 entities
     return """erDiagram
-    LOGS {
-        long id PK
-        long timestamp
-        string type
-        string peerId
-        string message
-        string level
-        string logType
-        int rssi
-        long latencyMs
-        int payloadSizeBytes
+    logs {
+        Long id PK "autoGenerate"
+        Long timestamp "Indexed"
+        String message
+        LogLevel level "enum"
+        LogType logType "enum"
+        String peerId "nullable"
+        Int rssi "nullable"
+        Long latencyMs "nullable"
+        Int payloadSizeBytes "nullable"
     }
 
-    PACKET_QUEUE {
-        string id PK
-        string destId
-        string type
-        byte_array payload
-        long timestamp
-        long expiration
-        string sourceId
+    packet_queue {
+        String id PK "UUID dedup"
+        String destId "Indexed"
+        String type "PacketType name"
+        ByteArray payload
+        Long timestamp
+        Long expiration "Indexed"
+        String sourceId
     }
 
-    %% Relationships can be implied or explicit if any
-    %% In this simple schema, tables are independent queues/logs
+    chat_messages {
+        Long id PK "autoGenerate"
+        Long timestamp "Indexed"
+        String peerId "Indexed"
+        Boolean isOutgoing
+        MessageType type "enum TEXT IMAGE FILE SYSTEM"
+        String text "nullable"
+        String fileName "nullable"
+        String filePath "nullable"
+        String mimeType "nullable"
+        Long fileSize
+        Int transferProgress "0-100 or -1"
+        Boolean isBroadcast
+    }
+
+    chat_groups {
+        String groupId PK "UUID"
+        String name "Unique Index"
+        String createdBy
+        Long createdAt
+        String members "comma-separated"
+    }
+
+    group_messages {
+        Long id PK "autoGenerate"
+        String groupId FK "Indexed"
+        String senderName
+        String text
+        Long timestamp "Indexed"
+        String packetId "Unique Index"
+    }
+
+    telemetry_events {
+        Long id PK "autoGenerate"
+        Long timestamp "Indexed"
+        String deviceId
+        TelemetryEventType eventType "enum"
+        String payload "JSON"
+        Boolean uploaded "Indexed"
+        Int uploadAttempts
+    }
+
+    shared_files {
+        String sha256 PK "SHA-256 hash"
+        String fileName
+        String mimeType
+        Long fileSize
+        Int chunkSize "32KB default"
+        Int totalChunks
+        String sharedBy "Indexed"
+        Long announcedAt "Indexed"
+        String localPath "nullable"
+        Int downloadedChunks
+    }
+
+    downloaded_chunks {
+        String sha256 PK "composite FK"
+        Int chunkIndex PK "composite"
+    }
+
+    encounter_log {
+        Long id PK "autoGenerate"
+        String localPeer
+        String remotePeer "Indexed"
+        Long startTime "Indexed"
+        Long endTime
+        Int packetsExchanged
+        Long bytesExchanged
+        Int rssi
+    }
+
+    %% Enforced relationships
+    shared_files ||--o{ downloaded_chunks : "sha256"
+    chat_groups ||--o{ group_messages : "groupId"
+
+    %% Application-level associations (not FK-enforced)
+    chat_messages }o--|| packet_queue : "peerId (implicit)"
+    encounter_log }o--|| logs : "peer references (implicit)"
 """
 
 def run_pdf_generation(mermaid_file, output_pdf):

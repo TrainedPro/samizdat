@@ -35,4 +35,6 @@ documents/**/*.blg
 # Generated slide/test data docs
 SLIDE_DATA.md
 TESTING_GUIDE.md
+CODE_README.md
+FYP2_PROGRESS.md
 *.log

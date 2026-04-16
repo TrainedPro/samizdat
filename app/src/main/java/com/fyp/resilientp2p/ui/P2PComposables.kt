@@ -19,8 +19,8 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.CloudOff
-import androidx.compose.material.icons.filled.CloudUpload
-// import androidx.compose.material.icons.filled.Forum  // Phase 4
+ import androidx.compose.material.icons.filled.CloudUpload
+ import androidx.compose.material.icons.filled.Forum
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.LocationOn
@@ -99,9 +99,9 @@ fun ResilientP2PApp(
 
         // Test mode state
         var showTestMode by rememberSaveable { mutableStateOf(false) }
-        // Phase 4 screen states (hidden for midterm)
-        // var showHealthDashboard by rememberSaveable { mutableStateOf(false) }
-        // var showGroupChat by rememberSaveable { mutableStateOf(false) }
+         // Phase 4 screen states (hidden for midterm)
+         var showHealthDashboard by rememberSaveable { mutableStateOf(false) }
+         var showGroupChat by rememberSaveable { mutableStateOf(false) }
 
         // Auto-launch test mode when compiled with TEST_MODE=true
         LaunchedEffect(Unit) {
@@ -158,8 +158,8 @@ fun ResilientP2PApp(
                                 val text = String(pkt.payload, java.nio.charset.StandardCharsets.UTF_8)
                                 if (!text.startsWith("__TEST__") && !text.startsWith("__ENDURANCE__")) {
                                         val isBroadcast = pkt.destId == "BROADCAST"
-                                        val chatIsOpen = showChatDialog && chatTargetId == pkt.sourceId ||
-                                                false // showGroupChat hidden for midterm
+                 val chatIsOpen = showChatDialog && chatTargetId == pkt.sourceId ||
+                         showGroupChat // showGroupChat enabled
                                         if (!chatIsOpen) {
                                                 val preview = text.take(40).let {
                                                         if (text.length > 40) "$it..." else it
@@ -211,39 +211,38 @@ fun ResilientP2PApp(
                                                                 showMenu = false
                                                                 showAdvancedOptions = true
                                                         }
-                                                )
-                                                /* Phase 4 — hidden for midterm
-                                                DropdownMenuItem(
-                                                        leadingIcon = {
-                                                                Icon(
-                                                                        Icons.Default.BarChart,
-                                                                        contentDescription = null,
-                                                                        modifier = Modifier.size(18.dp)
-                                                                )
-                                                        },
-                                                        text = { Text("Health Dashboard") },
-                                                        onClick = {
-                                                                showMenu = false
-                                                                showHealthDashboard = true
-                                                        }
-                                                )
-                                                if (chatGroupDao != null && groupMessageDao != null) {
-                                                        DropdownMenuItem(
-                                                                leadingIcon = {
-                                                                        Icon(
-                                                                                Icons.Default.Forum,
-                                                                                contentDescription = null,
-                                                                                modifier = Modifier.size(18.dp)
-                                                                        )
-                                                                },
-                                                                text = { Text("Group Chat") },
-                                                                onClick = {
-                                                                        showMenu = false
-                                                                        showGroupChat = true
-                                                                }
-                                                        )
-                                                }
-                                                */
+                                                 )
+                                                 
+                                                 DropdownMenuItem(
+                                                         leadingIcon = {
+                                                                 Icon(
+                                                                         Icons.Default.BarChart,
+                                                                         contentDescription = null,
+                                                                         modifier = Modifier.size(18.dp)
+                                                                 )
+                                                         },
+                                                         text = { Text("Health Dashboard") },
+                                                         onClick = {
+                                                                 showMenu = false
+                                                                 showHealthDashboard = true
+                                                         }
+                                                 )
+                                                 if (chatGroupDao != null && groupMessageDao != null) {
+                                                         DropdownMenuItem(
+                                                                 leadingIcon = {
+                                                                         Icon(
+                                                                                 Icons.Default.Forum,
+                                                                                 contentDescription = null,
+                                                                                 modifier = Modifier.size(18.dp)
+                                                                         )
+                                                                 },
+                                                                 text = { Text("Group Chat") },
+                                                                 onClick = {
+                                                                         showMenu = false
+                                                                         showGroupChat = true
+                                                                 }
+                                                         )
+                                                 }
                                                 if (testRunner != null) {
                                                         DropdownMenuItem(
                                                                 leadingIcon = {
@@ -647,8 +646,8 @@ fun ResilientP2PApp(
         ) {
                 when {
                         showTestMode -> showTestMode = false
-                        // showHealthDashboard -> showHealthDashboard = false  // Phase 4
-                        // showGroupChat -> showGroupChat = false  // Phase 4
+                         showHealthDashboard -> showHealthDashboard = false  // Phase 4
+                         showGroupChat -> showGroupChat = false  // Phase 4
                         showChatDialog -> showChatDialog = false
                 }
         }
@@ -755,27 +754,26 @@ fun ResilientP2PApp(
                 )
         }
 
-        /* Phase 4 — hidden for midterm
-        // Health dashboard overlay
-        if (showHealthDashboard) {
-                HealthDashboard(
-                        p2pManager = p2pManager,
-                        locationEstimator = locationEstimator,
-                        onBack = { showHealthDashboard = false }
-                )
-        }
+         
+         // Health dashboard overlay
+         if (showHealthDashboard) {
+                 HealthDashboard(
+                         p2pManager = p2pManager,
+                         locationEstimator = locationEstimator,
+                         onBack = { showHealthDashboard = false }
+                 )
+         }
 
-        // Group chat overlay
-        if (showGroupChat && chatGroupDao != null && groupMessageDao != null) {
-                GroupChatScreen(
-                        p2pManager = p2pManager,
-                        chatGroupDao = chatGroupDao,
-                        groupMessageDao = groupMessageDao,
-                        localUsername = state.localDeviceName,
-                        onBack = { showGroupChat = false }
-                )
-        }
-        */
+         // Group chat overlay
+         if (showGroupChat && chatGroupDao != null && groupMessageDao != null) {
+                 GroupChatScreen(
+                         p2pManager = p2pManager,
+                         chatGroupDao = chatGroupDao,
+                         groupMessageDao = groupMessageDao,
+                         localUsername = state.localDeviceName,
+                         onBack = { showGroupChat = false }
+                 )
+         }
 }
 
 @Composable

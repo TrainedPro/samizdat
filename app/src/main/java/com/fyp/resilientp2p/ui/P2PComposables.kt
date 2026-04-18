@@ -19,8 +19,8 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.CloudOff
- import androidx.compose.material.icons.filled.CloudUpload
- import androidx.compose.material.icons.filled.Forum
+import androidx.compose.material.icons.filled.CloudUpload
+import androidx.compose.material.icons.filled.Forum
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.LocationOn

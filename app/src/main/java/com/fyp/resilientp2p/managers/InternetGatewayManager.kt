@@ -197,11 +197,24 @@ class InternetGatewayManager(
                     continue
                 }
 
-                // Check if destId is on our mesh
+                // Check if destId is on our mesh (direct neighbors + routed peers)
                 if (destId in localPeers) {
                     p2pManager.log("RELAY_INJECT dest=$destId from=$sourceId packetId=${packetId.take(8)}")
-                    // Inject into local mesh via P2PManager
-                    p2pManager.sendData(destId, "[RELAY:$sourceId] $payload")
+                    // Reconstruct the original Packet and inject through the full routing engine.
+                    // Using sendData() was wrong: it set gateway as sourceId and discarded
+                    // the original packetId (breaking dedup), type, and E2E key lookup.
+                    // injectPacket() feeds into handlePacket(LOCAL_SOURCE) — same path as
+                    // EmergencyManager uses for injecting emergency packets.
+                    val relayPacket = com.fyp.resilientp2p.transport.Packet(
+                        id = packetId.ifBlank { java.util.UUID.randomUUID().toString() },
+                        type = com.fyp.resilientp2p.transport.PacketType.DATA,
+                        sourceId = sourceId,
+                        destId = destId,
+                        payload = payload.toByteArray(java.nio.charset.StandardCharsets.UTF_8),
+                        timestamp = timestamp,
+                        ttl = com.fyp.resilientp2p.transport.Packet.DEFAULT_TTL
+                    )
+                    p2pManager.injectPacket(relayPacket)
                     // Delete from relay after delivery
                     deleteRelayMessage(doc.getString("name"))
                 }

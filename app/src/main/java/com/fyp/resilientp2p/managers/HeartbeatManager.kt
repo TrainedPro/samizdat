@@ -113,14 +113,19 @@ class HeartbeatManager(private val p2pManager: P2PManager) {
                         isEnabled = newEnabled
                 )
 
+        // Nothing changed — skip restart to avoid unnecessary PING gap
+        if (newConfig == current) return
+
         if (newEnabled && !current.isEnabled) {
             startHeartbeat(newConfig)
         } else if (!newEnabled && current.isEnabled) {
             stopHeartbeat()
         } else if (newEnabled) {
-            // Restart if config changed while enabled
-            stopHeartbeat()
-            startHeartbeat(newConfig)
+            // Restart only if interval or payload actually changed
+            if (newConfig.intervalMs != current.intervalMs || newConfig.payloadSizeBytes != current.payloadSizeBytes) {
+                stopHeartbeat()
+                startHeartbeat(newConfig)
+            }
         }
         _config.value = newConfig
     }

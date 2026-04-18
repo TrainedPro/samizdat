@@ -135,6 +135,8 @@ class P2PManager(
     private val routingLock = Any()
     private val routeLastSeen = ConcurrentHashMap<String, Long>() // destId -> timestamp
     private val messageCache = MessageCache(capacity = 2000) // 2000 items capacity
+    /** Neighbor endpoints that advertise internet gateway capability via ROUTE_ANNOUNCE. */
+    private val gatewayNeighbors = ConcurrentHashMap.newKeySet<String>() // endpointId
 
     // Configuration
     private val strategy = Strategy.P2P_CLUSTER
@@ -672,6 +674,7 @@ class P2PManager(
                     activeTransferEndpoints.remove(endpointId)
                     pendingKeyExchange.remove(endpointId)
                     keyExchangeTimestamps.remove(peerName)
+                    gatewayNeighbors.remove(endpointId) // Clear gateway flag on disconnect
 
                     // Remove all routes that went through this neighbor - SYNCHRONIZED
                     val lostRoutes = synchronized(routingLock) {
@@ -935,6 +938,7 @@ class P2PManager(
         if (routingJob?.isActive == true) return
         routingJob =
         scope.launch {
+            var consecutiveErrors = 0
             while (isActive) {
                 delay(15000L + (0..5000).random().toLong())
 
@@ -950,15 +954,22 @@ class P2PManager(
 
                     // Maintenance
                     pruneRoutes()
+                    consecutiveErrors = 0 // Reset backoff on success
                 } catch (e: Exception) {
+                    consecutiveErrors++
+                    // Exponential backoff: 5s, 10s, 20s, 40s, capped at 60s
+                    val backoffMs = minOf(5000L * (1L shl (consecutiveErrors - 1).coerceAtMost(3)), 60_000L)
                     log(
-                            "Error in Routing Update Loop: ${e.message}",
+                            "Error in Routing Update Loop (attempt $consecutiveErrors): ${e.message} " +
+                            "— backing off ${backoffMs}ms",
                             com.fyp.resilientp2p.data.LogLevel.ERROR
                     )
+                    delay(backoffMs)
                 }
             }
         }
     }
+
 
     private fun pruneRoutes() {
         synchronized(routingLock) {
@@ -1267,44 +1278,47 @@ class P2PManager(
         try {
             context.unregisterReceiver(batteryReceiver)
         } catch (_: Exception) {}
-        // 1. Cancel coroutines FIRST to stop background work
-        routingJob?.cancel()
+
+        // 1. Null out all job references BEFORE cancelling the scope so that
+        //    any concurrent startXxx() calls don't see "isActive == true" and skip
+        //    re-launching after the new scope is created.
         routingJob = null
-        statsDumpJob?.cancel()
         statsDumpJob = null
+        storeForwardJob = null
+        reconnectionJob = null
+
+        // 2. Cancel the supervisorJob — this immediately propagates CancellationException
+        //    to ALL child coroutines atomically. No child can launch new work after this.
         supervisorJob.cancel()
 
-        // 2. Recreate scope IMMEDIATELY to prevent old coroutines from accessing cleared data
-        supervisorJob = SupervisorJob()
-        scope = CoroutineScope(Dispatchers.IO + supervisorJob)
-
-        // 3. Stop connections client
-        connectionsClient.stopAllEndpoints()
-
-        // 4. Clear data atomically under lock
+        // 3. Clear all data structures AFTER cancellation is initiated.
+        //    Children are now in a cancelled state and will not access maps again.
         synchronized(routingLock) {
             neighbors.clear()
             routingTable.clear()
             routingScores.clear()
             routeLastSeen.clear()
         }
-
-        // 5. Clear all auxiliary state
         reconnectionQueue.clear()
-        reconnectionJob?.cancel()
-        reconnectionJob = null
         activeTransferEndpoints.clear()
         pendingMessages.clear()
         connectionTimestamps.clear()
-        storeForwardJob?.cancel()
-        storeForwardJob = null
         messageCache.clear()
+        gatewayNeighbors.clear()
         securityManager?.destroy()
 
-        // 6. Reset state atomically
+        // 4. Stop Nearby Connections (safe to do after map clear; uses its own internal state).
+        connectionsClient.stopAllEndpoints()
+
+        // 5. Recreate scope so the manager can be restarted (start() → stopAll() → start()).
+        supervisorJob = SupervisorJob()
+        scope = CoroutineScope(Dispatchers.IO + supervisorJob)
+
+        // 6. Reset state atomically on the new scope.
         _state.update { P2PState(localDeviceName = localUsername) }
         log("STOP_ALL completed. All state cleared.")
     }
+
 
     // --- Nearby Connections Actions ---
 
@@ -1492,7 +1506,7 @@ class P2PManager(
             // Always flood emergency regardless of destination (entire mesh must see it)
             // Forwarding budget still applies to prevent one peer from amplifying
             // emergency floods (BATMAN-adv uses similar OGM forwarding limits).
-            if (packet.ttl > 0 && sourceEndpointId != null) {
+            if (packet.ttl > 0 && sourceEndpointId != LOCAL_SOURCE) {
                 val fwdAllowed = rateLimiter?.allowForward(sourceEndpointId) ?: true
                 if (fwdAllowed) {
                     forwardPacket(packet, sourceEndpointId)
@@ -1512,7 +1526,7 @@ class P2PManager(
             if (packet.ttl > 0) {
                 // Forwarding budget: limit how many packets any single peer can cause
                 // us to relay, preventing amplification attacks (libp2p GossipSub principle).
-                val fwdAllowed = if (sourceEndpointId != null) {
+                val fwdAllowed = if (sourceEndpointId != LOCAL_SOURCE) {
                     rateLimiter?.allowForward(sourceEndpointId) ?: true
                 } else {
                     true  // locally originated — no budget limit
@@ -1726,6 +1740,15 @@ class P2PManager(
                                 routeLastSeen[destName] = System.currentTimeMillis()
                                 updated = true
                             }
+                        }
+
+                        // Track gateway flag: if __GATEWAY__:1 appears in this announcement,
+                        // mark the sending endpoint as a gateway neighbor so we can proxy
+                        // cloud relay through it when we ourselves lack internet access.
+                        if (InternetGatewayManager.GATEWAY_FLAG in advertisedDests) {
+                            gatewayNeighbors.add(sourceEndpointId)
+                        } else {
+                            gatewayNeighbors.remove(sourceEndpointId)
                         }
 
                         // Implicit route withdrawal: remove routes through this neighbor
@@ -1965,28 +1988,55 @@ class P2PManager(
             } else {
                 // No neighbors at all — queue for store-and-forward or try cloud relay
                 if (newPacket.type == PacketType.DATA || newPacket.type == PacketType.STORE_FORWARD) {
-                    // Try internet gateway relay if available
                     val gateway = internetGatewayManager
-                    if (gateway != null && gateway.hasInternet.value && newPacket.type == PacketType.DATA) {
-                        scope.launch {
-                            val payloadStr = String(newPacket.payload, StandardCharsets.UTF_8)
-                            val relayed = gateway.relayToCloud(newPacket.destId, newPacket.sourceId, payloadStr, newPacket.id)
-                            if (relayed) {
-                                log("PACKET_RELAYED_CLOUD id=${packet.id.take(8)} dest='${packet.destId}'",
+                    when {
+                        // Case 1: We are a gateway — relay directly to Firestore
+                        gateway != null && gateway.hasInternet.value && newPacket.type == PacketType.DATA -> {
+                            scope.launch {
+                                val payloadStr = String(newPacket.payload, StandardCharsets.UTF_8)
+                                val relayed = gateway.relayToCloud(newPacket.destId, newPacket.sourceId, payloadStr, newPacket.id)
+                                if (relayed) {
+                                    log("PACKET_RELAYED_CLOUD id=${packet.id.take(8)} dest='${packet.destId}'",
+                                        com.fyp.resilientp2p.data.LogLevel.INFO)
+                                } else {
+                                    log("RELAY_FAILED_FALLBACK_SF id=${packet.id.take(8)} dest='${packet.destId}'",
+                                        com.fyp.resilientp2p.data.LogLevel.INFO)
+                                    queueForStoreForward(newPacket)
+                                }
+                            }
+                        }
+                        // Case 2: We have no internet but a neighbor is a gateway — proxy through them
+                        newPacket.type == PacketType.DATA -> {
+                            val proxyEndpoint = gatewayNeighbors.firstOrNull { neighbors.containsKey(it) }
+                            if (proxyEndpoint != null) {
+                                val proxyName = neighbors[proxyEndpoint]?.peerName ?: UNKNOWN_PEER
+                                log("PACKET_PROXY_GATEWAY id=${packet.id.take(8)} dest='${packet.destId}' " +
+                                    "via=$proxyEndpoint($proxyName)",
                                     com.fyp.resilientp2p.data.LogLevel.INFO)
+                                networkStats.totalPacketsForwarded.incrementAndGet()
+                                networkStats.recordPacketSent(proxyName, bytes.size)
+                                // Forward the already-serialized packet toward the gateway neighbor;
+                                // the gateway will see no local route and relay to Firestore itself.
+                                connectionsClient.sendPayload(proxyEndpoint, Payload.fromBytes(bytes))
+                                    .addOnFailureListener { e ->
+                                        log("PROXY_FORWARD_FAILED to=$proxyEndpoint error='${e.message}' — queuing S&F",
+                                            com.fyp.resilientp2p.data.LogLevel.WARN)
+                                        queueForStoreForward(newPacket)
+                                    }
                             } else {
-                                log("RELAY_FAILED_FALLBACK_SF id=${packet.id.take(8)} dest='${packet.destId}'",
+                                log("PACKET_QUEUED_SF id=${packet.id.take(8)} dest='${packet.destId}' " +
+                                    "reason=NO_ROUTE_NO_NEIGHBORS_NO_GATEWAY type=${newPacket.type}",
                                     com.fyp.resilientp2p.data.LogLevel.INFO)
                                 queueForStoreForward(newPacket)
                             }
                         }
-                    } else {
-                        log(
-                                "PACKET_QUEUED_SF id=${packet.id.take(8)} dest='${packet.destId}' " +
+                        // Case 3: Not DATA — just queue S&F
+                        else -> {
+                            log("PACKET_QUEUED_SF id=${packet.id.take(8)} dest='${packet.destId}' " +
                                 "reason=NO_ROUTE_NO_NEIGHBORS type=${newPacket.type}",
-                                com.fyp.resilientp2p.data.LogLevel.INFO
-                        )
-                        queueForStoreForward(newPacket)
+                                com.fyp.resilientp2p.data.LogLevel.INFO)
+                            queueForStoreForward(newPacket)
+                        }
                     }
                 } else {
                     log("PACKET_DROPPED id=${packet.id.take(8)} dest='${packet.destId}' reason=NO_ROUTE type=${packet.type}",

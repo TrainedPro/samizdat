@@ -1,6 +1,7 @@
 package com.fyp.resilientp2p.security
 
 import android.util.Log
+import com.fyp.resilientp2p.data.LogLevel
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
@@ -57,6 +58,13 @@ class PeerTrustScorer {
     /** peerId → total valid packets (for stats/debugging) */
     private val validPacketCounts = ConcurrentHashMap<String, AtomicLong>()
 
+    /** Log callback — routes through P2PManager.log() when wired. */
+    var logFn: ((String, LogLevel) -> Unit)? = null
+
+    private fun log(msg: String, level: LogLevel = LogLevel.DEBUG) {
+        logFn?.invoke(msg, level) ?: Log.d(TAG, msg)
+    }
+
     /**
      * Adjust the score for [peerId] by [delta] points.
      * Clamped to [MIN_SCORE]..[MAX_SCORE].
@@ -69,7 +77,7 @@ class PeerTrustScorer {
             (current + delta).coerceIn(MIN_SCORE, MAX_SCORE)
         }
         if (delta < 0) {
-            Log.d(TAG, "PENALTY peer=$peerId delta=$delta reason=$reason newScore=$newScore")
+            log("PENALTY peer=$peerId delta=$delta reason=$reason newScore=$newScore")
         }
         return newScore
     }

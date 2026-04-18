@@ -113,14 +113,19 @@ class HeartbeatManager(private val p2pManager: P2PManager) {
                         isEnabled = newEnabled
                 )
 
+        // Nothing changed — skip restart to avoid unnecessary PING gap
+        if (newConfig == current) return
+
         if (newEnabled && !current.isEnabled) {
             startHeartbeat(newConfig)
         } else if (!newEnabled && current.isEnabled) {
             stopHeartbeat()
         } else if (newEnabled) {
-            // Restart if config changed while enabled
-            stopHeartbeat()
-            startHeartbeat(newConfig)
+            // Restart only if interval or payload actually changed
+            if (newConfig.intervalMs != current.intervalMs || newConfig.payloadSizeBytes != current.payloadSizeBytes) {
+                stopHeartbeat()
+                startHeartbeat(newConfig)
+            }
         }
         _config.value = newConfig
     }
@@ -240,9 +245,13 @@ class HeartbeatManager(private val p2pManager: P2PManager) {
                     val originTimestamp = buffer.long
                     val rtt = System.currentTimeMillis() - originTimestamp
                     val peerName = p2pManager.getNeighborsSnapshot()[endpointId]?.peerName ?: endpointId
+                    if (peerName == P2PManager.UNKNOWN_PEER || peerName == endpointId) {
+                        log("RTT_UNKNOWN_PEER endpoint=$endpointId rtt=${rtt}ms — identity not yet resolved, RTT may be lost",
+                            LogLevel.DEBUG)
+                    }
                     // Feed RTT to NetworkStats for metrics tracking
                     p2pManager.networkStats.recordRtt(peerName, rtt)
-                    log("RTT endpoint=$endpointId peerName='$peerName' rtt=${rtt}ms", LogLevel.TRACE)
+                    log("RTT endpoint=$endpointId peerName='$peerName' rtt=${rtt}ms", LogLevel.DEBUG)
                 }
             } catch (e: Exception) {
                 log("PONG_PARSE_ERROR endpoint=$endpointId error='${e.message}'", LogLevel.ERROR)

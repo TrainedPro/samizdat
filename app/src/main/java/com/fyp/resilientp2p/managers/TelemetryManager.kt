@@ -4,7 +4,7 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.Build
-import android.util.Log
+import com.fyp.resilientp2p.data.LogLevel
 import androidx.work.BackoffPolicy
 import androidx.work.Constraints
 import androidx.work.ExistingPeriodicWorkPolicy
@@ -47,7 +47,6 @@ class TelemetryManager(
     private val p2pManager: P2PManager
 ) {
     companion object {
-        private const val TAG = "TelemetryManager"
         private const val KEY_DEVICE_ID_FIELD = "deviceId"
         private const val KEY_TIMESTAMP_FIELD = "timestamp"
         private const val PREFS_NAME = "telemetry_prefs"
@@ -124,12 +123,12 @@ class TelemetryManager(
      */
     fun start() {
         if (!isEnabled) {
-            Log.i(TAG, "Telemetry disabled, skipping start")
+            p2pManager.log("Telemetry disabled, skipping start")
             return
         }
         if (isRunning.getAndSet(true)) return
 
-        Log.i(TAG, "Starting telemetry for device=$deviceId")
+        p2pManager.log("Starting telemetry for device=$deviceId")
 
         scope.launch {
             // Register device on first launch
@@ -154,7 +153,7 @@ class TelemetryManager(
         isRunning.set(false)
         snapshotJob?.cancel()
         snapshotJob = null
-        Log.i(TAG, "Telemetry collection stopped")
+        p2pManager.log("Telemetry collection stopped")
     }
 
     /** Full shutdown — cancels everything including scope */
@@ -162,7 +161,7 @@ class TelemetryManager(
         stop()
         scope.cancel()
         WorkManager.getInstance(context).cancelUniqueWork(UPLOAD_WORK_NAME)
-        Log.i(TAG, "TelemetryManager destroyed")
+        p2pManager.log("TelemetryManager destroyed")
     }
 
     // ─────────────────────────────────────────────────────────────────
@@ -188,7 +187,7 @@ class TelemetryManager(
             )
         )
         prefs.edit { putBoolean(KEY_DEVICE_REGISTERED, true) }
-        Log.i(TAG, "Device registered: $deviceId")
+        p2pManager.log("Device registered: $deviceId")
     }
 
     // ─────────────────────────────────────────────────────────────────
@@ -284,7 +283,7 @@ class TelemetryManager(
                 payload = payload.toString()
             )
         )
-        Log.d(TAG, "Stats snapshot collected (neighbors=${state.connectedEndpoints.size}, routes=${state.knownPeers.size})")
+        p2pManager.log("Stats snapshot collected (neighbors=${state.connectedEndpoints.size}, routes=${state.knownPeers.size})", LogLevel.DEBUG)
     }
 
     /** Collect routing table snapshot */
@@ -350,7 +349,7 @@ class TelemetryManager(
         )
 
         prefs.edit { putLong(KEY_LAST_LOG_UPLOAD_TIME, System.currentTimeMillis()) }
-        Log.d(TAG, "Collected ${logs.size} error/warn logs for upload")
+        p2pManager.log("Collected ${logs.size} error/warn logs for upload", LogLevel.DEBUG)
     }
 
     // ─────────────────────────────────────────────────────────────────
@@ -412,7 +411,7 @@ class TelemetryManager(
                     payload = resultsJson
                 )
             )
-            Log.i(TAG, "Test results queued for upload")
+            p2pManager.log("Test results queued for upload")
         }
     }
 
@@ -427,7 +426,7 @@ class TelemetryManager(
                     payload = reportJson
                 )
             )
-            Log.i(TAG, "Endurance report queued for upload")
+            p2pManager.log("Endurance report queued for upload")
         }
     }
 
@@ -442,7 +441,7 @@ class TelemetryManager(
                     payload = snapshotJson
                 )
             )
-            Log.d(TAG, "Endurance snapshot queued for upload")
+            p2pManager.log("Endurance snapshot queued for upload", LogLevel.DEBUG)
         }
     }
 
@@ -470,7 +469,7 @@ class TelemetryManager(
             ExistingPeriodicWorkPolicy.UPDATE,
             uploadRequest
         )
-        Log.i(TAG, "Scheduled periodic upload every ${UPLOAD_INTERVAL_MINUTES}min (wifiOnly=$wifiOnlyUpload)")
+        p2pManager.log("Scheduled periodic upload every ${UPLOAD_INTERVAL_MINUTES}min (wifiOnly=$wifiOnlyUpload)")
     }
 
     // ─────────────────────────────────────────────────────────────────
@@ -490,7 +489,7 @@ class TelemetryManager(
 
         val remaining = telemetryDao.getTotalCount()
         val pending = telemetryDao.getPendingCount()
-        Log.d(TAG, "Cleanup complete: $remaining total events, $pending pending upload")
+        p2pManager.log("Cleanup complete: $remaining total events, $pending pending upload", LogLevel.DEBUG)
     }
 
     // ─────────────────────────────────────────────────────────────────

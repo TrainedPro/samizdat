@@ -7,8 +7,8 @@ import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
 import android.os.Bundle
-import android.util.Log
 import androidx.core.content.ContextCompat
+import com.fyp.resilientp2p.data.LogLevel
 import com.fyp.resilientp2p.data.EmergencyMessage
 import com.fyp.resilientp2p.transport.Packet
 import com.fyp.resilientp2p.transport.PacketType
@@ -42,7 +42,6 @@ class EmergencyManager(
     private val p2pManager: P2PManager
 ) {
     companion object {
-        private const val TAG = "EmergencyManager"
         const val EMERGENCY_TTL = 15 // Higher TTL than normal (5) for maximum reach
         const val SOS_BEACON_INTERVAL_MS = 30_000L
         const val EMERGENCY_DEST = "EMERGENCY_BROADCAST"
@@ -72,14 +71,14 @@ class EmergencyManager(
      */
     fun start() {
         startLocationUpdates()
-        Log.i(TAG, "EmergencyManager started")
+        p2pManager.log("EmergencyManager started")
     }
 
     fun destroy() {
         stopSOSBeacon()
         stopLocationUpdates()
         scope.cancel()
-        Log.i(TAG, "EmergencyManager destroyed")
+        p2pManager.log("EmergencyManager destroyed")
     }
 
     /**
@@ -98,7 +97,7 @@ class EmergencyManager(
         )
         // Inject into local mesh — handlePacket will flood it
         p2pManager.injectPacket(packet)
-        Log.i(TAG, "EMERGENCY_SENT message='${message.take(50)}'")
+        p2pManager.log("EMERGENCY_SENT message='${message.take(50)}'")
 
         // Also add to our own history
         val selfMsg = parseEmergencyPayload(emergencyPayload, p2pManager.getLocalDeviceName(), System.currentTimeMillis())
@@ -126,9 +125,9 @@ class EmergencyManager(
             val msg = parseEmergencyPayload(payloadStr, packet.sourceId, packet.timestamp)
             addToHistory(msg)
             scope.launch { _emergencyMessages.emit(msg) }
-            Log.i(TAG, "EMERGENCY_RECEIVED from=${packet.sourceId} type=${msg.type}")
+            p2pManager.log("EMERGENCY_RECEIVED from=${packet.sourceId} type=${msg.type}")
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to parse emergency packet: ${e.message}")
+            p2pManager.log("Failed to parse emergency packet: ${e.message}", LogLevel.ERROR)
         }
     }
 
@@ -137,7 +136,7 @@ class EmergencyManager(
     private fun startSOSBeacon(message: String) {
         if (beaconJob?.isActive == true) return
         _sosActive.value = true
-        Log.i(TAG, "SOS_BEACON_STARTED")
+        p2pManager.log("SOS_BEACON_STARTED")
 
         beaconJob = scope.launch {
             while (isActive) {
@@ -151,7 +150,7 @@ class EmergencyManager(
         beaconJob?.cancel()
         beaconJob = null
         _sosActive.value = false
-        Log.i(TAG, "SOS_BEACON_STOPPED")
+        p2pManager.log("SOS_BEACON_STOPPED")
     }
 
     // --- Payload building ---
@@ -200,7 +199,7 @@ class EmergencyManager(
                 device = json.optString("device", "Unknown")
             )
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to parse emergency payload, using raw fallback", e)
+            p2pManager.log("Failed to parse emergency payload, using raw fallback: ${e.message}", LogLevel.WARN)
             EmergencyMessage(
                 id = UUID.randomUUID().toString(),
                 sourceId = sourceId,
@@ -236,7 +235,7 @@ class EmergencyManager(
     private fun startLocationUpdates() {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION)
             != PackageManager.PERMISSION_GRANTED) {
-            Log.w(TAG, "No location permission — emergency messages won't include GPS")
+            p2pManager.log("No location permission — emergency messages won't include GPS", LogLevel.WARN)
             return
         }
 
@@ -266,7 +265,7 @@ class EmergencyManager(
             lastKnownLocation = lm.getLastKnownLocation(LocationManager.GPS_PROVIDER)
                 ?: lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
         } catch (e: SecurityException) {
-            Log.w(TAG, "Location permission denied: ${e.message}")
+            p2pManager.log("Location permission denied: ${e.message}", LogLevel.WARN)
         }
     }
 

@@ -4,8 +4,11 @@ import android.app.Application
 import androidx.lifecycle.DefaultLifecycleObserver
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
+import com.fyp.resilientp2p.audio.AudioCodecManager
 import com.fyp.resilientp2p.data.AppDatabase
 import com.fyp.resilientp2p.data.GroupMessage
+import com.fyp.resilientp2p.data.LogLevel
+import com.fyp.resilientp2p.managers.CloudLogManager
 import com.fyp.resilientp2p.managers.EmergencyManager
 import com.fyp.resilientp2p.managers.EncounterLogger
 import com.fyp.resilientp2p.managers.FileShareManager
@@ -79,6 +82,9 @@ class P2PApplication : Application() {
     /** Content-addressable distributed file sharing over the mesh. */
     lateinit var fileShareManager: FileShareManager
         private set
+    /** Cloud log upload manager — batches system logs to Firestore. */
+    lateinit var cloudLogManager: CloudLogManager
+        private set
 
     /** Application-wide coroutine scope for non-UI async work. */
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -111,6 +117,9 @@ class P2PApplication : Application() {
         fileShareManager = FileShareManager(this, database.sharedFileDao(), p2pManager.state.value.localDeviceName, database.downloadedChunkDao())
         fileShareManager.sendPacket = { packet -> p2pManager.injectPacket(packet) }
 
+        // Cloud log manager
+        cloudLogManager = CloudLogManager(this, database.logDao(), p2pManager)
+
         // Wire cross-references
         p2pManager.internetGatewayManager = internetGatewayManager
         p2pManager.emergencyManager = emergencyManager
@@ -121,6 +130,18 @@ class P2PApplication : Application() {
         p2pManager.locationEstimator = locationEstimator
         p2pManager.encounterLogger = encounterLogger
         p2pManager.fileShareManager = fileShareManager
+        p2pManager.cloudLogManager = cloudLogManager
+
+        // Wire log callbacks so all managers route through p2pManager.log()
+        val logFn: (String, LogLevel) -> Unit = { msg, level -> p2pManager.log(msg, level) }
+        securityManager.logFn = logFn
+        rateLimiter.logFn = logFn
+        peerBlacklist.logFn = logFn
+        peerTrustScorer.logFn = logFn
+        locationEstimator.logFn = logFn
+        encounterLogger.logFn = logFn
+        fileShareManager.logFn = logFn
+        AudioCodecManager.logFn = logFn
 
         // Group message handler: persist + auto-join unknown groups
         val groupMessageDao = database.groupMessageDao()
@@ -181,6 +202,7 @@ class P2PApplication : Application() {
         telemetryManager.start()
         internetGatewayManager.start()
         emergencyManager.start()
+        cloudLogManager.start()
 
         // Wire test results to telemetry
         testRunner.onTestResultsReady = { json -> telemetryManager.recordTestResults(json) }

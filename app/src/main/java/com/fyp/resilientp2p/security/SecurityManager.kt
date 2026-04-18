@@ -2,6 +2,7 @@ package com.fyp.resilientp2p.security
 
 import android.util.Base64
 import android.util.Log
+import com.fyp.resilientp2p.data.LogLevel
 import java.security.*
 import java.security.spec.ECGenParameterSpec
 import java.security.spec.X509EncodedKeySpec
@@ -78,6 +79,13 @@ class SecurityManager {
     /** Secure random for IV generation. */
     private val secureRandom = SecureRandom()
 
+    /** Log callback — routes through P2PManager.log() when wired. */
+    var logFn: ((String, LogLevel) -> Unit)? = null
+
+    private fun log(msg: String, level: LogLevel = LogLevel.DEBUG) {
+        logFn?.invoke(msg, level) ?: Log.d(TAG, msg)
+    }
+
     /**
      * Returns this device's ECDH public key as a Base64-encoded string.
      * Sent in IDENTITY packet payloads during the handshake.
@@ -114,10 +122,10 @@ class SecurityManager {
             val hmacKeyBytes = hkdfExpand(sharedSecret, HKDF_INFO_HMAC.toByteArray(), AES_KEY_SIZE / 8)
             hmacKeys[peerId] = SecretKeySpec(hmacKeyBytes, HMAC_ALGO)
 
-            Log.i(TAG, "KEY_EXCHANGE_OK peer=$peerId")
+            log("KEY_EXCHANGE_OK peer=$peerId", LogLevel.INFO)
             true
         } catch (e: Exception) {
-            Log.e(TAG, "KEY_EXCHANGE_FAILED peer=$peerId error=${e.message}")
+            log("KEY_EXCHANGE_FAILED peer=$peerId error=${e.message}", LogLevel.ERROR)
             false
         }
     }
@@ -144,7 +152,7 @@ class SecurityManager {
             // Prepend IV
             iv + ciphertext
         } catch (e: Exception) {
-            Log.e(TAG, "ENCRYPT_FAILED peer=$peerId error=${e.message}")
+            log("ENCRYPT_FAILED peer=$peerId error=${e.message}", LogLevel.ERROR)
             null
         }
     }
@@ -167,7 +175,7 @@ class SecurityManager {
             cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(GCM_TAG_LENGTH, iv))
             cipher.doFinal(encrypted)
         } catch (e: Exception) {
-            Log.w(TAG, "DECRYPT_FAILED peer=$peerId error=${e.message}")
+            log("DECRYPT_FAILED peer=$peerId error=${e.message}", LogLevel.WARN)
             null
         }
     }
@@ -186,7 +194,7 @@ class SecurityManager {
             mac.init(key)
             mac.doFinal(data)
         } catch (e: Exception) {
-            Log.e(TAG, "HMAC_COMPUTE_FAILED peer=$peerId error=${e.message}")
+            log("HMAC_COMPUTE_FAILED peer=$peerId error=${e.message}", LogLevel.ERROR)
             null
         }
     }
@@ -259,7 +267,7 @@ class SecurityManager {
         peerPublicKeys.remove(peerId)
         aesKeys.remove(peerId)
         hmacKeys.remove(peerId)
-        Log.d(TAG, "KEYS_REMOVED peer=$peerId")
+        log("KEYS_REMOVED peer=$peerId")
     }
 
     /**
@@ -269,7 +277,7 @@ class SecurityManager {
         peerPublicKeys.clear()
         aesKeys.clear()
         hmacKeys.clear()
-        Log.i(TAG, "SecurityManager destroyed — all keys cleared")
+        log("SecurityManager destroyed — all keys cleared", LogLevel.INFO)
     }
 
     // --- Key Generation ---

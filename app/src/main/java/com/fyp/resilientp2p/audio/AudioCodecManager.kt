@@ -4,6 +4,7 @@ import android.media.MediaCodec
 import android.media.MediaCodecInfo
 import android.media.MediaFormat
 import android.util.Log
+import com.fyp.resilientp2p.data.LogLevel
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 
@@ -49,6 +50,13 @@ object AudioCodecManager {
     /** Number of PCM bytes per frame (16-bit = 2 bytes per sample). */
     const val BYTES_PER_FRAME = SAMPLES_PER_FRAME * 2 // 320 bytes
 
+    /** Log callback — routes through P2PManager.log() when wired. */
+    var logFn: ((String, LogLevel) -> Unit)? = null
+
+    private fun log(msg: String, level: LogLevel = LogLevel.DEBUG) {
+        logFn?.invoke(msg, level) ?: Log.d(TAG, msg)
+    }
+
     /**
      * Creates an AAC-LC encoder backed by [MediaCodec].
      * Caller must call [AACEncoder.release] when done.
@@ -59,7 +67,7 @@ object AudioCodecManager {
         return try {
             AACEncoder()
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to create AAC encoder: ${e.message}")
+            log("Failed to create AAC encoder: ${e.message}", LogLevel.ERROR)
             null
         }
     }
@@ -74,7 +82,7 @@ object AudioCodecManager {
         return try {
             AACDecoder()
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to create AAC decoder: ${e.message}")
+            log("Failed to create AAC decoder: ${e.message}", LogLevel.ERROR)
             null
         }
     }
@@ -131,7 +139,7 @@ object AudioCodecManager {
                     outputIndex = codec.dequeueOutputBuffer(bufferInfo, 0)
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "Encode error: ${e.message}")
+                log("Encode error: ${e.message}", LogLevel.WARN)
             }
 
             return output.toByteArray()
@@ -146,7 +154,7 @@ object AudioCodecManager {
                     codec.stop()
                     codec.release()
                 } catch (e: Exception) {
-                    Log.w(TAG, "Encoder release error: ${e.message}")
+                    log("Encoder release error: ${e.message}", LogLevel.WARN)
                 }
             }
         }
@@ -206,7 +214,7 @@ object AudioCodecManager {
                     outputIndex = codec.dequeueOutputBuffer(bufferInfo, 0)
                 }
             } catch (e: Exception) {
-                Log.w(TAG, "Decode error: ${e.message}")
+                log("Decode error: ${e.message}", LogLevel.WARN)
             }
 
             return output.toByteArray()
@@ -221,7 +229,7 @@ object AudioCodecManager {
                     codec.stop()
                     codec.release()
                 } catch (e: Exception) {
-                    Log.w(TAG, "Decoder release error: ${e.message}")
+                    log("Decoder release error: ${e.message}", LogLevel.WARN)
                 }
             }
         }

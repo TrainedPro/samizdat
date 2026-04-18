@@ -1,6 +1,7 @@
 package com.fyp.resilientp2p.managers
 
 import android.util.Log
+import com.fyp.resilientp2p.data.LogLevel
 import com.fyp.resilientp2p.data.EncounterDao
 import com.fyp.resilientp2p.data.EncounterLog
 import kotlinx.coroutines.CoroutineScope
@@ -59,6 +60,13 @@ class EncounterLogger(
     @Volatile
     var dtnModeEnabled: Boolean = false
 
+    /** Log callback — routes through P2PManager.log() when wired. */
+    var logFn: ((String, LogLevel) -> Unit)? = null
+
+    private fun log(msg: String, level: LogLevel = LogLevel.DEBUG) {
+        logFn?.invoke(msg, level) ?: Log.d(TAG, msg)
+    }
+
     /** Current effective TTL for store-forward packets. */
     val effectiveTtlMs: Long
         get() = if (dtnModeEnabled) DTN_EXTENDED_TTL_MS else DEFAULT_TTL_MS
@@ -82,7 +90,7 @@ class EncounterLogger(
             activeEncounters[remotePeer] = id
             exchangeCounters[remotePeer] = 0
             exchangeBytes[remotePeer] = 0L
-            Log.d(TAG, "Encounter started with $remotePeer (id=$id)")
+            log("Encounter started with $remotePeer (id=$id)")
         }
     }
 
@@ -103,7 +111,7 @@ class EncounterLogger(
                 packets = packets,
                 bytes = bytes
             )
-            Log.d(TAG, "Encounter ended with $remotePeer: $packets pkts, $bytes bytes")
+            log("Encounter ended with $remotePeer: $packets pkts, $bytes bytes")
         }
     }
 

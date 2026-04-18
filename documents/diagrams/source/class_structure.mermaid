@@ -5,6 +5,8 @@ namespace com.fyp.resilientp2p {
     class MainActivity {
         -p2pManager : P2PManager
         -heartbeatManager : HeartbeatManager
+        -testRunner : TestRunner
+        -enduranceTestRunner : EnduranceTestRunner
         +permissions : MutableList
         -requestPermissionLauncher : Any
         +denied : Any
@@ -23,6 +25,7 @@ namespace com.fyp.resilientp2p {
         +slider : Any
         +interval : Any
         +advancedDialog : Any
+        +endpointId : Any
         +authDialog : Any
         +exitDialog : Any
         +serviceIntent : Intent
@@ -33,11 +36,20 @@ namespace com.fyp.resilientp2p {
         +powerManager : Any
         +intent : Any
         +database : Any
+        +logDao : Any
+        +retentionMs : Any
+        +cutoff : System.currentTimeMillis
         +logs : Any
+        +appVersion : Any
+        +deviceName : Any
+        +dateStamp : SimpleDateFormat
         +fileName : String
         +file : File
+        +stats : Any
         +dateFormat : Any
         +date : Any
+        +uri : Any
+        +shareIntent : Intent
         -getRequiredPermissions() Array<String>
         +onCreate(savedInstanceState: Bundle?) Unit
         -observeAuthEvents() Unit
@@ -45,8 +57,9 @@ namespace com.fyp.resilientp2p {
         +onOptionsItemSelected(item: MenuItem) Boolean
         -showAdvancedOptionsDialog() Unit
         -showAuthTokenDialog(token: String) Unit
-        -showExitConfirmationDialog() Unit
+        +showExitConfirmationDialog() Unit
         -gracefulShutdown() Unit
+        -requestPermissions() Unit
         -hasPermissions(permissions: Array<String>) Boolean
         +onServiceConnected(className: ComponentName, service: IBinder) Unit
         +onServiceDisconnected(arg0: ComponentName) Unit
@@ -59,25 +72,47 @@ namespace com.fyp.resilientp2p {
         +database : Any
         +p2pManager : P2PManager
         +heartbeatManager : HeartbeatManager
+        +testRunner : TestRunner
+        +enduranceTestRunner : EnduranceTestRunner
+        +telemetryManager : TelemetryManager
+        +internetGatewayManager : InternetGatewayManager
+        +emergencyManager : EmergencyManager
+        +securityManager : SecurityManager
+        +rateLimiter : RateLimiter
+        +peerBlacklist : PeerBlacklist
+        +peerTrustScorer : PeerTrustScorer
+        +locationEstimator : LocationEstimator
+        +encounterLogger : EncounterLogger
+        +fileShareManager : FileShareManager
+        +cloudLogManager : CloudLogManager
+        -appScope : CoroutineScope
+        +isTestMode : Boolean
+        +logFn : (String, LogLevel) -> Unit
+        +groupMessageDao : Any
+        +chatGroupDao : Any
+        +payloadStr : String
+        +parts : Any
+        +groupId : Any
+        +sender : Any
+        +text : Any
+        +groupId : Any
+        +name : Any
+        +creator : Any
+        +chatDao : Any
+        +seenPayloadIds : Map
+        +pkt : Any
+        +payloadId : String
+        +text : String
+        +isBroadcast : Any
+        +msgType : Any
         +onCreate() Unit
+        +onStop(owner: LifecycleOwner) Unit
     }
 }
 namespace com.fyp.resilientp2p.audio {
     class AudioPlayer {
         -inputStream : InputStream
-        -log : (String, LogLevel) -> Unit
-        -TAG : String
-        -isAlive : Boolean
-        -thread : Thread?
-        +buffer : Buffer
-        +audioTrack : Any
-        +len : Int
-        +data : Any
-        +isPlaying() Boolean
-        +start() Unit
-        -stopInternal() Unit
-        +stop() Unit
-        #onFinish() Unit
+        -log : (String, LogLevel) -> Unit, private val peerRttMs: Long
     }
     class Buffer {
         +validSize(size: Int) Boolean
@@ -90,9 +125,56 @@ namespace com.fyp.resilientp2p.audio {
         +size : Int
         +sampleRate : Int
         +data : ByteArray
-        +size : Any
+        +calculatedSize : Any
         #validSize(size: Int) Boolean
         #getMinBufferSize(sampleRate: Int) Int
+    }
+    class AudioCodecManager {
+        -TAG : String
+        +SAMPLE_RATE : Int
+        +BIT_RATE : Any
+        +CHANNELS : Int
+        +FRAME_DURATION_MS : Int
+        +SAMPLES_PER_FRAME : SAMPLE_RATE
+        +BYTES_PER_FRAME : SAMPLES_PER_FRAME
+        +logFn : ((String, LogLevel) -> Unit)?
+        -log(msg: String, level: LogLevel = LogLevel.DEBUG) Unit
+        +createEncoder() AACEncoder?
+        +createDecoder() AACDecoder?
+    }
+    class AACEncoder {
+        -codec : MediaCodec
+        -bufferInfo : MediaCodec.BufferInfo
+        -isReleased : Boolean
+        +format : MediaFormat.createAudioFormat
+        +output : ByteArrayOutputStream
+        +inputIndex : Any
+        +inputBuffer : Any
+        +outputIndex : Any
+        +outputBuffer : Any
+        +chunk : ByteArray
+        +encode(pcmData: ByteArray) ByteArray
+        +release() Unit
+    }
+    class AACDecoder {
+        -codec : MediaCodec
+        -bufferInfo : MediaCodec.BufferInfo
+        -isReleased : Boolean
+        +format : MediaFormat.createAudioFormat
+        +csd : ByteBuffer.wrap
+        +output : ByteArrayOutputStream
+        +inputIndex : Any
+        +inputBuffer : Any
+        +outputIndex : Any
+        +outputBuffer : Any
+        +chunk : ByteArray
+        +decode(aacData: ByteArray) ByteArray
+        +release() Unit
+    }
+    class MeshAudioManager {
+        -context : Context
+        -localUsername : String
+        -log : (String, LogLevel) -> Unit
     }
     class AudioRecorder {
         -context : android.content.Context
@@ -105,6 +187,22 @@ namespace com.fyp.resilientp2p.data {
         +toLogLevel(value: String) LogLevel
         +fromLogType(value: LogType) String
         +toLogType(value: String) LogType
+        +fromMessageType(value: MessageType) String
+        +toMessageType(value: String) MessageType
+        +fromTelemetryEventType(value: TelemetryEventType) String
+        +toTelemetryEventType(value: String) TelemetryEventType
+    }
+    class EncounterLog {
+        <<Entity>>
+        <<data>>
+        +id : Long
+        +localPeer : String
+        +remotePeer : String
+        +startTime : Long
+        +endTime : Long
+        +packetsExchanged : Int
+        +bytesExchanged : Long
+        +rssi : Int
     }
     class AppDatabase {
         <<Database>>
@@ -113,7 +211,47 @@ namespace com.fyp.resilientp2p.data {
         +instance : Any
         +logDao() LogDao
         +packetDao() PacketDao
+        +chatDao() ChatDao
+        +telemetryDao() TelemetryDao
+        +chatGroupDao() ChatGroupDao
+        +groupMessageDao() GroupMessageDao
+        +sharedFileDao() SharedFileDao
+        +encounterDao() EncounterDao
+        +downloadedChunkDao() DownloadedChunkDao
         +getDatabase(context: Context) AppDatabase
+    }
+    class DownloadedChunk {
+        <<Entity>>
+        <<data>>
+        +sha256 : String
+        +chunkIndex : Int
+    }
+    class DownloadedChunkDao {
+        <<Dao>>
+        <<interface>>
+        +getReceivedChunks(sha256: String) List<Int>
+        +markChunkReceived(chunk: DownloadedChunk) Unit
+        +clearChunks(sha256: String) Unit
+        +deleteAll() Unit
+    }
+    class ChatGroup {
+        <<Entity>>
+        <<data>>
+        +groupId : String
+        +name : String
+        +createdBy : String
+        +createdAt : Long
+        +members : String
+    }
+    class GroupMessageDao {
+        <<Dao>>
+        <<interface>>
+        +insert(message: GroupMessage) Long
+        +getMessagesForGroup(groupId: String) Flow<List<GroupMessage>>
+        +getRecentMessages(groupId: String, limit: Int = 100) List<GroupMessage>
+        +existsByPacketId(packetId: String) Int
+        +deleteForGroup(groupId: String) Unit
+        +deleteAll() Unit
     }
     class PacketEntity {
         <<Entity>>
@@ -134,12 +272,97 @@ namespace com.fyp.resilientp2p.data {
         +deletePacket(packetId: String) Unit
         +cleanupExpired(now: Long) Unit
     }
+    class GroupMessage {
+        <<Entity>>
+        <<data>>
+        +id : Long
+        +groupId : String
+        +senderName : String
+        +text : String
+        +timestamp : Long
+        +packetId : String
+    }
     class LogDao {
         <<Dao>>
         <<interface>>
         +insert(entry: LogEntry) Unit
         +getAllLogs() Flow<List<LogEntry>>
         +getLogsSnapshot() List<LogEntry>
+        +deleteAll() Unit
+        +deleteOlderThan(cutoff: Long) Unit
+        +getErrorLogsSince(since: Long, limit: Int) List<LogEntry>
+        +getLogsSince(afterId: Long, limit: Int) List<LogEntry>
+    }
+    class ChatMessage {
+        <<Entity>>
+        <<data>>
+        +id : Long
+        +timestamp : Long
+        +peerId : String
+        +isOutgoing : Boolean
+        +type : MessageType
+        +text : String?
+        +fileName : String?
+        +filePath : String?
+        +mimeType : String?
+        +fileSize : Long
+        +transferProgress : Int
+        +isBroadcast : Boolean
+    }
+    class MessageType {
+        <<enumeration>>
+    }
+    class SharedFile {
+        <<Entity>>
+        <<data>>
+        +sha256 : String
+        +fileName : String
+        +mimeType : String
+        +fileSize : Long
+        +chunkSize : Int
+        +totalChunks : Int
+        +sharedBy : String
+        +announcedAt : Long
+        +localPath : String?
+        +downloadedChunks : Int
+    }
+    class TelemetryDao {
+        <<Dao>>
+        <<interface>>
+        +insert(event: TelemetryEvent) Unit
+        +insertAll(events: List<TelemetryEvent>) Unit
+        +getPendingEvents(limit: Int = 100) List<TelemetryEvent>
+        +getPendingCount() Int
+        +markUploaded(ids: List<Long>) Unit
+        +incrementAttempts(ids: List<Long>) Unit
+        +deleteUploaded() Unit
+        +deleteOlderThan(cutoff: Long) Unit
+        +deleteFailed(maxAttempts: Int = 10) Unit
+        +getTotalCount() Int
+        +enforceMaxCount(keepCount: Int = 5000) Unit
+        +deleteAll() Unit
+    }
+    class SharedFileDao {
+        <<Dao>>
+        <<interface>>
+        +insert(file: SharedFile) Long
+        +updateProgress(sha256: String, chunks: Int, localPath: String?) Unit
+        +markComplete(sha256: String, localPath: String) Unit
+        +getAllFiles() Flow<List<SharedFile>>
+        +getFile(sha256: String) SharedFile?
+        +exists(sha256: String) Int
+        +getLocalFiles() Flow<List<SharedFile>>
+        +deleteAll() Unit
+    }
+    class ChatGroupDao {
+        <<Dao>>
+        <<interface>>
+        +upsert(group: ChatGroup) Unit
+        +update(group: ChatGroup) Unit
+        +getAllGroups() Flow<List<ChatGroup>>
+        +getGroup(groupId: String) ChatGroup?
+        +exists(groupId: String) Int
+        +delete(groupId: String) Unit
         +deleteAll() Unit
     }
     class LogEntry {
@@ -182,13 +405,140 @@ namespace com.fyp.resilientp2p.data {
         +logs : List<LogEntry>
         +logLevel : LogLevel
         +localDeviceName : String
+        +stats : NetworkStatsSnapshot
+        +isGateway : Boolean
+        +hasInternet : Boolean
+        +gatewayEnabled : Boolean
+        +emergencyCount : Int
+    }
+    class ChatDao {
+        <<Dao>>
+        <<interface>>
+        +insert(message: ChatMessage) Long
+        +update(message: ChatMessage) Unit
+        +getMessagesForPeer(peerId: String) Flow<List<ChatMessage>>
+        +getBroadcastMessages() Flow<List<ChatMessage>>
+        +updateProgress(messageId: Long, progress: Int) Unit
+        +markTransferComplete(messageId: Long, filePath: String) Unit
+        +getRecentMessages(peerId: String, limit: Int = 50) List<ChatMessage>
+        +deleteMessagesForPeer(peerId: String) Unit
+        +deleteAll() Unit
     }
     class Neighbor {
-        <<data>>
         +peerId : String
         +peerName : String
         +quality : Int
-        +lastSeen : Long
+    }
+    class EncounterDao {
+        <<Dao>>
+        <<interface>>
+        +insert(encounter: EncounterLog) Long
+        +finishEncounter(id: Long, endTime: Long, packets: Int, bytes: Long) Unit
+        +getAllEncounters() Flow<List<EncounterLog>>
+        +getEncountersWith(peer: String) Flow<List<EncounterLog>>
+        +getEncountersInRange(from: Long, to: Long) List<EncounterLog>
+        +totalEncounters() Int
+        +lastEncounterWith(peer: String) EncounterLog?
+        +deleteAll() Unit
+    }
+    class NetworkStatsSnapshot {
+        <<data>>
+        +uptimeMs : Long
+        +batteryLevel : Int
+        +batteryTemperature : Float
+        +batteryChargeUah : Long
+        +batteryVoltageMilliV : Int
+        +batteryDesignCapacityMah : Int
+        +totalBytesSent : Long
+        +totalBytesReceived : Long
+        +totalPacketsSent : Long
+        +totalPacketsReceived : Long
+        +totalPacketsForwarded : Long
+        +totalPacketsDropped : Long
+        +totalConnectionsEstablished : Long
+        +totalConnectionsLost : Long
+        +currentNeighborCount : Int
+        +currentRouteCount : Int
+        +avgRttMs : Long
+        +storeForwardQueued : Long
+        +storeForwardDelivered : Long
+        +deliveryConfirmed : Long
+        +peerStats : Map<String, PeerStatsSnapshot>
+    }
+    class PeerStatsSnapshot {
+        <<data>>
+        +peerName : String
+        +connectedSinceMs : Long
+        +lastRttMs : Long
+        +bytesSent : Long
+        +bytesReceived : Long
+        +packetsSent : Long
+        +packetsReceived : Long
+        +disconnectCount : Long
+    }
+    class NetworkStats {
+        +startTimeMs : System.currentTimeMillis
+        +totalBytesSent : AtomicLong
+        +totalBytesReceived : AtomicLong
+        +totalPacketsSent : AtomicLong
+        +totalPacketsReceived : AtomicLong
+        +totalPacketsForwarded : AtomicLong
+        +totalPacketsDropped : AtomicLong
+        +totalConnectionsEstablished : AtomicLong
+        +totalConnectionsLost : AtomicLong
+        +storeForwardQueued : AtomicLong
+        +storeForwardDelivered : AtomicLong
+        +deliveryConfirmed : AtomicLong
+        +batteryLevel : Int
+        +batteryTemperature : Float
+        +batteryChargeUah : Long
+        +batteryVoltageMilliV : Int
+        +batteryDesignCapacityMah : Int
+        +peerRtt : ConcurrentHashMap<String, Long>
+        +peerConnectedSince : ConcurrentHashMap<String, Long>
+        +peerBytesSent : ConcurrentHashMap<String, AtomicLong>
+        +peerBytesReceived : ConcurrentHashMap<String, AtomicLong>
+        +peerPacketsSent : ConcurrentHashMap<String, AtomicLong>
+        +peerPacketsReceived : ConcurrentHashMap<String, AtomicLong>
+        +peerDisconnectCount : ConcurrentHashMap<String, AtomicLong>
+        +avgRtt : Any
+        +peerSnapshots : Any
+        +recordPeerConnected(peerId: String) Unit
+        +recordPeerDisconnected(peerId: String) Unit
+        +recordPacketSent(peerId: String, sizeBytes: Int) Unit
+        +recordPacketReceived(peerId: String, sizeBytes: Int) Unit
+        +recordRtt(peerId: String, rttMs: Long) Unit
+        +ensurePeerTracked(peerId: String) Unit
+        +renamePeer(oldName: String, newName: String) Unit
+        +snapshot(currentNeighborCount: Int, currentRouteCount: Int) NetworkStatsSnapshot
+        +reset() Unit
+    }
+    class TelemetryEvent {
+        <<Entity>>
+        <<data>>
+        +id : Long
+        +timestamp : Long
+        +deviceId : String
+        +eventType : TelemetryEventType
+        +payload : String
+        +uploaded : Boolean
+        +uploadAttempts : Int
+    }
+    class TelemetryEventType {
+        <<enumeration>>
+    }
+    class EmergencyMessage {
+        <<data>>
+        +id : String
+        +sourceId : String
+        +message : String
+        +type : String
+        +timestamp : Long
+        +latitude : Double?
+        +longitude : Double?
+        +accuracy : Float?
+        +battery : Int?
+        +device : String
     }
 }
 namespace com.fyp.resilientp2p.service {
@@ -202,22 +552,47 @@ namespace com.fyp.resilientp2p.service {
         +notificationIntent : Intent
         +pendingIntent : Any
         +notification : Notification
+        +app : Any
         +onCreate() Unit
         +onStartCommand(intent: Intent?, flags: Int, startId: Int) Int
         +onBind(intent: Intent) IBinder
         -startForegroundService() Unit
+        +onDestroy() Unit
     }
     class LocalBinder {
         +getService() P2PService
     }
 }
 namespace com.fyp.resilientp2p.managers {
+    class CloudLogManager {
+        -context : Context
+        -logDao : LogDao
+        -p2pManager : P2PManager
+    }
+    class EncounterLogger {
+        -encounterDao : EncounterDao
+    }
+    class TelemetryManager {
+        -context : Context
+        -telemetryDao : TelemetryDao
+        -logDao : LogDao
+        -p2pManager : P2PManager
+    }
+    class TelemetryStatus {
+        <<data>>
+        +enabled : Boolean
+        +wifiOnly : Boolean
+        +pendingEvents : Int
+        +totalEvents : Int
+        +lastSnapshotTime : Long
+        +deviceRegistered : Boolean
+    }
     class HeartbeatManager {
         -p2pManager : P2PManager
-        -TAG : String
         -DEFAULT_INTERVAL_MS : Long
         -DEFAULT_PAYLOAD_SIZE : Int
         -heartbeatJob : Job?
+        -supervisorJob : SupervisorJob
         -scope : CoroutineScope
         +intervalMs : Long
         +payloadSizeBytes : Int
@@ -226,6 +601,7 @@ namespace com.fyp.resilientp2p.managers {
         +config : Any
         +currentInterval : Any
         +newInterval : Any
+        +current : Any
         +newEnabled : Any
         +newConfig : Any
         +neighbors : Any
@@ -236,13 +612,16 @@ namespace com.fyp.resilientp2p.managers {
         +currentConfig : Any
         +threshold : Any
         +diff : Any
+        +liveNeighbor : Any
         +buffer : Any
         +originTimestamp : Any
         +rtt : System.currentTimeMillis
+        +peerName : Any
         +updateConfig(intervalMs: Long? = null, payloadSize: Int? = null, enabled: Boolean? = null) Unit
         +setHeartbeatEnabled(enabled: Boolean) Unit
         +setHeartbeatInterval(intervalMs: Long) Unit
         -startHeartbeat(config: HeartbeatConfig) Unit
+        +destroy() Unit
         -stopHeartbeat() Unit
         -sendPing(size: Int) Unit
         -cleanupZombies() Unit
@@ -255,130 +634,79 @@ namespace com.fyp.resilientp2p.managers {
         +payloadSizeBytes : Int
         +isEnabled : Boolean
     }
+    class TelemetryUploadWorker {
+    }
+    class LocationEstimator {
+        -speedOfLight : Double
+        -emaAlpha : Double
+    }
+    class Position {
+        <<data>>
+        +x : Double
+        +y : Double
+        +distanceTo(other: Position) Double
+    }
+    class Anchor {
+        <<data>>
+        +name : String
+        +pos : Position
+        +dist : Double
+    }
+    class FileShareManager {
+        -context : Context
+        -sharedFileDao : SharedFileDao
+        -localUsername : String
+        -downloadedChunkDao : com.fyp.resilientp2p.data.DownloadedChunkDao?
+    }
+    class InternetGatewayManager {
+        -context : Context
+        -p2pManager : P2PManager
+    }
     class VoiceManager {
         -context : Context
         -log : (String, LogLevel) -> Unit
         -audioRecorder : AudioRecorder?
         -audioPlayer : AudioPlayer?
         -TAG : String
+        +readSide : ParcelFileDescriptor?
+        +writeSide : ParcelFileDescriptor?
         +pipe : ParcelFileDescriptor.createPipe
-        +readSide : Any
-        +writeSide : Any
         +startRecording() ParcelFileDescriptor?
         +stopRecording() Unit
-        +startPlaying(inputStream: InputStream) Unit
+        +startPlaying(inputStream: InputStream, peerRttMs: Long = -1) Unit
         +stopPlaying() Unit
         +isRecording() Unit
         +isPlaying() Unit
     }
+    class EmergencyManager {
+        -context : Context
+        -p2pManager : P2PManager
+    }
     class P2PManager {
         -context : Context
-        -connectionsClient : ConnectionsClient
-        -scope : CoroutineScope
-        -localUsername : Any
-        -_state : MutableStateFlow
-        +state : StateFlow<P2PState>
-        -_payloadEvents : MutableSharedFlow<PayloadEvent>
-        +payloadEvents : SharedFlow<PayloadEvent>
-        -_payloadProgressEvents : MutableSharedFlow<PayloadProgressEvent>
-        +payloadProgressEvents : SharedFlow<PayloadProgressEvent>
-        -_bandwidthEvents : MutableSharedFlow<BandwidthInfo>
-        +bandwidthEvents : SharedFlow<BandwidthInfo>
-        -neighbors : ConcurrentHashMap<String, Neighbor>
-        -routingTable : ConcurrentHashMap<String, String>
-        -routingScores : Any
-        -messageCache : ConcurrentHashMap<String, Long>
-        -STRATEGY : Strategy.P2P_CLUSTER
-        -SERVICE_ID : String
-        -MAX_CONNECTIONS : Int
-        -STABILITY_WINDOW_MS : Long
-        +voiceManager : VoiceManager?
-        -payloadCallback : Any
-        +packet : Packet.fromBytes
-        -connectionLifecycleCallback : Any
-        +existingId : Any
-        +existingNeighbor : Any
-        +isAlive : Any
-        +lostDestinations : Any
-        +newConnecting : Any
-        +newConnecting : Any
-        +existingName : Any
-        +neighbor : Any
-        +lostDestinations : Any
-        -endpointDiscoveryCallback : Any
-        +advertisingOptions : AdvertisingOptions.Builder
-        +discoveryOptions : DiscoveryOptions.Builder
-        +newScore : Any
-        +currentScore : Any
-        +oldRoute : Any
-        +existing : Any
-        +newNeighbor : Any
-        +pongPacket : Any
-        +nextHop : Any
-        +newPacket : Any
-        +bytes : Any
-        +payload : Payload.fromBytes
-        +packet : Any
-        +packet : Any
-        +packet : Any
-        +bytes : Any
-        +pfd : Any
-        +payload : Payload.fromFile
-        +targetEndpointIds : Any
-        +id : Any
-        +pfd : Any
-        +payload : Payload.fromStream
-        +sb : StringBuilder
-        +packet : Any
-        +bytes : Any
-        +neighborList : List
-        +knownPeersMap : Any
-        +sdf : Any
-        +taggedMsg : String
-        +currentLevel : Any
-        +entry : Any
-        +newLogs : Any
-        +onPayloadReceived(endpointId: String, payload: Payload) Unit
-        +onConnectionInitiated(endpointId: String, info: ConnectionInfo) Unit
-        +onConnectionResult(endpointId: String, result: ConnectionResolution) Unit
-        +onDisconnected(endpointId: String) Unit
-        +onBandwidthChanged(endpointId: String, bandwidthInfo: BandwidthInfo) Unit
-        +onEndpointFound(endpointId: String, info: DiscoveredEndpointInfo) Unit
-        +onEndpointLost(endpointId: String) Unit
-        -startRoutingUpdates() Unit
-        +start() Unit
-        +stop() Unit
-        +stopAll() Unit
-        +startAdvertising() Unit
-        +stopAdvertising() Unit
-        +startDiscovery() Unit
-        +stopDiscovery() Unit
-        -handlePacket(packet: Packet, sourceEndpointId: String) Unit
-        -processPacket(packet: Packet, sourceEndpointId: String) Unit
-        -forwardPacket(packet: Packet, excludeEndpointId: String? = null) Unit
-        +sendData(destId: String, message: String) Unit
-        +broadcastMessage(message: String) Unit
-        +sendPing(peerId: String, data: ByteArray) Unit
-        +sendDirectPing(endpointId: String, data: ByteArray) Unit
-        +sendFile(peerId: String, uri: android.net.Uri) Unit
-        +startAudioStreaming(peerName: String) Unit
-        +stopAudioStreaming() Unit
-        +getLocalDeviceName() String
-        +disconnectFromEndpoint(endpointId: String) Unit
-        +acceptConnection(endpointId: String) Unit
-        +rejectConnection(endpointId: String) Unit
-        +setHybridMode(enabled: Boolean) Unit
-        +setManualConnection(enabled: Boolean) Unit
-        +setLowPower(enabled: Boolean) Unit
-        +clearLogs() Unit
-        +getNeighborsSnapshot() Map<String, Neighbor>
-        -dumpRoutingTable() Unit
-        -calculateRouteScore(packet: Packet) Int
-        -sendIdentityPacket(endpointId: String) Unit
-        -updateState(update: (P2PState) Unit
-        -updateConnectedEndpoints() Unit
-        +setLogLevel(level: com.fyp.resilientp2p.data.LogLevel) Unit
-        -getTimestamp() String
+        -logDao : LogDao?
+        -packetDao : PacketDao?
+    }
+    class ReceivedFileEvent {
+        <<data>>
+        +senderName : String
+        +fileName : String
+        +mimeType : String
+        +file : java.io.File
+    }
+    class FileMetadata {
+        <<data>>
+        +fileName : String
+        +mimeType : String
+        +fileSize : Long
+        +senderName : String
+    }
+    class ReconnectionEntry {
+        <<data>>
+        +peerName : String
+        +lastEndpointId : String
+        +attemptCount : Int
+        +lastAttemptTime : Long
     }
     class PayloadEvent {
         <<data>>
@@ -391,20 +719,138 @@ namespace com.fyp.resilientp2p.managers {
         +progress : Int
     }
 }
+namespace com.fyp.resilientp2p.security {
+    class PeerTrustScorer {
+        -TAG : String
+        +VALID_PACKET : Int
+        +ACK_DELIVERED : Int
+        +RATE_LIMIT_VIOLATION : Any
+        +HMAC_FAILURE : Any
+        +FORWARD_BUDGET_EXCEEDED : Any
+        +BLACKLISTED : Any
+        +PENALTY_THRESHOLD : Any
+        +MIN_SCORE : Any
+        +MAX_SCORE : Int
+        -scores : ConcurrentHashMap<String, AtomicInteger>
+        -validPacketCounts : ConcurrentHashMap<String, AtomicLong>
+        +logFn : ((String, LogLevel) -> Unit)?
+        +atomic : Any
+        +newScore : Any
+        -log(msg: String, level: LogLevel = LogLevel.DEBUG) Unit
+        +adjustScore(peerId: String, delta: Int, reason: String = "") Int
+        +recordValidPacket(peerId: String) Unit
+        +recordDeliveryConfirmed(peerId: String) Unit
+        +recordRateLimitViolation(peerId: String) Unit
+        +recordHmacFailure(peerId: String) Unit
+        +recordForwardBudgetExceeded(peerId: String) Unit
+        +getScore(peerId: String) Int
+        +isUntrusted(peerId: String) Boolean
+        +getAllScores() Map<String, Int>
+        +resetPeer(peerId: String) Unit
+        +clear() Unit
+    }
+    class SecurityManager {
+        -TAG : String
+        -EC_CURVE : String
+        -AES_KEY_SIZE : Int
+        -GCM_TAG_LENGTH : Int
+        -GCM_IV_LENGTH : Int
+        -HMAC_ALGO : String
+        +HMAC_SIZE : Int
+        -HKDF_INFO_AES : String
+        -HKDF_INFO_HMAC : String
+        -localKeyPair : KeyPair
+        -peerPublicKeys : ConcurrentHashMap<String, PublicKey>
+        -aesKeys : ConcurrentHashMap<String, SecretKey>
+        -hmacKeys : ConcurrentHashMap<String, SecretKey>
+        -secureRandom : SecureRandom
+        +logFn : ((String, LogLevel) -> Unit)?
+        +keyFactory : KeyFactory.getInstance
+        +keyBytes : Base64.decode
+        +peerPublicKey : Any
+        +keyAgreement : KeyAgreement.getInstance
+        +sharedSecret : Any
+        +aesKeyBytes : Any
+        +hmacKeyBytes : Any
+        +key : Any
+        +iv : ByteArray
+        +cipher : Cipher.getInstance
+        +ciphertext : Any
+        +key : Any
+        +iv : Any
+        +encrypted : Any
+        +cipher : Cipher.getInstance
+        +key : Any
+        +mac : Mac.getInstance
+        +computed : Any
+        +peerPubKey : Any
+        +localPubKey : Any
+        +localBytes : Any
+        +peerBytes : Any
+        +digest : Any
+        +hash : Any
+        +sb : StringBuilder
+        +value : Any
+        +keyPairGenerator : KeyPairGenerator.getInstance
+        +mac : Mac.getInstance
+        +result : ByteArray
+        +t : ByteArray
+        +offset : Int
+        +counter : Byte
+        +toCopy : Any
+        +cmp : Any
+        -log(msg: String, level: LogLevel = LogLevel.DEBUG) Unit
+        +getPublicKeyBase64() String
+        +registerPeerKey(peerId: String, publicKeyBase64: String) Boolean
+        +encrypt(peerId: String, plaintext: ByteArray) ByteArray?
+        +decrypt(peerId: String, ciphertext: ByteArray) ByteArray?
+        +computeHmac(peerId: String, data: ByteArray) ByteArray?
+        +verifyHmac(peerId: String, data: ByteArray, expectedHmac: ByteArray) Boolean
+        +hasKeyForPeer(peerId: String) Boolean
+        +computeSafetyNumber(peerId: String) String?
+        +removePeerKeys(peerId: String) Unit
+        +destroy() Unit
+        -generateECKeyPair() KeyPair
+        -hkdfExpand(ikm: ByteArray, info: ByteArray, length: Int) ByteArray
+        -compareByteArrays(a: ByteArray, b: ByteArray) Int
+    }
+    class PeerBlacklist {
+        -autoBlacklistAfterViolations : Int
+    }
+    class RateLimiter {
+        -protocolLimit : Int
+        -emergencyLimit : Int
+        -controlLimit : Int
+        -dataLimit : Int
+        -bulkLimit : Int
+        -forwardBudget : Int
+    }
+    class Category {
+        <<enumeration>>
+    }
+    class PeerWindow {
+        <<data>>
+        +windowStart : AtomicLong
+        +packetCount : AtomicLong
+    }
+}
 namespace com.fyp.resilientp2p.transport {
     class MessageCache {
         -capacity : Int
-        -cache : Map
+        -cache : ConcurrentHashMap<String, Long>
+        -cleanupLock : AtomicBoolean
+        -ttl : Any
         +now : System.currentTimeMillis
-        +ttl : Any
-        +iterator : Any
+        +previous : Any
         +now : System.currentTimeMillis
-        +iterator : Any
-        +entry : Any
-        +hasSeen(packetId: String) Boolean
-        +markSeen(packetId: String) Unit
+        +targetSize : Any
+        +minTs : Long.MAX_VALUE
+        +maxTs : Long.MIN_VALUE
+        +threshold : Any
+        +iter : Any
+        +tryMarkSeen(packetId: String) Boolean
+        -evictOldEntries() Unit
         +clear() Unit
-        +cleanup(ttlMs: Long) Unit
     }
     class PacketType {
         <<enumeration>>
@@ -427,44 +873,226 @@ namespace com.fyp.resilientp2p.transport {
         +sequenceNumber : Long
     }
 }
+namespace com.fyp.resilientp2p.testing {
+    class TestRunner {
+        -context : Context
+        -p2pManager : P2PManager
+        +onTestResultsReady : ((String) -> Unit)?
+    }
+    class EnduranceDuration {
+        <<enumeration>>
+        +label : String
+        +ms : Long
+    }
+    class BatterySnapshot {
+        <<data>>
+        +timestampMs : Long
+        +elapsedMs : Long
+        +batteryLevel : Int
+        +batteryTemperature : Float
+        +batteryChargeUah : Long
+        +batteryVoltageMilliV : Int
+        +estimatedRemainingMah : Double
+        +totalPacketsSent : Long
+        +totalPacketsReceived : Long
+        +totalPacketsForwarded : Long
+        +totalPacketsDropped : Long
+        +totalBytesSent : Long
+        +totalBytesReceived : Long
+        +avgRttMs : Long
+        +minRttMs : Long
+        +maxRttMs : Long
+        +jitterMs : Double
+        +packetLossRate : Double
+        +throughputBytesPerSec : Double
+        +neighborCount : Int
+        +routeCount : Int
+        +totalConnectionsEstablished : Long
+        +totalConnectionsLost : Long
+        +storeForwardQueued : Long
+        +storeForwardDelivered : Long
+        +perPeerRttMs : Map<String, Long>
+    }
+    class EnduranceTestState {
+        <<data>>
+        +isRunning : Boolean
+        +duration : EnduranceDuration
+        +elapsedMs : Long
+        +durationMs : Long
+        +startBatteryLevel : Int
+        +currentBatteryLevel : Int
+        +startMah : Double
+        +currentMah : Double
+        +mahDrained : Double
+        +messagesSent : Long
+        +messagesReceived : Long
+        +snapshots : List<BatterySnapshot>
+        +statusMessage : String
+        +logMessages : List<String>
+        +finalReport : EnduranceReport?
+    }
+    class EnduranceReport {
+        <<data>>
+        +deviceName : String
+        +duration : String
+        +actualDurationMs : Long
+        +startBatteryLevel : Int
+        +endBatteryLevel : Int
+        +batteryDrainPercent : Int
+        +startMah : Double
+        +endMah : Double
+        +mahDrained : Double
+        +mahPerHour : Double
+        +mAhSource : String
+        +totalPacketsSent : Long
+        +totalPacketsReceived : Long
+        +totalPacketsForwarded : Long
+        +totalPacketsDropped : Long
+        +totalBytesSent : Long
+        +totalBytesReceived : Long
+        +avgRttMs : Long
+        +minRttMs : Long
+        +maxRttMs : Long
+        +meanJitterMs : Double
+        +overallPacketLossRate : Double
+        +avgThroughputBytesPerSec : Double
+        +peakNeighborCount : Int
+        +totalConnectionsEstablished : Long
+        +totalConnectionsLost : Long
+        +storeForwardQueued : Long
+        +storeForwardDelivered : Long
+        +snapshots : List<BatterySnapshot>
+    }
+    class EnduranceTestRunner {
+        -context : Context
+        -p2pManager : P2PManager
+    }
+    class TestResult {
+        <<data>>
+        +testName : String
+        +passed : Boolean
+        +durationMs : Long
+        +details : Map<String, Any>
+        +error : String?
+        +warnings : List<String>
+    }
+    class TestRunResult {
+        <<data>>
+        +runTimestamp : String
+        +deviceName : String
+        +peers : List<String>
+        +results : List<TestResult>
+        +totalDurationMs : Long
+    }
+    class TestState {
+        <<data>>
+        +isRunning : Boolean
+        +currentTest : String
+        +progress : Float
+        +completedTests : Int
+        +totalTests : Int
+        +results : List<TestResult>
+        +finalResult : TestRunResult?
+        +statusMessage : String
+        +waitingForPeers : Boolean
+        +logMessages : List<String>
+    }
+}
+    Anchor *-- Position
+    AppDatabase ..> ChatDao
+    AppDatabase ..> ChatGroupDao
+    AppDatabase ..> DownloadedChunkDao
+    AppDatabase ..> EncounterDao
+    AppDatabase ..> GroupMessageDao
     AppDatabase ..> LogDao
     AppDatabase ..> PacketDao
+    AppDatabase ..> SharedFileDao
+    AppDatabase ..> TelemetryDao
     AudioBuffer --> LogLevel
-    AudioPlayer --> Buffer
+    AudioCodecManager ..> AACDecoder
+    AudioCodecManager ..> AACEncoder
+    AudioCodecManager --> LogLevel
     AudioPlayer --> LogLevel
     AudioRecorder --> LogLevel
     AudioBuffer <|-- Buffer
+    ChatDao ..> ChatMessage
+    ChatGroupDao ..> ChatGroup
+    ChatMessage *-- MessageType
+    CloudLogManager --> LogDao
+    CloudLogManager --> P2PManager
     Converters ..> LogLevel
     Converters ..> LogType
+    Converters ..> MessageType
+    Converters ..> TelemetryEventType
+    DownloadedChunkDao ..> DownloadedChunk
+    EmergencyManager --> P2PManager
+    EncounterDao ..> EncounterLog
+    EncounterLogger --> EncounterDao
+    EnduranceReport *-- BatterySnapshot
+    EnduranceTestRunner --> P2PManager
+    EnduranceTestState *-- BatterySnapshot
+    EnduranceTestState *-- EnduranceDuration
+    EnduranceTestState *-- EnduranceReport
+    FileShareManager --> DownloadedChunkDao
+    FileShareManager --> SharedFileDao
+    GroupMessageDao ..> GroupMessage
     HeartbeatManager ..> HeartbeatConfig
     HeartbeatManager ..> LogLevel
     HeartbeatManager --> P2PManager
     HeartbeatManager ..> Packet
+    InternetGatewayManager --> P2PManager
     LocalBinder ..> P2PService
     LogDao ..> LogEntry
     LogEntry *-- LogLevel
     LogEntry *-- LogType
+    MainActivity --> EnduranceTestRunner
     MainActivity --> HeartbeatManager
     MainActivity --> P2PManager
     MainActivity --> P2PService
+    MainActivity --> TestRunner
+    MeshAudioManager --> LogLevel
+    NetworkStats ..> NetworkStatsSnapshot
+    NetworkStatsSnapshot *-- PeerStatsSnapshot
+    P2PApplication --> CloudLogManager
+    P2PApplication --> EmergencyManager
+    P2PApplication --> EncounterLogger
+    P2PApplication --> EnduranceTestRunner
+    P2PApplication --> FileShareManager
     P2PApplication --> HeartbeatManager
+    P2PApplication --> InternetGatewayManager
+    P2PApplication --> LocationEstimator
+    P2PApplication --> LogLevel
     P2PApplication --> P2PManager
-    P2PManager ..> LogLevel
-    P2PManager o-- Neighbor
-    P2PManager --> P2PState
-    P2PManager --> Packet
-    P2PManager --> PayloadEvent
-    P2PManager --> PayloadProgressEvent
-    P2PManager --> VoiceManager
+    P2PApplication --> PeerBlacklist
+    P2PApplication --> PeerTrustScorer
+    P2PApplication --> RateLimiter
+    P2PApplication --> SecurityManager
+    P2PApplication --> TelemetryManager
+    P2PApplication --> TestRunner
+    P2PManager --> LogDao
+    P2PManager --> PacketDao
     P2PService --> LocalBinder
     P2PService --> P2PManager
     P2PState *-- LogEntry
     P2PState *-- LogLevel
+    P2PState *-- NetworkStatsSnapshot
     P2PState *-- RouteInfo
     Packet *-- Hop
     Packet *-- PacketType
     PacketDao ..> PacketEntity
     PayloadEvent *-- Packet
+    PeerTrustScorer --> LogLevel
+    SecurityManager --> LogLevel
+    SharedFileDao ..> SharedFile
+    TelemetryDao ..> TelemetryEvent
+    TelemetryEvent *-- TelemetryEventType
+    TelemetryManager --> LogDao
+    TelemetryManager --> P2PManager
+    TelemetryManager --> TelemetryDao
+    TestRunResult *-- TestResult
+    TestRunner --> P2PManager
+    TestState *-- TestResult
+    TestState *-- TestRunResult
     VoiceManager --> AudioPlayer
     VoiceManager --> AudioRecorder
     VoiceManager --> LogLevel

@@ -5,7 +5,7 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
-import android.util.Log
+import com.fyp.resilientp2p.data.LogLevel
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -31,7 +31,6 @@ class InternetGatewayManager(
     private val p2pManager: P2PManager
 ) {
     companion object {
-        private const val TAG = "InternetGateway"
         private const val FIRESTORE_STRING_VALUE = "stringValue"
         const val GATEWAY_FLAG = "__GATEWAY__"
         private const val RELAY_COLLECTION = "mesh_relay"
@@ -74,14 +73,14 @@ class InternetGatewayManager(
         if (_isGateway.value) {
             startRelayPolling()
         }
-        Log.i(TAG, "InternetGatewayManager started. hasInternet=${_hasInternet.value}, gatewayEnabled=${_gatewayEnabled.value}")
+        p2pManager.log("InternetGatewayManager started. hasInternet=${_hasInternet.value}, gatewayEnabled=${_gatewayEnabled.value}")
     }
 
     fun destroy() {
         stopRelayPolling()
         unregisterNetworkCallback()
         scope.cancel()
-        Log.i(TAG, "InternetGatewayManager destroyed")
+        p2pManager.log("InternetGatewayManager destroyed")
     }
 
     /**
@@ -97,7 +96,7 @@ class InternetGatewayManager(
     fun setGatewayEnabled(enabled: Boolean) {
         _gatewayEnabled.value = enabled
         updateGatewayState()
-        Log.i(TAG, "Gateway enabled=$enabled, isGateway=${_isGateway.value}")
+        p2pManager.log("Gateway enabled=$enabled, isGateway=${_isGateway.value}")
     }
 
     /** Recompute [_isGateway] from [_hasInternet] and [_gatewayEnabled]. */
@@ -115,19 +114,19 @@ class InternetGatewayManager(
      */
     suspend fun relayToCloud(destId: String, sourceId: String, payload: String, packetId: String): Boolean {
         if (!_hasInternet.value) {
-            Log.w(TAG, "Cannot relay — no internet")
+            p2pManager.log("Cannot relay — no internet", LogLevel.WARN)
             return false
         }
         if (projectId.isBlank() || apiKey.isBlank()) {
-            Log.w(TAG, "Cannot relay — Firebase not configured")
+            p2pManager.log("Cannot relay — Firebase not configured", LogLevel.WARN)
             return false
         }
         if (payload.length > MAX_MESSAGE_SIZE) {
-            Log.w(TAG, "Relay rejected — message too large: ${payload.length}")
+            p2pManager.log("Relay rejected — message too large: ${payload.length}", LogLevel.WARN)
             return false
         }
         if (!checkRateLimit()) {
-            Log.w(TAG, "Relay rejected — rate limit exceeded")
+            p2pManager.log("Relay rejected — rate limit exceeded", LogLevel.WARN)
             return false
         }
 
@@ -146,10 +145,10 @@ class InternetGatewayManager(
 
             val url = "https://firestore.googleapis.com/v1/projects/$projectId/databases/(default)/documents/$RELAY_COLLECTION?key=$apiKey"
             val response = httpPost(url, doc.toString())
-            Log.i(TAG, "RELAY_SENT dest=$destId packetId=${packetId.take(8)} status=$response")
+            p2pManager.log("RELAY_SENT dest=$destId packetId=${packetId.take(8)} status=$response")
             response in 200..299
         } catch (e: Exception) {
-            Log.e(TAG, "RELAY_FAILED dest=$destId error=${e.message}")
+            p2pManager.log("RELAY_FAILED dest=$destId error=${e.message}", LogLevel.ERROR)
             false
         }
     }
@@ -180,7 +179,7 @@ class InternetGatewayManager(
 
             for (i in 0 until documents.length()) {
                 if (i >= MAX_PENDING_PER_DEVICE) {
-                    Log.w(TAG, "RELAY_POLL capped at $MAX_PENDING_PER_DEVICE messages per poll")
+                    p2pManager.log("RELAY_POLL capped at $MAX_PENDING_PER_DEVICE messages per poll", LogLevel.WARN)
                     break
                 }
                 val doc = documents.getJSONObject(i)
@@ -198,17 +197,30 @@ class InternetGatewayManager(
                     continue
                 }
 
-                // Check if destId is on our mesh
+                // Check if destId is on our mesh (direct neighbors + routed peers)
                 if (destId in localPeers) {
-                    Log.i(TAG, "RELAY_INJECT dest=$destId from=$sourceId packetId=${packetId.take(8)}")
-                    // Inject into local mesh via P2PManager
-                    p2pManager.sendData(destId, "[RELAY:$sourceId] $payload")
+                    p2pManager.log("RELAY_INJECT dest=$destId from=$sourceId packetId=${packetId.take(8)}")
+                    // Reconstruct the original Packet and inject through the full routing engine.
+                    // Using sendData() was wrong: it set gateway as sourceId and discarded
+                    // the original packetId (breaking dedup), type, and E2E key lookup.
+                    // injectPacket() feeds into handlePacket(LOCAL_SOURCE) — same path as
+                    // EmergencyManager uses for injecting emergency packets.
+                    val relayPacket = com.fyp.resilientp2p.transport.Packet(
+                        id = packetId.ifBlank { java.util.UUID.randomUUID().toString() },
+                        type = com.fyp.resilientp2p.transport.PacketType.DATA,
+                        sourceId = sourceId,
+                        destId = destId,
+                        payload = payload.toByteArray(java.nio.charset.StandardCharsets.UTF_8),
+                        timestamp = timestamp,
+                        ttl = com.fyp.resilientp2p.transport.Packet.DEFAULT_TTL
+                    )
+                    p2pManager.injectPacket(relayPacket)
                     // Delete from relay after delivery
                     deleteRelayMessage(doc.getString("name"))
                 }
             }
         } catch (e: Exception) {
-            Log.e(TAG, "RELAY_POLL_ERROR: ${e.message}")
+            p2pManager.log("RELAY_POLL_ERROR: ${e.message}", LogLevel.ERROR)
         }
     }
 
@@ -217,7 +229,7 @@ class InternetGatewayManager(
             val url = "https://firestore.googleapis.com/v1/$documentPath?key=$apiKey"
             httpDelete(url)
         } catch (e: Exception) {
-            Log.w(TAG, "Failed to delete relay message: ${e.message}")
+            p2pManager.log("Failed to delete relay message: ${e.message}", LogLevel.WARN)
         }
     }
 
@@ -232,7 +244,7 @@ class InternetGatewayManager(
 
         val callback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
-                Log.i(TAG, "Internet available")
+                p2pManager.log("Internet available")
                 _hasInternet.value = true
                 updateGatewayState()
             }
@@ -240,7 +252,7 @@ class InternetGatewayManager(
             override fun onLost(network: Network) {
                 // Check if ANY network still has internet
                 val stillHasInternet = checkInternetNow()
-                Log.i(TAG, "Network lost. Still has internet: $stillHasInternet")
+                p2pManager.log("Network lost. Still has internet: $stillHasInternet")
                 _hasInternet.value = stillHasInternet
                 updateGatewayState()
             }
@@ -255,7 +267,7 @@ class InternetGatewayManager(
         try {
             cm.registerNetworkCallback(request, callback)
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to register network callback: ${e.message}")
+            p2pManager.log("Failed to register network callback: ${e.message}", LogLevel.ERROR)
         }
     }
 

@@ -135,7 +135,9 @@ class NetworkStats {
     }
 
     fun recordRtt(peerId: String, rttMs: Long) {
-        peerRtt[peerId] = rttMs
+        if (rttMs in 1..10_000) {
+            peerRtt[peerId] = rttMs
+        }
     }
 
     /**

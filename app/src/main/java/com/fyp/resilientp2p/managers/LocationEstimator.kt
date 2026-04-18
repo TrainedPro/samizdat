@@ -1,6 +1,7 @@
 package com.fyp.resilientp2p.managers
 
 import android.util.Log
+import com.fyp.resilientp2p.data.LogLevel
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.pow
 import kotlin.math.sqrt
@@ -46,6 +47,13 @@ class LocationEstimator(
     @Volatile
     var localPosition: Position? = null
         private set
+
+    /** Log callback — routes through P2PManager.log() when wired. */
+    var logFn: ((String, LogLevel) -> Unit)? = null
+
+    private fun log(msg: String, level: LogLevel = LogLevel.DEBUG) {
+        logFn?.invoke(msg, level) ?: Log.d(TAG, msg)
+    }
 
     /**
      * 2D position on the mesh coordinate plane.
@@ -141,7 +149,7 @@ class LocationEstimator(
         }
 
         if (anchors.size < MIN_ANCHORS) {
-            Log.d(TAG, "trilaterate: need $MIN_ANCHORS anchors, have ${anchors.size}")
+            log("trilaterate: need $MIN_ANCHORS anchors, have ${anchors.size}")
             return null
         }
 
@@ -167,7 +175,7 @@ class LocationEstimator(
         val result = leastSquares2x2(aMatrix, bVector) ?: return null
         val pos = Position(result[0], result[1])
         localPosition = pos
-        Log.d(TAG, "trilaterate: position=(${pos.x}, ${pos.y}) from ${anchors.size} anchors")
+        log("trilaterate: position=(${pos.x}, ${pos.y}) from ${anchors.size} anchors")
         return pos
     }
 

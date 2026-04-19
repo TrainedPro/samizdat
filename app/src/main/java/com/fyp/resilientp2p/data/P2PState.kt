@@ -30,6 +30,7 @@ data class RouteInfo(val nextHop: String, val hopCount: Int)
  * @property isGateway Whether this device is advertising as an internet gateway.
  * @property hasInternet Whether this device currently has validated internet.
  * @property gatewayEnabled Whether the user has enabled gateway mode (can be toggled off).
+ * @property internetPeers Internet-discovered peers reachable through cloud relay.
  * @property emergencyCount Total emergency broadcasts received this session.
  *
  * @see com.fyp.resilientp2p.managers.P2PManager
@@ -53,5 +54,6 @@ data class P2PState(
         val isGateway: Boolean = false,
         val hasInternet: Boolean = false,
         val gatewayEnabled: Boolean = true,
+        val internetPeers: Set<String> = emptySet(),
         val emergencyCount: Int = 0
 )

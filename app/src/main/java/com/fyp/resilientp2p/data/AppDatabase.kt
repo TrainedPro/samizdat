@@ -13,8 +13,6 @@ import androidx.room.RoomDatabase
  * - **packet_queue** — store-and-forward packets ([PacketEntity])
  * - **chat_messages** — user chat messages and file transfers ([ChatMessage])
  * - **telemetry_events** — cloud telemetry snapshots ([TelemetryEvent])
- * - **chat_groups** — named chat channels ([ChatGroup])
- * - **group_messages** — group chat messages ([GroupMessage])
  * - **shared_files** — content-addressable shared files ([SharedFile])
  * - **encounter_log** — DTN encounter records ([EncounterLog])
  *
@@ -29,13 +27,11 @@ import androidx.room.RoomDatabase
             PacketEntity::class,
             ChatMessage::class,
             TelemetryEvent::class,
-            ChatGroup::class,
-            GroupMessage::class,
             SharedFile::class,
             EncounterLog::class,
             DownloadedChunk::class
         ],
-        version = 9,
+        version = 10,
         exportSchema = false
 )
 @androidx.room.TypeConverters(Converters::class)
@@ -44,8 +40,6 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun packetDao(): PacketDao
     abstract fun chatDao(): ChatDao
     abstract fun telemetryDao(): TelemetryDao
-    abstract fun chatGroupDao(): ChatGroupDao
-    abstract fun groupMessageDao(): GroupMessageDao
     abstract fun sharedFileDao(): SharedFileDao
     abstract fun encounterDao(): EncounterDao
     abstract fun downloadedChunkDao(): DownloadedChunkDao

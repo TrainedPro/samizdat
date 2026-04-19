@@ -167,16 +167,16 @@ class RoutingTest {
     }
 
     @Test
-    fun `GROUP_MESSAGE type round-trips correctly`() {
-        val payload = "MSG|group123|Alice|Hello everyone!"
+    fun `FILE_ANNOUNCE type round-trips correctly`() {
+        val payload = "sha256:deadbeef|map.pdf|1024"
         val pkt = Packet(
-            type = PacketType.GROUP_MESSAGE,
+            type = PacketType.FILE_ANNOUNCE,
             sourceId = "Alice",
             destId = "BROADCAST",
             payload = payload.toByteArray()
         )
         val restored = Packet.fromBytes(pkt.toBytes())
-        assertEquals(PacketType.GROUP_MESSAGE, restored.type)
+        assertEquals(PacketType.FILE_ANNOUNCE, restored.type)
         assertEquals(payload, String(restored.payload))
     }
 }

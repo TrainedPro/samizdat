@@ -61,6 +61,7 @@ import com.fyp.resilientp2p.data.NetworkStats
  * @param logDao Optional Room DAO for persistent structured logging
  * @param packetDao Optional Room DAO for store-and-forward packet persistence
  */
+@Suppress("LargeClass")
 class P2PManager(
     private val context: Context,
     private val logDao: LogDao? = null,
@@ -165,6 +166,7 @@ class P2PManager(
     // Key-exchange gating: endpoints that haven't completed ECDH yet
     private val pendingKeyExchange = ConcurrentHashMap.newKeySet<String>() // endpointIds
     private val keyExchangeTimestamps = ConcurrentHashMap<String, Long>() // peerName -> epochMs
+    private val lastSecurityRecovery = ConcurrentHashMap<String, Long>() // endpointId -> epochMs
 
     // Track rapid consecutive transfer failures per endpoint for proactive disconnect
     private val consecutiveFailures = ConcurrentHashMap<String, Int>() // endpointId -> count
@@ -195,8 +197,8 @@ class P2PManager(
     var fileShareManager: FileShareManager? = null
     /** Cloud log upload manager. Set by [P2PApplication]. */
     var cloudLogManager: CloudLogManager? = null
-    /** Group message handler callback — set to a lambda that persists and distributes. */
-    var groupMessageHandler: ((com.fyp.resilientp2p.transport.Packet) -> Unit)? = null
+
+    @Volatile private var internetPeers = emptySet<String>()
 
     // File transfer metadata: payloadId -> FileMetadata (set by FILE_META packet, consumed on transfer complete)
     data class FileMetadata(val fileName: String, val mimeType: String, val fileSize: Long, val senderName: String)
@@ -275,7 +277,12 @@ class P2PManager(
                                 // Intermediate forwarders skip HMAC check since they don't
                                 // share the source↔destination key pair.
                                 val security = securityManager
+                                val requiresSecurePayload =
+                                    packet.type == PacketType.DATA ||
+                                        packet.type == PacketType.STORE_FORWARD ||
+                                        packet.type == PacketType.ACK
                                 if (security != null &&
+                                    requiresSecurePayload &&
                                     packet.destId == localUsername &&
                                     security.hasKeyForPeer(packet.sourceId)) {
                                     // Last HMAC_SIZE bytes are the HMAC
@@ -303,6 +310,7 @@ class P2PManager(
                                                            else com.fyp.resilientp2p.data.LogLevel.WARN
                                             log("HMAC_INVALID from=${packet.sourceId}${if (gracePeriod) " (grace period)" else ""} — dropping packet",
                                                 logLevel, peerId = peerName)
+                                            triggerSecurityRecovery(endpointId)
                                             return
                                         }
                                         // Strip HMAC from payload — dataBytes is the (encrypted) ciphertext
@@ -320,6 +328,7 @@ class P2PManager(
                                     } else {
                                         log("DECRYPT_FAIL from=${packet.sourceId} — proceeding with raw payload",
                                             com.fyp.resilientp2p.data.LogLevel.WARN, peerId = peerName)
+                                        triggerSecurityRecovery(endpointId)
                                     }
                                 }
 
@@ -1279,6 +1288,11 @@ class P2PManager(
             context.unregisterReceiver(batteryReceiver)
         } catch (_: Exception) {}
 
+        // Stop active voice streams so recorder/player file descriptors are released
+        // before endpoint teardown.
+        voiceManager?.stopRecording()
+        voiceManager?.stopPlaying()
+
         // 1. Null out all job references BEFORE cancelling the scope so that
         //    any concurrent startXxx() calls don't see "isActive == true" and skip
         //    re-launching after the new scope is created.
@@ -1305,6 +1319,7 @@ class P2PManager(
         connectionTimestamps.clear()
         messageCache.clear()
         gatewayNeighbors.clear()
+        locationEstimator?.reset()
         securityManager?.destroy()
 
         // 4. Stop Nearby Connections (safe to do after map clear; uses its own internal state).
@@ -1541,7 +1556,10 @@ class P2PManager(
                 }
             } else {
                 // IDENTITY and ROUTE_ANNOUNCE always have TTL=0 by design — don't count as drops
-                if (packet.type != PacketType.IDENTITY && packet.type != PacketType.ROUTE_ANNOUNCE) {
+                // BROADCAST packets naturally expire after flood fanout and are expected.
+                if (packet.type != PacketType.IDENTITY &&
+                    packet.type != PacketType.ROUTE_ANNOUNCE &&
+                    packet.destId != BROADCAST_DEST) {
                     log("PACKET_TTL_EXCEEDED id=${packet.id.take(8)} dest='${packet.destId}' src='${packet.sourceId}'",
                             com.fyp.resilientp2p.data.LogLevel.WARN)
                     networkStats.totalPacketsDropped.incrementAndGet()
@@ -1808,15 +1826,6 @@ class P2PManager(
             }
 
             // --- Phase 4 packet types ---
-
-            PacketType.GROUP_MESSAGE -> {
-                // Route to group chat handler
-                groupMessageHandler?.invoke(packet)
-                // Send ACK for unicast group messages
-                if (packet.destId == localUsername) {
-                    sendAck(packet.sourceId, packet.id)
-                }
-            }
             PacketType.FILE_ANNOUNCE -> {
                 fileShareManager?.handleFileAnnounce(packet)
             }
@@ -1899,6 +1908,21 @@ class P2PManager(
         handlePacket(ackPacket, LOCAL_SOURCE)
     }
 
+    private fun triggerSecurityRecovery(endpointId: String) {
+        val now = System.currentTimeMillis()
+        val previous = lastSecurityRecovery[endpointId] ?: 0L
+        if (now - previous < 5000L) return
+        lastSecurityRecovery[endpointId] = now
+        if (neighbors.containsKey(endpointId)) {
+            log(
+                "SECURITY_RECOVERY endpoint=$endpointId action=RESEND_IDENTITY",
+                com.fyp.resilientp2p.data.LogLevel.DEBUG
+            )
+            sendIdentityPacket(endpointId)
+        }
+    }
+
+    @Suppress("CyclomaticComplexMethod", "NestedBlockDepth")
     private fun forwardPacket(packet: Packet, excludeEndpointId: String? = null) {
         val nextHop = synchronized(routingLock) { routingTable[packet.destId] }
         var newPacket = packet.copy(ttl = packet.ttl - 1)
@@ -1955,6 +1979,31 @@ class P2PManager(
                 }
             }
         } else if (packet.destId != BROADCAST_DEST) {
+            val gateway = internetGatewayManager
+            val shouldRelayViaCloud =
+                packet.destId in internetPeers &&
+                    packet.type == PacketType.DATA &&
+                    gateway?.hasInternet?.value == true
+
+            if (shouldRelayViaCloud) {
+                scope.launch {
+                    val relayed = gateway?.relayToCloud(packet.destId, packet.sourceId, newPacket.payload, packet.id) == true
+                    if (relayed) {
+                        log(
+                            "PACKET_RELAYED_CLOUD id=${packet.id.take(8)} dest='${packet.destId}' reason=INTERNET_PEER",
+                            com.fyp.resilientp2p.data.LogLevel.INFO
+                        )
+                    } else {
+                        log(
+                            "RELAY_FAILED_FALLBACK_SF id=${packet.id.take(8)} dest='${packet.destId}' reason=INTERNET_PEER",
+                            com.fyp.resilientp2p.data.LogLevel.INFO
+                        )
+                        queueForStoreForward(newPacket)
+                    }
+                }
+                return
+            }
+
             // Unicast with no valid route — try flood to all neighbors, trust-sorted
             val scorer = peerTrustScorer
             val availableNeighbors = neighbors.keys
@@ -1988,13 +2037,11 @@ class P2PManager(
             } else {
                 // No neighbors at all — queue for store-and-forward or try cloud relay
                 if (newPacket.type == PacketType.DATA || newPacket.type == PacketType.STORE_FORWARD) {
-                    val gateway = internetGatewayManager
                     when {
                         // Case 1: We are a gateway — relay directly to Firestore
                         gateway != null && gateway.hasInternet.value && newPacket.type == PacketType.DATA -> {
                             scope.launch {
-                                val payloadStr = String(newPacket.payload, StandardCharsets.UTF_8)
-                                val relayed = gateway.relayToCloud(newPacket.destId, newPacket.sourceId, payloadStr, newPacket.id)
+                                val relayed = gateway.relayToCloud(newPacket.destId, newPacket.sourceId, newPacket.payload, newPacket.id)
                                 if (relayed) {
                                     log("PACKET_RELAYED_CLOUD id=${packet.id.take(8)} dest='${packet.destId}'",
                                         com.fyp.resilientp2p.data.LogLevel.INFO)
@@ -2529,8 +2576,26 @@ class P2PManager(
                 dest to RouteInfo(nextHop, estimatedHops)
             }
         }
+        val internetPeerRoutes = internetPeers
+            .asSequence()
+            .filter { it != localUsername }
+            .filterNot { it in neighborNames }
+            .filterNot { it in knownPeersMap.keys }
+            .associateWith { RouteInfo(INTERNET_RELAY_HOP, 0) }
         val snap = networkStats.snapshot(neighbors.size, routingTable.size)
-        updateState { it.copy(connectedEndpoints = neighborList, knownPeers = knownPeersMap, stats = snap) }
+        updateState {
+            it.copy(
+                connectedEndpoints = neighborList,
+                knownPeers = knownPeersMap + internetPeerRoutes,
+                internetPeers = internetPeerRoutes.keys,
+                stats = snap
+            )
+        }
+    }
+
+    fun updateInternetPeers(peers: Set<String>) {
+        internetPeers = peers
+        updateConnectedEndpoints()
     }
 
     fun setLogLevel(level: com.fyp.resilientp2p.data.LogLevel) {
@@ -2653,5 +2718,7 @@ class P2PManager(
         const val LOCAL_SOURCE = "LOCAL"
         /** Sentinel destination for broadcast/flood packets */
         const val BROADCAST_DEST = "BROADCAST"
+        /** Synthetic next hop label used for internet-relayed peers in the UI. */
+        private const val INTERNET_RELAY_HOP = "Internet Relay"
     }
 }

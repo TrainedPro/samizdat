@@ -6,7 +6,6 @@ import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ProcessLifecycleOwner
 import com.fyp.resilientp2p.audio.AudioCodecManager
 import com.fyp.resilientp2p.data.AppDatabase
-import com.fyp.resilientp2p.data.GroupMessage
 import com.fyp.resilientp2p.data.LogLevel
 import com.fyp.resilientp2p.managers.CloudLogManager
 import com.fyp.resilientp2p.managers.EmergencyManager
@@ -23,9 +22,11 @@ import com.fyp.resilientp2p.security.RateLimiter
 import com.fyp.resilientp2p.security.SecurityManager
 import com.fyp.resilientp2p.testing.EnduranceTestRunner
 import com.fyp.resilientp2p.testing.TestRunner
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import java.nio.charset.StandardCharsets
 
@@ -143,66 +144,18 @@ class P2PApplication : Application() {
         fileShareManager.logFn = logFn
         AudioCodecManager.logFn = logFn
 
-        // Group message handler: persist + auto-join unknown groups
-        val groupMessageDao = database.groupMessageDao()
-        val chatGroupDao = database.chatGroupDao()
-        p2pManager.groupMessageHandler = { packet ->
-            appScope.launch {
-                val payloadStr = String(packet.payload, StandardCharsets.UTF_8)
-                val parts = payloadStr.split("|", limit = 4)
-                when (parts.getOrNull(0)) {
-                    "MSG" -> {
-                        if (parts.size >= 4) {
-                            val groupId = parts[1]
-                            val sender = parts[2]
-                            val text = parts[3]
-                            // Auto-register group if unknown
-                            if (chatGroupDao.exists(groupId) == 0) {
-                                chatGroupDao.upsert(
-                                    com.fyp.resilientp2p.data.ChatGroup(
-                                        groupId = groupId,
-                                        name = "Group-${groupId.take(8)}",
-                                        createdBy = sender
-                                    )
-                                )
-                            }
-                            if (groupMessageDao.existsByPacketId(packet.id) == 0) {
-                                groupMessageDao.insert(
-                                    GroupMessage(
-                                        groupId = groupId,
-                                        senderName = sender,
-                                        text = text,
-                                        packetId = packet.id
-                                    )
-                                )
-                            }
-                        }
-                    }
-                    "CREATE" -> {
-                        if (parts.size >= 4) {
-                            val groupId = parts[1]
-                            val name = parts[2]
-                            val creator = parts[3]
-                            if (chatGroupDao.exists(groupId) == 0) {
-                                chatGroupDao.upsert(
-                                    com.fyp.resilientp2p.data.ChatGroup(
-                                        groupId = groupId,
-                                        name = name,
-                                        createdBy = creator
-                                    )
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
         // Start managers
         telemetryManager.start()
         internetGatewayManager.start()
         emergencyManager.start()
         cloudLogManager.start()
+
+        // Keep internet-discovered peers visible in UI state.
+        appScope.launch(start = CoroutineStart.UNDISPATCHED) {
+            internetGatewayManager.cloudPeers.collectLatest { peers ->
+                p2pManager.updateInternetPeers(peers)
+            }
+        }
 
         // Wire test results to telemetry
         testRunner.onTestResultsReady = { json -> telemetryManager.recordTestResults(json) }

@@ -23,7 +23,7 @@ import java.util.concurrent.atomic.AtomicLong
  * | **PROTOCOL**       | 10                    | IDENTITY, ROUTE_ANNOUNCE                             |
  * | **EMERGENCY**      | 5                     | EMERGENCY (generous but not unlimited)                |
  * | **CONTROL**        | 50                    | PING, PONG, ACK, STORE_FORWARD, LOCATION_PING       |
- * | **DATA**           | 200                   | DATA, GROUP_MESSAGE, ENCOUNTER_LOG                   |
+ * | **DATA**           | 200                   | DATA, ENCOUNTER_LOG, GOSSIP                          |
  * | **BULK_TRANSFER**  | 500                   | FILE_META/ANNOUNCE/REQUEST/CHUNK, AUDIO_DATA/CONTROL |
  *
  * Additionally, a **forwarding budget** limits how many packets a single peer can
@@ -109,7 +109,7 @@ class RateLimiter(
             PacketType.AUDIO_DATA,
             PacketType.AUDIO_CONTROL
         )
-        // Everything else (DATA, GROUP_MESSAGE, ENCOUNTER_LOG, GOSSIP) → DATA category
+        // Everything else (DATA, ENCOUNTER_LOG, GOSSIP) -> DATA category
     }
 
     /** Rate-limit category for tiered budgets. */

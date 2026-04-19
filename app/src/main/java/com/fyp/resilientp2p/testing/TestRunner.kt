@@ -77,10 +77,10 @@ class TestRunner(
         "Per-Peer Stats",
         "Connection Stability",
         "Heartbeat Active",
+        "Gateway Relay Control Plane",
         "Rate Limiter Tiering",
         "Blacklist & Violations",
         "Emergency Broadcast",
-        "Group Messaging",
         "Concurrent Operations"
     )
 
@@ -267,10 +267,10 @@ class TestRunner(
             "Per-Peer Stats"          -> testPerPeerStats(peers)
             "Connection Stability"    -> testConnectionStability(peers)
             "Heartbeat Active"        -> testHeartbeatActive(peers)
+            "Gateway Relay Control Plane" -> testGatewayRelayControlPlane()
             "Rate Limiter Tiering"    -> testRateLimiterTiering()
             "Blacklist & Violations"  -> testBlacklistViolations()
             "Emergency Broadcast"     -> testEmergencyBroadcast(peers)
-            "Group Messaging"         -> testGroupMessaging(peers)
             "Concurrent Operations"   -> testConcurrentOperations(peers)
             else -> TestResult(testName, false, 0, error = "Unknown test: $testName")
         }
@@ -755,6 +755,8 @@ class TestRunner(
 
         val fakePeer = "FakeDevice-${UUID.randomUUID().toString().take(8)}"
         val queuedBefore = p2pManager.networkStats.storeForwardQueued.get()
+        val deliveredBefore = p2pManager.networkStats.storeForwardDelivered.get()
+        val forwardedBefore = p2pManager.networkStats.totalPacketsForwarded.get()
 
         tlog("  Sending to non-existent '$fakePeer' to trigger S&F...")
         try {
@@ -765,16 +767,40 @@ class TestRunner(
 
         val queuedAfter = p2pManager.networkStats.storeForwardQueued.get()
         val delivered = p2pManager.networkStats.storeForwardDelivered.get()
+        val forwardedAfter = p2pManager.networkStats.totalPacketsForwarded.get()
         tlog("  S&F queued: $queuedBefore→$queuedAfter (Δ${queuedAfter - queuedBefore}), delivered total: $delivered")
+
+        val queuedIncremented = queuedAfter > queuedBefore
+        val forwardedDelta = forwardedAfter - forwardedBefore
+        val exercisedPath = queuedIncremented || forwardedDelta > 0
+        if (!exercisedPath) {
+            warnings.add("Neither store-forward queue nor flood-forward path was exercised")
+        }
+
+        val deliveredDelta = delivered - deliveredBefore
+        if (deliveredDelta > 0) {
+            tlog("  S&F delivered advanced by $deliveredDelta during test window")
+        } else {
+            tlog("  S&F delivery retry not observed in short window (expected in sparse topologies)")
+        }
 
         val duration = System.currentTimeMillis() - start
         return TestResult(
             testName = "Store-and-Forward Queue",
-            passed = warnings.isEmpty(),
+            passed = warnings.isEmpty() && exercisedPath,
             durationMs = duration,
             details = mapOf(
                 "queuedBefore" to queuedBefore, "queuedAfter" to queuedAfter,
-                "wasQueued" to (queuedAfter > queuedBefore), "totalDelivered" to delivered
+                "wasQueued" to queuedIncremented,
+                "forwardedBefore" to forwardedBefore,
+                "forwardedAfter" to forwardedAfter,
+                "forwardedDelta" to forwardedDelta,
+                "exercisedPath" to exercisedPath,
+                "deliveredBefore" to deliveredBefore,
+                "deliveredAfter" to delivered,
+                "deliveredDelta" to deliveredDelta,
+                "expiryWindowHours" to 2,
+                "totalDelivered" to delivered
             ),
             warnings = warnings,
             error = if (warnings.isNotEmpty()) warnings.joinToString("; ") else null,
@@ -793,7 +819,7 @@ class TestRunner(
             return TestResult(TEST_FILE_TRANSFER, false, 0, error = "No peers to send to")
         }
 
-        val testContent = buildString {
+        val smallContent = buildString {
             appendLine("ResilientP2P Test File")
             appendLine("Generated: ${Date()}")
             appendLine("Device: ${p2pManager.getLocalDeviceName()}")
@@ -801,21 +827,32 @@ class TestRunner(
         }
         // file_paths.xml exposes <cache-path path="test_files/" />, so create inside that subdirectory
         val testDir = File(context.cacheDir, "test_files").apply { mkdirs() }
-        val testFile = File(testDir, "test_transfer_${System.currentTimeMillis()}.txt")
+        val smallFile = File(testDir, "test_transfer_small_${System.currentTimeMillis()}.txt")
+        val largeFile = File(testDir, "test_transfer_large_${System.currentTimeMillis()}.bin")
 
         try {
-            testFile.writeText(testContent)
-            val hash = sha256(testContent.toByteArray())
-            tlog("  Generated: ${testFile.name} (${testFile.length()}B, sha256=${hash.take(16)}...)")
+            smallFile.writeText(smallContent)
+            val smallHash = sha256(smallContent.toByteArray())
+
+            // 1 MiB deterministic payload for larger transfer-path exercise.
+            val largeBytes = ByteArray(1024 * 1024) { (it % 251).toByte() }
+            largeFile.writeBytes(largeBytes)
+            val largeHash = sha256(largeBytes)
+            tlog("  Generated small: ${smallFile.name} (${smallFile.length()}B, sha256=${smallHash.take(16)}...)")
+            tlog("  Generated large: ${largeFile.name} (${largeFile.length()}B, sha256=${largeHash.take(16)}...)")
 
             val targetPeer = peers.first()
-            tlog("  Sending to $targetPeer via sendFile...")
+            tlog("  Sending small + large files to $targetPeer via sendFile...")
 
-            val uri = androidx.core.content.FileProvider.getUriForFile(
-                context, "${context.packageName}.fileprovider", testFile
+            val smallUri = androidx.core.content.FileProvider.getUriForFile(
+                context, "${context.packageName}.fileprovider", smallFile
             )
-            p2pManager.sendFile(targetPeer, uri)
-            tlog("  File send initiated")
+            val largeUri = androidx.core.content.FileProvider.getUriForFile(
+                context, "${context.packageName}.fileprovider", largeFile
+            )
+            p2pManager.sendFile(targetPeer, smallUri)
+            p2pManager.sendFile(targetPeer, largeUri)
+            tlog("  File sends initiated for both payload sizes")
             delay(5000)
 
             val duration = System.currentTimeMillis() - start
@@ -823,7 +860,15 @@ class TestRunner(
                 testName = TEST_FILE_TRANSFER,
                 passed = true,
                 durationMs = duration,
-                details = mapOf("fileName" to testFile.name, "fileSize" to testFile.length(), "target" to targetPeer),
+                details = mapOf(
+                    "target" to targetPeer,
+                    "smallFileName" to smallFile.name,
+                    "smallFileSize" to smallFile.length(),
+                    "smallSha256Prefix" to smallHash.take(16),
+                    "largeFileName" to largeFile.name,
+                    "largeFileSize" to largeFile.length(),
+                    "largeSha256Prefix" to largeHash.take(16)
+                ),
                 warnings = warnings
             )
         } catch (e: Exception) {
@@ -839,8 +884,80 @@ class TestRunner(
                 warnings = warnings
             )
         } finally {
-            testFile.delete()
+            smallFile.delete()
+            largeFile.delete()
         }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    // TEST 16: Gateway Relay Control Plane
+    // ═══════════════════════════════════════════════════════════════════
+
+    private suspend fun testGatewayRelayControlPlane(): TestResult {
+        val start = System.currentTimeMillis()
+        tlog("── Gateway Relay Control Plane ──")
+        val warnings = mutableListOf<String>()
+
+        val gateway = p2pManager.internetGatewayManager
+        if (gateway == null) {
+            return TestResult(
+                testName = "Gateway Relay Control Plane",
+                passed = false,
+                durationMs = System.currentTimeMillis() - start,
+                error = "InternetGatewayManager not initialised"
+            )
+        }
+
+        val originalEnabled = gateway.gatewayEnabled.value
+        val hasInternet = gateway.hasInternet.value
+
+        gateway.setGatewayEnabled(false)
+        delay(150)
+        val advertisedWhenDisabled = gateway.shouldAdvertiseGateway()
+        if (advertisedWhenDisabled) {
+            warnings.add("Gateway advertised while explicitly disabled")
+        }
+
+        gateway.setGatewayEnabled(true)
+        delay(150)
+        val advertisedWhenEnabled = gateway.shouldAdvertiseGateway()
+        val expectedEnabledState = hasInternet
+        if (advertisedWhenEnabled != expectedEnabledState) {
+            warnings.add(
+                "Gateway advertise state mismatch when enabled: expected=$expectedEnabledState actual=$advertisedWhenEnabled"
+            )
+        }
+
+        // Oversized payload should be rejected regardless of internet path.
+        val oversizePayload = "X".repeat(11 * 1024)
+        val oversizeRejected = !gateway.relayToCloud(
+            destId = "TEST_DEST",
+            sourceId = p2pManager.getLocalDeviceName(),
+            payload = oversizePayload.toByteArray(StandardCharsets.UTF_8),
+            packetId = UUID.randomUUID().toString()
+        )
+        if (!oversizeRejected) {
+            warnings.add("Oversized relay payload was unexpectedly accepted")
+        }
+
+        // Restore original user toggle state.
+        gateway.setGatewayEnabled(originalEnabled)
+
+        val duration = System.currentTimeMillis() - start
+        val passed = warnings.isEmpty()
+        return TestResult(
+            testName = "Gateway Relay Control Plane",
+            passed = passed,
+            durationMs = duration,
+            details = mapOf(
+                "hasInternet" to hasInternet,
+                "advertisedWhenDisabled" to advertisedWhenDisabled,
+                "advertisedWhenEnabled" to advertisedWhenEnabled,
+                "oversizeRejected" to oversizeRejected
+            ),
+            warnings = warnings,
+            error = if (!passed) "Gateway control-plane checks failed" else null
+        )
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -1223,55 +1340,7 @@ class TestRunner(
     }
 
     // ═══════════════════════════════════════════════════════════════════
-    // TEST 19: Group Messaging — verify group broadcast works
-    // ═══════════════════════════════════════════════════════════════════
-
-    private suspend fun testGroupMessaging(peers: List<String>): TestResult {
-        val start = System.currentTimeMillis()
-        tlog("── Group Messaging ──")
-        val warnings = mutableListOf<String>()
-
-        if (peers.isEmpty()) {
-            return TestResult("Group Messaging", false, System.currentTimeMillis() - start,
-                error = "No connected peers", warnings = listOf("Needs ≥1 peer"))
-        }
-
-        // Send a group-style broadcast message
-        val groupTag = "${TEST_MSG_PREFIX}GROUP_${System.currentTimeMillis()}"
-        val beforeSent = p2pManager.networkStats.totalPacketsSent.get()
-
-        // Send to each peer (simulated group broadcast)
-        for (peer in peers) {
-            try {
-                p2pManager.sendData(peer, groupTag)
-                tlog("  Sent group msg to $peer")
-            } catch (e: Exception) {
-                warnings.add("Failed to send to $peer: ${e.message}")
-            }
-        }
-
-        delay(2000)
-
-        val afterSent = p2pManager.networkStats.totalPacketsSent.get()
-        val msgsSent = afterSent - beforeSent
-        tlog("  Messages sent: $msgsSent (expected ≥${peers.size})")
-
-        val passed = msgsSent >= peers.size
-        if (!passed) warnings.add("Only $msgsSent packets sent, expected ${peers.size}")
-
-        val duration = System.currentTimeMillis() - start
-        return TestResult(
-            testName = "Group Messaging",
-            passed = passed,
-            durationMs = duration,
-            details = mapOf("messagesSent" to msgsSent, "peers" to peers.size.toLong()),
-            warnings = warnings,
-            error = if (!passed) "Group messages not fully sent" else null
-        )
-    }
-
-    // ═══════════════════════════════════════════════════════════════════
-    // TEST 20: Concurrent Operations — chat + file + ping simultaneously
+    // TEST 19: Concurrent Operations — chat + file + ping simultaneously
     // ═══════════════════════════════════════════════════════════════════
 
     private suspend fun testConcurrentOperations(peers: List<String>): TestResult {

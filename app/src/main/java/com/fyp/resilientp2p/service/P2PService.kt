@@ -99,6 +99,7 @@ class P2PService : Service() {
         app.encounterLogger.destroy()
         app.emergencyManager.destroy()
         app.internetGatewayManager.destroy()
+        app.cloudLogManager.destroy()
         app.securityManager.destroy()
         app.telemetryManager.destroy()
         app.heartbeatManager.destroy()

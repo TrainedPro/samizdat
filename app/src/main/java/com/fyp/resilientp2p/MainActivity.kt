@@ -137,8 +137,6 @@ class MainActivity : AppCompatActivity() {
                                     telemetryManager = (application as P2PApplication).telemetryManager,
                                     emergencyManager = (application as P2PApplication).emergencyManager,
                                     cloudLogManager = (application as P2PApplication).cloudLogManager,
-                                    chatGroupDao = (application as P2PApplication).database.chatGroupDao(),
-                                    groupMessageDao = (application as P2PApplication).database.groupMessageDao(),
                                     locationEstimator = (application as P2PApplication).locationEstimator
                             )
                         }

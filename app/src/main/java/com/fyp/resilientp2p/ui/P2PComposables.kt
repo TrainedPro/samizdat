@@ -20,7 +20,6 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Cloud
 import androidx.compose.material.icons.filled.CloudOff
 import androidx.compose.material.icons.filled.CloudUpload
-import androidx.compose.material.icons.filled.Forum
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.LocationOn
@@ -90,8 +89,6 @@ fun ResilientP2PApp(
     telemetryManager: TelemetryManager? = null,
     emergencyManager: com.fyp.resilientp2p.managers.EmergencyManager? = null,
     cloudLogManager: com.fyp.resilientp2p.managers.CloudLogManager? = null,
-    @Suppress("UNUSED_PARAMETER") chatGroupDao: com.fyp.resilientp2p.data.ChatGroupDao? = null,
-    @Suppress("UNUSED_PARAMETER") groupMessageDao: com.fyp.resilientp2p.data.GroupMessageDao? = null,
     @Suppress("UNUSED_PARAMETER") locationEstimator: com.fyp.resilientp2p.managers.LocationEstimator? = null
 ) {
         val state by p2pManager.state.collectAsState()
@@ -101,7 +98,6 @@ fun ResilientP2PApp(
         var showTestMode by rememberSaveable { mutableStateOf(false) }
          // Phase 4 screen states (hidden for midterm)
          var showHealthDashboard by rememberSaveable { mutableStateOf(false) }
-         var showGroupChat by rememberSaveable { mutableStateOf(false) }
 
         // Auto-launch test mode when compiled with TEST_MODE=true
         LaunchedEffect(Unit) {
@@ -158,8 +154,8 @@ fun ResilientP2PApp(
                                 val text = String(pkt.payload, java.nio.charset.StandardCharsets.UTF_8)
                                 if (!text.startsWith("__TEST__") && !text.startsWith("__ENDURANCE__")) {
                                         val isBroadcast = pkt.destId == "BROADCAST"
-                 val chatIsOpen = showChatDialog && chatTargetId == pkt.sourceId ||
-                         showGroupChat // showGroupChat enabled
+                                        val chatIsOpen =
+                                                showChatDialog && chatTargetId == pkt.sourceId
                                         if (!chatIsOpen) {
                                                 val preview = text.take(40).let {
                                                         if (text.length > 40) "$it..." else it
@@ -212,7 +208,7 @@ fun ResilientP2PApp(
                                                                 showAdvancedOptions = true
                                                         }
                                                  )
-                                                 
+
                                                  DropdownMenuItem(
                                                          leadingIcon = {
                                                                  Icon(
@@ -227,22 +223,6 @@ fun ResilientP2PApp(
                                                                  showHealthDashboard = true
                                                          }
                                                  )
-                                                 if (chatGroupDao != null && groupMessageDao != null) {
-                                                         DropdownMenuItem(
-                                                                 leadingIcon = {
-                                                                         Icon(
-                                                                                 Icons.Default.Forum,
-                                                                                 contentDescription = null,
-                                                                                 modifier = Modifier.size(18.dp)
-                                                                         )
-                                                                 },
-                                                                 text = { Text("Group Chat") },
-                                                                 onClick = {
-                                                                         showMenu = false
-                                                                         showGroupChat = true
-                                                                 }
-                                                         )
-                                                 }
                                                 if (testRunner != null) {
                                                         DropdownMenuItem(
                                                                 leadingIcon = {
@@ -630,6 +610,7 @@ fun ResilientP2PApp(
                                 onClearLogs = { p2pManager.clearLogs() },
                                 knownPeers = state.knownPeers,
                                 connectedEndpoints = state.connectedEndpoints.toSet(),
+                                internetPeers = state.internetPeers,
                                 onPeerClick = { peerId ->
                                         chatTargetId = peerId
                                         showChatDialog = true
@@ -647,7 +628,6 @@ fun ResilientP2PApp(
                 when {
                         showTestMode -> showTestMode = false
                          showHealthDashboard -> showHealthDashboard = false  // Phase 4
-                         showGroupChat -> showGroupChat = false  // Phase 4
                         showChatDialog -> showChatDialog = false
                 }
         }
@@ -754,24 +734,13 @@ fun ResilientP2PApp(
                 )
         }
 
-         
+
          // Health dashboard overlay
          if (showHealthDashboard) {
                  HealthDashboard(
                          p2pManager = p2pManager,
                          locationEstimator = locationEstimator,
                          onBack = { showHealthDashboard = false }
-                 )
-         }
-
-         // Group chat overlay
-         if (showGroupChat && chatGroupDao != null && groupMessageDao != null) {
-                 GroupChatScreen(
-                         p2pManager = p2pManager,
-                         chatGroupDao = chatGroupDao,
-                         groupMessageDao = groupMessageDao,
-                         localUsername = state.localDeviceName,
-                         onBack = { showGroupChat = false }
                  )
          }
 }
@@ -972,6 +941,7 @@ fun DashboardContent(
         onClearLogs: () -> Unit,
         knownPeers: Map<String, RouteInfo>,
         connectedEndpoints: Set<String>,
+        internetPeers: Set<String>,
         onPeerClick: (String) -> Unit,
         telemetryManager: TelemetryManager? = null,
         cloudLogManager: com.fyp.resilientp2p.managers.CloudLogManager? = null
@@ -1025,6 +995,7 @@ fun DashboardContent(
                 MeshContactsSection(
                         knownPeers = knownPeers,
                         connectedEndpoints = connectedEndpoints,
+                        internetPeers = internetPeers,
                         peerStats = stats.peerStats,
                         onPeerClick = onPeerClick
                 )
@@ -1060,6 +1031,7 @@ fun DashboardContent(
 fun MeshContactsSection(
         knownPeers: Map<String, RouteInfo>,
         connectedEndpoints: Set<String>,
+        internetPeers: Set<String>,
         peerStats: Map<String, PeerStatsSnapshot>,
         onPeerClick: (String) -> Unit
 ) {
@@ -1077,7 +1049,7 @@ fun MeshContactsSection(
                         )
 
                         // Broadcast Button
-                        if (connectedEndpoints.isNotEmpty() || knownPeers.isNotEmpty()) {
+                        if (connectedEndpoints.isNotEmpty() || knownPeers.isNotEmpty() || internetPeers.isNotEmpty()) {
                                 Button(
                                         onClick = { onPeerClick("BROADCAST") },
                                         modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
@@ -1090,7 +1062,7 @@ fun MeshContactsSection(
 
                         Spacer(modifier = Modifier.height(12.dp))
 
-                        if (knownPeers.isEmpty() && connectedEndpoints.isEmpty()) {
+                        if (knownPeers.isEmpty() && connectedEndpoints.isEmpty() && internetPeers.isEmpty()) {
                                 Text(
                                         text = "No peers found yet. Waiting for mesh...",
                                         style = MaterialTheme.typography.bodyMedium,
@@ -1099,10 +1071,11 @@ fun MeshContactsSection(
                                 )
                         } else {
                                 // Combine direct and routed peers
-                                val allPeers = (connectedEndpoints + knownPeers.keys).toSet()
+                                val allPeers = (connectedEndpoints + knownPeers.keys + internetPeers).toSet()
 
                                 allPeers.forEach { peerId ->
                                         val isDirect = connectedEndpoints.contains(peerId)
+                                        val isInternetPeer = internetPeers.contains(peerId)
                                         val route = knownPeers[peerId]
                                         val stats = peerStats[peerId]
 
@@ -1130,6 +1103,8 @@ fun MeshContactsSection(
                                                                                                 .ui
                                                                                                 .theme
                                                                                                 .StatusGreen
+                                                                                else if (isInternetPeer)
+                                                                                        Color(0xFF1976D2)
                                                                                 else
                                                                                         com.fyp
                                                                                                 .resilientp2p
@@ -1149,6 +1124,7 @@ fun MeshContactsSection(
                                                         // Connection type
                                                         val status =
                                                                 if (isDirect) "Direct Connection"
+                                                                else if (isInternetPeer) "Via Internet Relay"
                                                                 else
                                                                         "Via ${route?.nextHop} (${route?.hopCount} hops)"
                                                         Text(

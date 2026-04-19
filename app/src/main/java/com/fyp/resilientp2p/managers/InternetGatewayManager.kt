@@ -16,6 +16,9 @@ import java.io.InputStreamReader
 import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URL
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
+import java.util.Base64
 
 /**
  * Manages internet gateway detection and cloud relay for cross-mesh messaging.
@@ -34,9 +37,11 @@ class InternetGatewayManager(
         private const val FIRESTORE_STRING_VALUE = "stringValue"
         const val GATEWAY_FLAG = "__GATEWAY__"
         private const val RELAY_COLLECTION = "mesh_relay"
+        private const val PRESENCE_COLLECTION = "mesh_presence"
         private const val MAX_PENDING_PER_DEVICE = 100
         private const val MESSAGE_TTL_MS = 24 * 60 * 60 * 1000L // 24 hours
         private const val MAX_MESSAGE_SIZE = 10 * 1024 // 10KB text only
+        private const val PRESENCE_TTL_MS = 90_000L
         private const val POLL_INTERVAL_MS = 30_000L // Check for inbound relay messages
         private const val MAX_SEND_RATE_PER_HOUR = 60
     }
@@ -51,6 +56,9 @@ class InternetGatewayManager(
     /** User-controlled toggle: when false, gateway is disabled even if internet is available. */
     private val _gatewayEnabled = MutableStateFlow(true)
     val gatewayEnabled: StateFlow<Boolean> = _gatewayEnabled.asStateFlow()
+
+    private val _cloudPeers = MutableStateFlow(emptySet<String>())
+    val cloudPeers: StateFlow<Set<String>> = _cloudPeers.asStateFlow()
 
     // Rate limiting
     private val sendTimestamps = mutableListOf<Long>()
@@ -112,7 +120,7 @@ class InternetGatewayManager(
      *
      * @return true if relay was accepted (queued for upload), false if rejected
      */
-    suspend fun relayToCloud(destId: String, sourceId: String, payload: String, packetId: String): Boolean {
+    suspend fun relayToCloud(destId: String, sourceId: String, payload: ByteArray, packetId: String): Boolean {
         if (!_hasInternet.value) {
             p2pManager.log("Cannot relay — no internet", LogLevel.WARN)
             return false
@@ -121,8 +129,8 @@ class InternetGatewayManager(
             p2pManager.log("Cannot relay — Firebase not configured", LogLevel.WARN)
             return false
         }
-        if (payload.length > MAX_MESSAGE_SIZE) {
-            p2pManager.log("Relay rejected — message too large: ${payload.length}", LogLevel.WARN)
+        if (payload.size > MAX_MESSAGE_SIZE) {
+            p2pManager.log("Relay rejected — message too large: ${payload.size}", LogLevel.WARN)
             return false
         }
         if (!checkRateLimit()) {
@@ -131,12 +139,14 @@ class InternetGatewayManager(
         }
 
         return try {
+            val payloadBase64 = Base64.getEncoder().encodeToString(payload)
             val doc = JSONObject().apply {
                 put("fields", JSONObject().apply {
                     put("packetId", JSONObject().put(FIRESTORE_STRING_VALUE, packetId))
                     put("sourceId", JSONObject().put(FIRESTORE_STRING_VALUE, sourceId))
                     put("destId", JSONObject().put(FIRESTORE_STRING_VALUE, destId))
-                    put("payload", JSONObject().put(FIRESTORE_STRING_VALUE, payload))
+                    put("payload", JSONObject().put(FIRESTORE_STRING_VALUE, payloadBase64))
+                    put("payloadEncoding", JSONObject().put(FIRESTORE_STRING_VALUE, "base64"))
                     put("timestamp", JSONObject().put("integerValue", System.currentTimeMillis().toString()))
                     put("ttl", JSONObject().put("integerValue", MESSAGE_TTL_MS.toString()))
                     put("gatewayId", JSONObject().put(FIRESTORE_STRING_VALUE, p2pManager.getLocalDeviceName()))
@@ -186,7 +196,8 @@ class InternetGatewayManager(
                 val fields = doc.getJSONObject("fields")
                 val destId = fields.getJSONObject("destId").getString(FIRESTORE_STRING_VALUE)
                 val sourceId = fields.getJSONObject("sourceId").getString(FIRESTORE_STRING_VALUE)
-                val payload = fields.getJSONObject("payload").getString(FIRESTORE_STRING_VALUE)
+                val payloadEncoded = fields.getJSONObject("payload").getString(FIRESTORE_STRING_VALUE)
+                val payloadEncoding = fields.optJSONObject("payloadEncoding")?.optString(FIRESTORE_STRING_VALUE, "plain") ?: "plain"
                 val timestamp = fields.getJSONObject("timestamp").getString("integerValue").toLong()
                 val packetId = fields.optJSONObject("packetId")?.optString(FIRESTORE_STRING_VALUE) ?: ""
 
@@ -200,6 +211,10 @@ class InternetGatewayManager(
                 // Check if destId is on our mesh (direct neighbors + routed peers)
                 if (destId in localPeers) {
                     p2pManager.log("RELAY_INJECT dest=$destId from=$sourceId packetId=${packetId.take(8)}")
+                    val payloadBytes = when (payloadEncoding) {
+                        "base64" -> Base64.getDecoder().decode(payloadEncoded)
+                        else -> payloadEncoded.toByteArray(StandardCharsets.UTF_8)
+                    }
                     // Reconstruct the original Packet and inject through the full routing engine.
                     // Using sendData() was wrong: it set gateway as sourceId and discarded
                     // the original packetId (breaking dedup), type, and E2E key lookup.
@@ -210,7 +225,7 @@ class InternetGatewayManager(
                         type = com.fyp.resilientp2p.transport.PacketType.DATA,
                         sourceId = sourceId,
                         destId = destId,
-                        payload = payload.toByteArray(java.nio.charset.StandardCharsets.UTF_8),
+                        payload = payloadBytes,
                         timestamp = timestamp,
                         ttl = com.fyp.resilientp2p.transport.Packet.DEFAULT_TTL
                     )
@@ -221,6 +236,55 @@ class InternetGatewayManager(
             }
         } catch (e: Exception) {
             p2pManager.log("RELAY_POLL_ERROR: ${e.message}", LogLevel.ERROR)
+        }
+    }
+
+    private suspend fun publishPresence() {
+        if (!_hasInternet.value || projectId.isBlank() || apiKey.isBlank()) return
+        try {
+            val localDeviceName = p2pManager.getLocalDeviceName()
+            val docId = URLEncoder.encode(localDeviceName, StandardCharsets.UTF_8.name())
+            val doc = JSONObject().apply {
+                put("fields", JSONObject().apply {
+                    put("peerId", JSONObject().put(FIRESTORE_STRING_VALUE, localDeviceName))
+                    put("lastSeen", JSONObject().put("integerValue", System.currentTimeMillis().toString()))
+                    put("hasInternet", JSONObject().put("booleanValue", true))
+                })
+            }
+            val url = "https://firestore.googleapis.com/v1/projects/$projectId/databases/(default)/documents/$PRESENCE_COLLECTION/$docId?key=$apiKey"
+            val code = httpPatch(url, doc.toString())
+            if (code !in 200..299) {
+                p2pManager.log("PRESENCE_PUBLISH_FAILED status=$code", LogLevel.DEBUG)
+            }
+        } catch (e: Exception) {
+            p2pManager.log("PRESENCE_PUBLISH_ERROR: ${e.message}", LogLevel.DEBUG)
+        }
+    }
+
+    private suspend fun pollPresencePeers() {
+        if (!_hasInternet.value || projectId.isBlank() || apiKey.isBlank()) return
+        try {
+            val url = "https://firestore.googleapis.com/v1/projects/$projectId/databases/(default)/documents/$PRESENCE_COLLECTION?key=$apiKey&pageSize=200"
+            val (code, body) = httpGet(url)
+            if (code !in 200..299 || body == null) return
+
+            val now = System.currentTimeMillis()
+            val localName = p2pManager.getLocalDeviceName()
+            val result = mutableSetOf<String>()
+            val documents = JSONObject(body).optJSONArray("documents") ?: return
+
+            for (i in 0 until documents.length()) {
+                val fields = documents.getJSONObject(i).optJSONObject("fields") ?: continue
+                val peerId = fields.optJSONObject("peerId")?.optString(FIRESTORE_STRING_VALUE).orEmpty()
+                if (peerId.isBlank() || peerId == localName) continue
+                val lastSeen = fields.optJSONObject("lastSeen")?.optString("integerValue")?.toLongOrNull() ?: continue
+                if (now - lastSeen <= PRESENCE_TTL_MS) {
+                    result.add(peerId)
+                }
+            }
+            _cloudPeers.value = result
+        } catch (e: Exception) {
+            p2pManager.log("PRESENCE_POLL_ERROR: ${e.message}", LogLevel.DEBUG)
         }
     }
 
@@ -293,8 +357,10 @@ class InternetGatewayManager(
         if (pollJob?.isActive == true) return
         pollJob = scope.launch {
             while (isActive) {
-                delay(POLL_INTERVAL_MS)
+                publishPresence()
+                pollPresencePeers()
                 pollRelayMessages()
+                delay(POLL_INTERVAL_MS)
             }
         }
     }
@@ -302,6 +368,7 @@ class InternetGatewayManager(
     private fun stopRelayPolling() {
         pollJob?.cancel()
         pollJob = null
+        _cloudPeers.value = emptySet()
     }
 
     // --- Rate limiting ---
@@ -360,6 +427,22 @@ class InternetGatewayManager(
             readTimeout = 10_000
         }
         return try {
+            conn.responseCode
+        } finally {
+            conn.disconnect()
+        }
+    }
+
+    private fun httpPatch(urlStr: String, body: String): Int {
+        val conn = (URL(urlStr).openConnection() as HttpURLConnection).apply {
+            requestMethod = "PATCH"
+            setRequestProperty("Content-Type", "application/json")
+            doOutput = true
+            connectTimeout = 10_000
+            readTimeout = 10_000
+        }
+        return try {
+            OutputStreamWriter(conn.outputStream).use { it.write(body) }
             conn.responseCode
         } finally {
             conn.disconnect()

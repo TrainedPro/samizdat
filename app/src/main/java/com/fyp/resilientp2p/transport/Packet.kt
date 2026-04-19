@@ -30,7 +30,6 @@ enum class PacketType {
     EMERGENCY,         // Emergency broadcast — highest priority, floods entire mesh
 
     // Phase 4 additions
-    GROUP_MESSAGE,     // Chat message destined for a named channel/group
     FILE_ANNOUNCE,     // Announce a shared file to the mesh (hash, name, size)
     FILE_REQUEST,      // Request a file chunk by SHA-256 hash + offset
     FILE_CHUNK,        // Response with a chunk of the requested file

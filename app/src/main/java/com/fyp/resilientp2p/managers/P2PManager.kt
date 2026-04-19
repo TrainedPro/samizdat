@@ -1934,7 +1934,11 @@ class P2PManager(
         // Relayers don't share the key, so they can't decrypt or verify HMAC.
         // Only the final destination can strip HMAC → decrypt → get plaintext.
         // This is the same Encrypt-then-MAC pattern used by Signal and Matrix.
-        if (packet.sourceId == localUsername && packet.destId != BROADCAST_DEST) {
+        val shouldSecurePayload =
+            packet.type == PacketType.DATA ||
+                packet.type == PacketType.STORE_FORWARD ||
+                packet.type == PacketType.ACK
+        if (packet.sourceId == localUsername && packet.destId != BROADCAST_DEST && shouldSecurePayload) {
             val security = securityManager
             if (security != null && security.hasKeyForPeer(packet.destId)) {
                 // Step 1: Encrypt payload

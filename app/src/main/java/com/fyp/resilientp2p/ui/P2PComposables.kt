@@ -108,7 +108,6 @@ fun ResilientP2PApp(
         }
 
         // Derived State
-        val transferProgressEvent by p2pManager.payloadProgressEvents.collectAsState(initial = null)
         val bandwidthInfo by p2pManager.bandwidthEvents.collectAsState(initial = null)
         val latestPayload by p2pManager.payloadEvents.collectAsState(initial = null)
 
@@ -602,7 +601,6 @@ fun ResilientP2PApp(
 
                         // --- Dashboard & Logs ---
                         DashboardContent(
-                                transferProgress = transferProgressEvent?.progress ?: 0,
                                 tracePath = tracePath,
                                 logs = state.logs,
                                 stats = state.stats,
@@ -933,7 +931,6 @@ fun DeviceStatusCard(deviceName: String, connectionQuality: Int) {
 
 @Composable
 fun DashboardContent(
-        transferProgress: Int,
         tracePath: String,
         logs: List<com.fyp.resilientp2p.data.LogEntry>,
         stats: NetworkStatsSnapshot,
@@ -947,30 +944,6 @@ fun DashboardContent(
         cloudLogManager: com.fyp.resilientp2p.managers.CloudLogManager? = null
 ) {
         Column(modifier = Modifier.fillMaxWidth()) {
-                // --- Active Transfer Progress (only during active transfer, not after completion) ---
-                if (transferProgress in 1..99) {
-                        Card(
-                                colors = CardDefaults.cardColors(containerColor = colorScheme.surfaceVariant),
-                                shape = RoundedCornerShape(12.dp),
-                                modifier = Modifier.fillMaxWidth()
-                        ) {
-                                Column(modifier = Modifier.padding(16.dp)) {
-                                        Text("File Transfer", style = MaterialTheme.typography.titleMedium)
-                                        Spacer(modifier = Modifier.height(8.dp))
-                                        LinearProgressIndicator(
-                                                progress = { transferProgress / 100f },
-                                                modifier = Modifier.fillMaxWidth(),
-                                        )
-                                        Text(
-                                                "${transferProgress}%",
-                                                style = MaterialTheme.typography.bodySmall,
-                                                modifier = Modifier.padding(top = 4.dp)
-                                        )
-                                }
-                        }
-                        Spacer(modifier = Modifier.height(16.dp))
-                }
-
                 // --- Last Trace Path ---
                 if (tracePath.isNotBlank()) {
                         Card(

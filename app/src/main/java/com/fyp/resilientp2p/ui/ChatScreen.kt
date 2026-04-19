@@ -326,17 +326,11 @@ private fun ChatBubble(message: ChatMessage) {
                         }
                     }
 
-                    // Show progress for active transfers
+                    // Keep transfer UI minimal and robust.
                     if (message.transferProgress in 0..99) {
                         Spacer(modifier = Modifier.height(4.dp))
-                        LinearProgressIndicator(
-                            progress = { message.transferProgress / 100f },
-                            modifier = Modifier.fillMaxWidth().height(3.dp),
-                            color = if (isOutgoing) MaterialTheme.colorScheme.onPrimary
-                                    else MaterialTheme.colorScheme.primary
-                        )
                         Text(
-                            text = "${message.transferProgress}%",
+                            text = "Sending...",
                             style = MaterialTheme.typography.labelSmall,
                             color = textColor.copy(alpha = 0.7f)
                         )
@@ -370,17 +364,10 @@ private fun ChatBubble(message: ChatMessage) {
                         }
                     }
 
-                    // Transfer progress
                     if (message.transferProgress in 0..99) {
                         Spacer(modifier = Modifier.height(4.dp))
-                        LinearProgressIndicator(
-                            progress = { message.transferProgress / 100f },
-                            modifier = Modifier.fillMaxWidth().height(3.dp),
-                            color = if (isOutgoing) MaterialTheme.colorScheme.onPrimary
-                                    else MaterialTheme.colorScheme.primary
-                        )
                         Text(
-                            text = "${message.transferProgress}%",
+                            text = "Sending...",
                             style = MaterialTheme.typography.labelSmall,
                             color = textColor.copy(alpha = 0.7f)
                         )

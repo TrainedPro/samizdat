@@ -185,7 +185,9 @@ class P2PApplication : Application() {
                     if (seenPayloadIds.add(payloadId)) {
                         val text = String(pkt.payload, StandardCharsets.UTF_8)
                         if (!text.startsWith("__TEST__") &&
-                        !text.startsWith("__ENDURANCE__")) {
+                        !text.startsWith("__ENDURANCE__") &&
+                        !text.startsWith(com.fyp.resilientp2p.managers.CloudLogManager.LOG_RELAY_PREFIX) &&
+                        !text.startsWith(com.fyp.resilientp2p.managers.InternetGatewayManager.PROXY_RELAY_PREFIX)) {
                             val isBroadcast = pkt.destId == "BROADCAST"
                             chatDao.insert(com.fyp.resilientp2p.data.ChatMessage(
                                 peerId = pkt.sourceId,
@@ -217,6 +219,29 @@ class P2PApplication : Application() {
                     fileSize = event.file.length(),
                     transferProgress = -1
                 ))
+            }
+        }
+
+        // Track file transfer progress and update chat messages
+        appScope.launch {
+            p2pManager.payloadProgressEvents.collect { event ->
+                // Find the most recent outgoing file/image message for this peer with progress 0-99
+                val messages = chatDao.getRecentMessages(peerId = event.peerName, limit = 50)
+                val pendingMsg = messages.find { msg ->
+                    msg.isOutgoing &&
+                    (msg.type == com.fyp.resilientp2p.data.MessageType.FILE ||
+                     msg.type == com.fyp.resilientp2p.data.MessageType.IMAGE) &&
+                    msg.transferProgress in 0..99
+                }
+                pendingMsg?.let { msg ->
+                    if (event.progress >= 100) {
+                        // Transfer complete
+                        chatDao.markTransferComplete(msg.id, msg.filePath ?: "")
+                    } else {
+                        // Update progress
+                        chatDao.updateProgress(msg.id, event.progress)
+                    }
+                }
             }
         }
 

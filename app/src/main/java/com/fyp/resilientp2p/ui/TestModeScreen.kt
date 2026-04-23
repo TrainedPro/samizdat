@@ -47,9 +47,42 @@ fun TestModeScreen(
     // Top-level mode selector: Functional vs Endurance
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     val anyRunning = testState.isRunning || enduranceState.isRunning
+    var showExitConfirmation by remember { mutableStateOf(false) }
 
-    // System back button closes test mode (only when no test is running)
-    BackHandler(enabled = !anyRunning) { onDismiss() }
+    // System back button - always enabled, shows confirmation if test is running
+    BackHandler(enabled = true) {
+        if (anyRunning) {
+            showExitConfirmation = true
+        } else {
+            onDismiss()
+        }
+    }
+
+    // Exit confirmation dialog when test is running
+    if (showExitConfirmation) {
+        AlertDialog(
+            onDismissRequest = { showExitConfirmation = false },
+            title = { Text("Test in Progress") },
+            text = { Text("A test is currently running. Are you sure you want to exit? This will stop the test.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showExitConfirmation = false
+                        if (testState.isRunning) testRunner.cancel()
+                        if (enduranceState.isRunning) enduranceTestRunner?.stop()
+                        onDismiss()
+                    }
+                ) {
+                    Text("Exit")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showExitConfirmation = false }) {
+                    Text("Continue Test")
+                }
+            }
+        )
+    }
 
     Surface(
         modifier = Modifier.fillMaxSize(),

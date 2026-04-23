@@ -221,7 +221,7 @@ class P2PManager(
 
     // Data Classes for UI
     data class PayloadEvent(val endpointId: String, val packet: Packet)
-    data class PayloadProgressEvent(val endpointId: String, val progress: Int)
+    data class PayloadProgressEvent(val endpointId: String, val peerName: String, val progress: Int)
 
     // --- Callbacks ---
 
@@ -493,6 +493,7 @@ class P2PManager(
                         _payloadProgressEvents.emit(
                                 PayloadProgressEvent(
                                         endpointId,
+                                        peerName,
                                         if (update.totalBytes > 0)
                                                 (update.bytesTransferred * 100 /
                                                                 update.totalBytes)
@@ -1584,6 +1585,13 @@ class P2PManager(
                     return
                 }
 
+                // Intercept proxy relay requests — gateways relay to Firestore on behalf of
+                // non-gateway mesh peers that want to reach internet-only peers.
+                if (textContent.startsWith(InternetGatewayManager.PROXY_RELAY_PREFIX)) {
+                    internetGatewayManager?.handleProxyRelayRequest(packet)
+                    return
+                }
+
                 log(
                         "Message: $textContent",
                         com.fyp.resilientp2p.data.LogLevel.INFO,
@@ -2064,11 +2072,25 @@ class P2PManager(
                                 log("PACKET_PROXY_GATEWAY id=${packet.id.take(8)} dest='${packet.destId}' " +
                                     "via=$proxyEndpoint($proxyName)",
                                     com.fyp.resilientp2p.data.LogLevel.INFO)
+                                // Wrap as a proxy relay request so the gateway knows to relay
+                                // to Firestore rather than trying to route locally (which would fail).
+                                // Format: __PROXY_RELAY__:{"destId":"...","payload":"<base64>","packetId":"..."}
+                                val proxyJson = org.json.JSONObject().apply {
+                                    put("destId", newPacket.destId)
+                                    put("payload", java.util.Base64.getEncoder().encodeToString(newPacket.payload))
+                                    put("packetId", newPacket.id)
+                                }
+                                val proxyPayload = (InternetGatewayManager.PROXY_RELAY_PREFIX + proxyJson.toString())
+                                    .toByteArray(StandardCharsets.UTF_8)
+                                val proxyPacket = newPacket.copy(
+                                    id = java.util.UUID.randomUUID().toString(),
+                                    destId = proxyName, // addressed to the gateway peer
+                                    payload = proxyPayload
+                                )
+                                val proxyBytes = proxyPacket.toBytes()
                                 networkStats.totalPacketsForwarded.incrementAndGet()
-                                networkStats.recordPacketSent(proxyName, bytes.size)
-                                // Forward the already-serialized packet toward the gateway neighbor;
-                                // the gateway will see no local route and relay to Firestore itself.
-                                connectionsClient.sendPayload(proxyEndpoint, Payload.fromBytes(bytes))
+                                networkStats.recordPacketSent(proxyName, proxyBytes.size)
+                                connectionsClient.sendPayload(proxyEndpoint, Payload.fromBytes(proxyBytes))
                                     .addOnFailureListener { e ->
                                         log("PROXY_FORWARD_FAILED to=$proxyEndpoint error='${e.message}' — queuing S&F",
                                             com.fyp.resilientp2p.data.LogLevel.WARN)

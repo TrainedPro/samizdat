@@ -151,7 +151,10 @@ fun ResilientP2PApp(
                                 pkt.sourceId != state.localDeviceName
                         ) {
                                 val text = String(pkt.payload, java.nio.charset.StandardCharsets.UTF_8)
-                                if (!text.startsWith("__TEST__") && !text.startsWith("__ENDURANCE__")) {
+                                if (!text.startsWith("__TEST__") &&
+                                    !text.startsWith("__ENDURANCE__") &&
+                                    !text.startsWith(com.fyp.resilientp2p.managers.CloudLogManager.LOG_RELAY_PREFIX) &&
+                                    !text.startsWith(com.fyp.resilientp2p.managers.InternetGatewayManager.PROXY_RELAY_PREFIX)) {
                                         val isBroadcast = pkt.destId == "BROADCAST"
                                         val chatIsOpen =
                                                 showChatDialog && chatTargetId == pkt.sourceId
@@ -1008,6 +1011,13 @@ fun MeshContactsSection(
         peerStats: Map<String, PeerStatsSnapshot>,
         onPeerClick: (String) -> Unit
 ) {
+        // Split peers into mesh (direct/routed) and online-only (internet relay only)
+        val meshPeers = (connectedEndpoints + knownPeers.keys).toSet()
+        val onlineOnlyPeers = internetPeers.filter { it !in meshPeers }.toSet()
+        val hasMeshPeers = meshPeers.isNotEmpty()
+        val hasOnlinePeers = onlineOnlyPeers.isNotEmpty()
+        val hasAnyPeers = hasMeshPeers || hasOnlinePeers
+
         Card(
                 colors = CardDefaults.cardColors(containerColor = colorScheme.surfaceVariant),
                 shape = RoundedCornerShape(12.dp),
@@ -1015,27 +1025,26 @@ fun MeshContactsSection(
         ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                         Text(
-                                text = "Mesh Contacts",
+                                text = "Contacts",
                                 style = MaterialTheme.typography.titleMedium,
                                 color = colorScheme.onSurface,
                                 fontWeight = FontWeight.Bold
                         )
 
-                        // Broadcast Button
-                        if (connectedEndpoints.isNotEmpty() || knownPeers.isNotEmpty() || internetPeers.isNotEmpty()) {
+                        // Broadcast Button — only when there are mesh peers to broadcast to
+                        if (hasMeshPeers) {
                                 Button(
                                         onClick = { onPeerClick("BROADCAST") },
                                         modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                                        colors =
-                                                ButtonDefaults.buttonColors(
-                                                        containerColor = colorScheme.secondary
-                                                )
+                                        colors = ButtonDefaults.buttonColors(
+                                                containerColor = colorScheme.secondary
+                                        )
                                 ) { Text("BROADCAST MESSAGE", fontWeight = FontWeight.Bold) }
                         }
 
                         Spacer(modifier = Modifier.height(12.dp))
 
-                        if (knownPeers.isEmpty() && connectedEndpoints.isEmpty() && internetPeers.isEmpty()) {
+                        if (!hasAnyPeers) {
                                 Text(
                                         text = "No peers found yet. Waiting for mesh...",
                                         style = MaterialTheme.typography.bodyMedium,
@@ -1043,108 +1052,157 @@ fun MeshContactsSection(
                                         fontStyle = androidx.compose.ui.text.font.FontStyle.Italic
                                 )
                         } else {
-                                // Combine direct and routed peers
-                                val allPeers = (connectedEndpoints + knownPeers.keys + internetPeers).toSet()
-
-                                allPeers.forEach { peerId ->
-                                        val isDirect = connectedEndpoints.contains(peerId)
-                                        val isInternetPeer = internetPeers.contains(peerId)
-                                        val route = knownPeers[peerId]
-                                        val stats = peerStats[peerId]
-
+                                // ── Mesh Peers ──────────────────────────────────────────────
+                                if (hasMeshPeers) {
                                         Row(
-                                                modifier =
-                                                        Modifier.fillMaxWidth()
-                                                                .clickable { onPeerClick(peerId) }
-                                                                .padding(vertical = 8.dp),
-                                                verticalAlignment = Alignment.CenterVertically
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                modifier = Modifier.padding(bottom = 4.dp)
                                         ) {
-                                                // Status Dot
                                                 Box(
-                                                        modifier =
-                                                                Modifier.size(10.dp)
-                                                                        .clip(
-                                                                                androidx.compose
-                                                                                        .foundation
-                                                                                        .shape
-                                                                                        .CircleShape
-                                                                        )
-                                                                        .background(
-                                                                                if (isDirect)
-                                                                                        com.fyp
-                                                                                                .resilientp2p
-                                                                                                .ui
-                                                                                                .theme
-                                                                                                .StatusGreen
-                                                                                else if (isInternetPeer)
-                                                                                        Color(0xFF1976D2)
-                                                                                else
-                                                                                        com.fyp
-                                                                                                .resilientp2p
-                                                                                                .ui
-                                                                                                .theme
-                                                                                                .TechTealSecondary
-                                                                        )
+                                                        modifier = Modifier.size(8.dp)
+                                                                .clip(androidx.compose.foundation.shape.CircleShape)
+                                                                .background(com.fyp.resilientp2p.ui.theme.StatusGreen)
                                                 )
-                                                Spacer(modifier = Modifier.width(12.dp))
-
-                                                Column(modifier = Modifier.weight(1f)) {
-                                                        Text(
-                                                                text = peerId,
-                                                                fontWeight = FontWeight.Bold,
-                                                                color = colorScheme.onSurface
-                                                        )
-                                                        // Connection type
-                                                        val status =
-                                                                if (isDirect) "Direct Connection"
-                                                                else if (isInternetPeer) "Via Internet Relay"
-                                                                else
-                                                                        "Via ${route?.nextHop} (${route?.hopCount} hops)"
-                                                        Text(
-                                                                text = status,
-                                                                style =
-                                                                        MaterialTheme.typography
-                                                                                .bodySmall,
-                                                                color = colorScheme.onSurfaceVariant
-                                                        )
-                                                        // Per-peer stats row
-                                                        if (stats != null) {
-                                                                val rttText = if (stats.lastRttMs >= 0) "${stats.lastRttMs}ms" else "--"
-                                                                val connDuration = if (stats.connectedSinceMs > 0) {
-                                                                        val dur = System.currentTimeMillis() - stats.connectedSinceMs
-                                                                        when {
-                                                                                dur < 60_000 -> "${dur / 1000}s"
-                                                                                dur < 3_600_000 -> "${dur / 60_000}m${dur % 60_000 / 1000}s"
-                                                                                else -> "${dur / 3_600_000}h${dur % 3_600_000 / 60_000}m"
-                                                                        }
-                                                                } else {
-                                                                        "--"
-                                                                }
-                                                                val traffic = formatTrafficCompact(stats.bytesSent + stats.bytesReceived)
-                                                                Text(
-                                                                        text = "RTT: $rttText  |  Up: $connDuration  |  Traffic: $traffic",
-                                                                        style = MaterialTheme.typography.labelSmall,
-                                                                        color = colorScheme.onSurfaceVariant,
-                                                                        fontFamily = FontFamily.Monospace
-                                                                )
-                                                        }
-                                                }
+                                                Spacer(modifier = Modifier.width(6.dp))
                                                 Text(
-                                                        "Chat",
-                                                        color = colorScheme.primary,
-                                                        fontWeight = FontWeight.Bold
+                                                        "Mesh (${meshPeers.size})",
+                                                        style = MaterialTheme.typography.labelMedium,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = colorScheme.onSurfaceVariant
                                                 )
                                         }
-                                        HorizontalDivider(
-                                                color =
-                                                        colorScheme.outlineVariant.copy(
-                                                                alpha = 0.5f
-                                                        )
-                                        )
+                                        meshPeers.forEach { peerId ->
+                                                val isDirect = connectedEndpoints.contains(peerId)
+                                                val route = knownPeers[peerId]
+                                                val stats = peerStats[peerId]
+                                                PeerRow(
+                                                        peerId = peerId,
+                                                        isDirect = isDirect,
+                                                        isInternetPeer = false,
+                                                        route = route,
+                                                        stats = stats,
+                                                        onPeerClick = onPeerClick
+                                                )
+                                        }
+                                }
+
+                                // ── Online Peers (internet relay only) ──────────────────────
+                                if (hasOnlinePeers) {
+                                        if (hasMeshPeers) {
+                                                Spacer(modifier = Modifier.height(8.dp))
+                                                HorizontalDivider(color = colorScheme.outlineVariant.copy(alpha = 0.4f))
+                                                Spacer(modifier = Modifier.height(8.dp))
+                                        }
+                                        Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                modifier = Modifier.padding(bottom = 4.dp)
+                                        ) {
+                                                Box(
+                                                        modifier = Modifier.size(8.dp)
+                                                                .clip(androidx.compose.foundation.shape.CircleShape)
+                                                                .background(Color(0xFF1976D2))
+                                                )
+                                                Spacer(modifier = Modifier.width(6.dp))
+                                                Text(
+                                                        "Online (${onlineOnlyPeers.size})",
+                                                        style = MaterialTheme.typography.labelMedium,
+                                                        fontWeight = FontWeight.Bold,
+                                                        color = colorScheme.onSurfaceVariant
+                                                )
+                                                Spacer(modifier = Modifier.width(4.dp))
+                                                Text(
+                                                        "via cloud relay",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                                                )
+                                        }
+                                        onlineOnlyPeers.forEach { peerId ->
+                                                PeerRow(
+                                                        peerId = peerId,
+                                                        isDirect = false,
+                                                        isInternetPeer = true,
+                                                        route = null,
+                                                        stats = peerStats[peerId],
+                                                        onPeerClick = onPeerClick
+                                                )
+                                        }
                                 }
                         }
                 }
         }
+}
+
+@Composable
+private fun PeerRow(
+        peerId: String,
+        isDirect: Boolean,
+        isInternetPeer: Boolean,
+        route: RouteInfo?,
+        stats: PeerStatsSnapshot?,
+        onPeerClick: (String) -> Unit
+) {
+        Row(
+                modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onPeerClick(peerId) }
+                        .padding(vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+        ) {
+                // Status dot
+                Box(
+                        modifier = Modifier.size(10.dp)
+                                .clip(androidx.compose.foundation.shape.CircleShape)
+                                .background(
+                                        when {
+                                                isDirect -> com.fyp.resilientp2p.ui.theme.StatusGreen
+                                                isInternetPeer -> Color(0xFF1976D2)
+                                                else -> com.fyp.resilientp2p.ui.theme.TechTealSecondary
+                                        }
+                                )
+                )
+                Spacer(modifier = Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                                text = peerId,
+                                fontWeight = FontWeight.Bold,
+                                color = colorScheme.onSurface
+                        )
+                        val status = when {
+                                isDirect -> "Direct connection"
+                                isInternetPeer -> "Online — cloud relay"
+                                else -> "Via ${route?.nextHop} (${route?.hopCount} hops)"
+                        }
+                        Text(
+                                text = status,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colorScheme.onSurfaceVariant
+                        )
+                        if (stats != null && !isInternetPeer) {
+                                val rttText = if (stats.lastRttMs >= 0) "${stats.lastRttMs}ms" else "--"
+                                val connDuration = if (stats.connectedSinceMs > 0) {
+                                        val dur = System.currentTimeMillis() - stats.connectedSinceMs
+                                        when {
+                                                dur < 60_000 -> "${dur / 1000}s"
+                                                dur < 3_600_000 -> "${dur / 60_000}m${dur % 60_000 / 1000}s"
+                                                else -> "${dur / 3_600_000}h${dur % 3_600_000 / 60_000}m"
+                                        }
+                                } else "--"
+                                val traffic = formatTrafficCompact(stats.bytesSent + stats.bytesReceived)
+                                Text(
+                                        text = "RTT: $rttText  |  Up: $connDuration  |  Traffic: $traffic",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = colorScheme.onSurfaceVariant,
+                                        fontFamily = FontFamily.Monospace
+                                )
+                        }
+                }
+                Text(
+                        "Chat",
+                        color = colorScheme.primary,
+                        fontWeight = FontWeight.Bold
+                )
+        }
+        HorizontalDivider(color = colorScheme.outlineVariant.copy(alpha = 0.5f))
 }
 
 private fun formatTrafficCompact(bytes: Long): String = when {

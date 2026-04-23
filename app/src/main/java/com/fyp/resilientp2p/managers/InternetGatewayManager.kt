@@ -40,10 +40,12 @@ class InternetGatewayManager(
         private const val PRESENCE_COLLECTION = "mesh_presence"
         private const val MAX_PENDING_PER_DEVICE = 100
         private const val MESSAGE_TTL_MS = 24 * 60 * 60 * 1000L // 24 hours
-        private const val MAX_MESSAGE_SIZE = 10 * 1024 // 10KB text only
-        private const val PRESENCE_TTL_MS = 90_000L
+        private const val MAX_MESSAGE_SIZE = 50 * 1024 // 50KB (increased from 10KB for chat messages)
+        private const val PRESENCE_TTL_MS = 5 * 60 * 1000L  // 5 minutes (was 90s — too short, caused flapping)
         private const val POLL_INTERVAL_MS = 30_000L // Check for inbound relay messages
-        private const val MAX_SEND_RATE_PER_HOUR = 60
+        private const val MAX_SEND_RATE_PER_HOUR = 120 // Increased from 60 for active chat
+        /** Prefix for messages relayed through a gateway proxy on behalf of a non-gateway device. */
+        const val PROXY_RELAY_PREFIX = "__PROXY_RELAY__:"
     }
 
     // Internet state
@@ -164,14 +166,16 @@ class InternetGatewayManager(
     }
 
     /**
-     * Poll Firestore for messages destined for peers on our local mesh.
+     * Poll Firestore for messages destined for this device or any peer on our local mesh.
      * Called periodically when this device is a gateway.
      */
     private suspend fun pollRelayMessages() {
         if (!_hasInternet.value || projectId.isBlank() || apiKey.isBlank()) return
 
         try {
-            // Query for messages where destId matches any of our known mesh peers
+            // Deliver to: this device + all directly connected mesh peers + all routed peers.
+            // Previously only included connectedEndpoints (direct neighbors), which meant
+            // messages for routed peers were never injected. Fixed to include all knownPeers.
             val localPeers = mutableSetOf(p2pManager.getLocalDeviceName())
             val state = p2pManager.state.value
             localPeers.addAll(state.connectedEndpoints)
@@ -203,23 +207,18 @@ class InternetGatewayManager(
 
                 // Check TTL
                 if (System.currentTimeMillis() - timestamp > MESSAGE_TTL_MS) {
-                    // Expired — delete from relay
                     deleteRelayMessage(doc.getString("name"))
                     continue
                 }
 
-                // Check if destId is on our mesh (direct neighbors + routed peers)
+                // Deliver if destId is this device OR any peer reachable through our mesh.
+                // This is the key fix: previously only checked connectedEndpoints (direct neighbors).
                 if (destId in localPeers) {
                     p2pManager.log("RELAY_INJECT dest=$destId from=$sourceId packetId=${packetId.take(8)}")
                     val payloadBytes = when (payloadEncoding) {
                         "base64" -> Base64.getDecoder().decode(payloadEncoded)
                         else -> payloadEncoded.toByteArray(StandardCharsets.UTF_8)
                     }
-                    // Reconstruct the original Packet and inject through the full routing engine.
-                    // Using sendData() was wrong: it set gateway as sourceId and discarded
-                    // the original packetId (breaking dedup), type, and E2E key lookup.
-                    // injectPacket() feeds into handlePacket(LOCAL_SOURCE) — same path as
-                    // EmergencyManager uses for injecting emergency packets.
                     val relayPacket = com.fyp.resilientp2p.transport.Packet(
                         id = packetId.ifBlank { java.util.UUID.randomUUID().toString() },
                         type = com.fyp.resilientp2p.transport.PacketType.DATA,
@@ -230,12 +229,36 @@ class InternetGatewayManager(
                         ttl = com.fyp.resilientp2p.transport.Packet.DEFAULT_TTL
                     )
                     p2pManager.injectPacket(relayPacket)
-                    // Delete from relay after delivery
                     deleteRelayMessage(doc.getString("name"))
                 }
             }
         } catch (e: Exception) {
             p2pManager.log("RELAY_POLL_ERROR: ${e.message}", LogLevel.ERROR)
+        }
+    }
+
+    /**
+     * Handle a proxy relay request from a non-gateway mesh peer.
+     * Called by P2PManager when a DATA packet with [PROXY_RELAY_PREFIX] is received.
+     * The gateway unpacks the original destId/payload and relays to Firestore.
+     */
+    fun handleProxyRelayRequest(packet: com.fyp.resilientp2p.transport.Packet) {
+        if (!_hasInternet.value || projectId.isBlank() || apiKey.isBlank()) {
+            p2pManager.log("PROXY_RELAY_REJECTED reason=NO_INTERNET_OR_CONFIG", LogLevel.WARN)
+            return
+        }
+        scope.launch {
+            try {
+                val payloadStr = String(packet.payload, StandardCharsets.UTF_8)
+                val json = JSONObject(payloadStr.removePrefix(PROXY_RELAY_PREFIX))
+                val destId = json.getString("destId")
+                val originalPayload = Base64.getDecoder().decode(json.getString("payload"))
+                val originalPacketId = json.optString("packetId", java.util.UUID.randomUUID().toString())
+                val relayed = relayToCloud(destId, packet.sourceId, originalPayload, originalPacketId)
+                p2pManager.log("PROXY_RELAY_${if (relayed) "OK" else "FAILED"} dest=$destId from=${packet.sourceId}")
+            } catch (e: Exception) {
+                p2pManager.log("PROXY_RELAY_ERROR: ${e.message}", LogLevel.ERROR)
+            }
         }
     }
 

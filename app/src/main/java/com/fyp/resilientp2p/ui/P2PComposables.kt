@@ -612,6 +612,8 @@ fun ResilientP2PApp(
                                 knownPeers = state.knownPeers,
                                 connectedEndpoints = state.connectedEndpoints.toSet(),
                                 internetPeers = state.internetPeers,
+                                peerCapabilityScores = state.peerCapabilityScores,
+                                localCapabilityScore = state.localCapabilityScore,
                                 onPeerClick = { peerId ->
                                         chatTargetId = peerId
                                         showChatDialog = true
@@ -942,6 +944,8 @@ fun DashboardContent(
         knownPeers: Map<String, RouteInfo>,
         connectedEndpoints: Set<String>,
         internetPeers: Set<String>,
+        peerCapabilityScores: Map<String, Int> = emptyMap(),
+        localCapabilityScore: Int = -1,
         onPeerClick: (String) -> Unit,
         telemetryManager: TelemetryManager? = null,
         cloudLogManager: com.fyp.resilientp2p.managers.CloudLogManager? = null
@@ -973,6 +977,8 @@ fun DashboardContent(
                         connectedEndpoints = connectedEndpoints,
                         internetPeers = internetPeers,
                         peerStats = stats.peerStats,
+                        peerCapabilityScores = peerCapabilityScores,
+                        localCapabilityScore = localCapabilityScore,
                         onPeerClick = onPeerClick
                 )
 
@@ -1009,6 +1015,8 @@ fun MeshContactsSection(
         connectedEndpoints: Set<String>,
         internetPeers: Set<String>,
         peerStats: Map<String, PeerStatsSnapshot>,
+        peerCapabilityScores: Map<String, Int> = emptyMap(),
+        localCapabilityScore: Int = -1,
         onPeerClick: (String) -> Unit
 ) {
         // Split peers into mesh (direct/routed) and online-only (internet relay only)
@@ -1017,6 +1025,7 @@ fun MeshContactsSection(
         val hasMeshPeers = meshPeers.isNotEmpty()
         val hasOnlinePeers = onlineOnlyPeers.isNotEmpty()
         val hasAnyPeers = hasMeshPeers || hasOnlinePeers
+        val threshold = com.fyp.resilientp2p.managers.InternetGatewayManager.CLOUD_PREFER_THRESHOLD
 
         Card(
                 colors = CardDefaults.cardColors(containerColor = colorScheme.surfaceVariant),
@@ -1024,12 +1033,36 @@ fun MeshContactsSection(
                 modifier = Modifier.fillMaxWidth()
         ) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                        Text(
-                                text = "Contacts",
-                                style = MaterialTheme.typography.titleMedium,
-                                color = colorScheme.onSurface,
-                                fontWeight = FontWeight.Bold
-                        )
+                        Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                        ) {
+                                Text(
+                                        text = "Contacts",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        color = colorScheme.onSurface,
+                                        fontWeight = FontWeight.Bold
+                                )
+                                // Show this device's capability score when internet is available
+                                if (localCapabilityScore >= 0) {
+                                        val isCloudCapable = localCapabilityScore >= threshold
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                                Icon(
+                                                        Icons.Default.Cloud,
+                                                        contentDescription = "Capability score",
+                                                        modifier = Modifier.size(14.dp),
+                                                        tint = if (isCloudCapable) Color(0xFF1976D2) else colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                                                )
+                                                Spacer(modifier = Modifier.width(3.dp))
+                                                Text(
+                                                        "Score: $localCapabilityScore",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = if (isCloudCapable) Color(0xFF1976D2) else colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                                                )
+                                        }
+                                }
+                        }
 
                         // Broadcast Button — only when there are mesh peers to broadcast to
                         if (hasMeshPeers) {
@@ -1081,6 +1114,7 @@ fun MeshContactsSection(
                                                         isInternetPeer = false,
                                                         route = route,
                                                         stats = stats,
+                                                        capabilityScore = -1,
                                                         onPeerClick = onPeerClick
                                                 )
                                         }
@@ -1123,6 +1157,7 @@ fun MeshContactsSection(
                                                         isInternetPeer = true,
                                                         route = null,
                                                         stats = peerStats[peerId],
+                                                        capabilityScore = peerCapabilityScores[peerId] ?: -1,
                                                         onPeerClick = onPeerClick
                                                 )
                                         }
@@ -1139,8 +1174,10 @@ private fun PeerRow(
         isInternetPeer: Boolean,
         route: RouteInfo?,
         stats: PeerStatsSnapshot?,
+        capabilityScore: Int,
         onPeerClick: (String) -> Unit
 ) {
+        val threshold = com.fyp.resilientp2p.managers.InternetGatewayManager.CLOUD_PREFER_THRESHOLD
         Row(
                 modifier = Modifier
                         .fillMaxWidth()
@@ -1162,11 +1199,28 @@ private fun PeerRow(
                 )
                 Spacer(modifier = Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
-                        Text(
-                                text = peerId,
-                                fontWeight = FontWeight.Bold,
-                                color = colorScheme.onSurface
-                        )
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                        text = peerId,
+                                        fontWeight = FontWeight.Bold,
+                                        color = colorScheme.onSurface
+                                )
+                                // Cloud-capable badge for online peers with high score
+                                if (isInternetPeer && capabilityScore >= threshold) {
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Surface(
+                                                shape = RoundedCornerShape(4.dp),
+                                                color = Color(0xFF1976D2).copy(alpha = 0.15f)
+                                        ) {
+                                                Text(
+                                                        "☁ $capabilityScore",
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = Color(0xFF1976D2),
+                                                        modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                                )
+                                        }
+                                }
+                        }
                         val status = when {
                                 isDirect -> "Direct connection"
                                 isInternetPeer -> "Online — cloud relay"

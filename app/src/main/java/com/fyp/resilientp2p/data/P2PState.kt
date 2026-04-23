@@ -55,5 +55,9 @@ data class P2PState(
         val hasInternet: Boolean = false,
         val gatewayEnabled: Boolean = true,
         val internetPeers: Set<String> = emptySet(),
-        val emergencyCount: Int = 0
+        val emergencyCount: Int = 0,
+        /** Capability score [0–100] for each online peer. Used to show cloud-prefer status in UI. */
+        val peerCapabilityScores: Map<String, Int> = emptyMap(),
+        /** This device's own capability score [0–100]. */
+        val localCapabilityScore: Int = -1
 )

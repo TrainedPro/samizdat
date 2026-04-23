@@ -538,6 +538,29 @@ class P2PManager(
                         return
                     }
 
+                    // Cloud-prefer optimisation: if both this device and the remote peer are
+                    // internet-capable with sufficient battery/stability, skip the Bluetooth
+                    // mesh connection entirely and communicate via cloud relay instead.
+                    // This frees up the limited 4-slot mesh for nodes that genuinely need it.
+                    val gateway = internetGatewayManager
+                    if (gateway != null && gateway.shouldPreferCloudFor(info.endpointName)) {
+                        val localScore = gateway.computeLocalCapabilityScore()
+                        val peerScore = gateway.getPeerCapabilityScore(info.endpointName)
+                        log(
+                            "CONNECTION_REJECTED endpoint=$endpointId name='${info.endpointName}' " +
+                            "reason=CLOUD_PREFERRED localScore=$localScore peerScore=$peerScore " +
+                            "threshold=${InternetGatewayManager.CLOUD_PREFER_THRESHOLD} " +
+                            "— both nodes are cloud-capable, using relay instead of BT mesh",
+                            com.fyp.resilientp2p.data.LogLevel.INFO,
+                            peerId = info.endpointName
+                        )
+                        connectionsClient.rejectConnection(endpointId)
+                        // Ensure the peer appears in internetPeers so the UI shows them
+                        // and sendData() routes through cloud relay automatically.
+                        updateInternetPeers(internetPeers + info.endpointName)
+                        return
+                    }
+
                     // duplicate check logic
                     // If we see a duplicate name, we assume the NEW one is the valid replacement
                     val existingId =
@@ -2609,12 +2632,21 @@ class P2PManager(
             .filterNot { it in knownPeersMap.keys }
             .associateWith { RouteInfo(INTERNET_RELAY_HOP, 0) }
         val snap = networkStats.snapshot(neighbors.size, routingTable.size)
+        // Collect capability scores from gateway manager for UI display
+        val gateway = internetGatewayManager
+        val capScores = if (gateway != null) {
+            internetPeers.associateWith { gateway.getPeerCapabilityScore(it) }
+                .filterValues { it >= 0 }
+        } else emptyMap()
+        val localScore = gateway?.computeLocalCapabilityScore() ?: -1
         updateState {
             it.copy(
                 connectedEndpoints = neighborList,
                 knownPeers = knownPeersMap + internetPeerRoutes,
                 internetPeers = internetPeerRoutes.keys,
-                stats = snap
+                stats = snap,
+                peerCapabilityScores = capScores,
+                localCapabilityScore = localScore
             )
         }
     }

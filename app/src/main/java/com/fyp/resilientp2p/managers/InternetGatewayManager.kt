@@ -46,7 +46,58 @@ class InternetGatewayManager(
         private const val MAX_SEND_RATE_PER_HOUR = 120 // Increased from 60 for active chat
         /** Prefix for messages relayed through a gateway proxy on behalf of a non-gateway device. */
         const val PROXY_RELAY_PREFIX = "__PROXY_RELAY__:"
+
+        /**
+         * Minimum capability score [0–100] for a node to be considered "cloud-preferred".
+         * Nodes above this threshold on BOTH sides will skip the Bluetooth mesh connection
+         * and communicate purely via cloud relay, freeing up mesh slots for weaker nodes.
+         *
+         * Score formula: battery% × 0.6 + stability × 0.4
+         * where stability = 1 − (disconnects / max(1, totalConnections))
+         */
+        const val CLOUD_PREFER_THRESHOLD = 50
     }
+
+    /** Capability scores of online peers, keyed by peerId. Updated on each presence poll. */
+    private val peerCapabilityScores = java.util.concurrent.ConcurrentHashMap<String, Int>()
+
+    /**
+     * Compute this device's capability score [0–100].
+     * Higher = more capable of acting as a cloud node.
+     *   battery%  × 0.6  — low battery nodes should stay on mesh
+     *   stability × 0.4  — unstable nodes are poor cloud relays
+     */
+    fun computeLocalCapabilityScore(): Int {
+        val battery = p2pManager.networkStats.batteryLevel.coerceIn(0, 100)
+        val stats = p2pManager.networkStats
+        val totalConns = stats.totalConnectionsEstablished.get()
+        val disconnects = stats.totalConnectionsLost.get()
+        val stability = if (totalConns > 0) {
+            (1.0 - (disconnects.toDouble() / totalConns)).coerceIn(0.0, 1.0)
+        } else {
+            1.0 // No history → assume stable
+        }
+        return (battery * 0.6 + stability * 100 * 0.4).toInt().coerceIn(0, 100)
+    }
+
+    /**
+     * Returns true if this device and [peerId] are both cloud-capable and should
+     * prefer cloud relay over a Bluetooth mesh connection.
+     *
+     * Both sides must:
+     *  1. Have internet (this device: checked via [_hasInternet]; peer: must be in cloudPeers)
+     *  2. Score ≥ [CLOUD_PREFER_THRESHOLD]
+     */
+    fun shouldPreferCloudFor(peerId: String): Boolean {
+        if (!_hasInternet.value || !_gatewayEnabled.value) return false
+        if (peerId !in _cloudPeers.value) return false // peer not online
+        val localScore = computeLocalCapabilityScore()
+        val peerScore = peerCapabilityScores[peerId] ?: 0
+        return localScore >= CLOUD_PREFER_THRESHOLD && peerScore >= CLOUD_PREFER_THRESHOLD
+    }
+
+    /** Returns the cached capability score for [peerId], or -1 if unknown. */
+    fun getPeerCapabilityScore(peerId: String): Int = peerCapabilityScores[peerId] ?: -1
 
     // Internet state
     private val _hasInternet = MutableStateFlow(false)
@@ -267,11 +318,14 @@ class InternetGatewayManager(
         try {
             val localDeviceName = p2pManager.getLocalDeviceName()
             val docId = URLEncoder.encode(localDeviceName, StandardCharsets.UTF_8.name())
+            val capabilityScore = computeLocalCapabilityScore()
             val doc = JSONObject().apply {
                 put("fields", JSONObject().apply {
                     put("peerId", JSONObject().put(FIRESTORE_STRING_VALUE, localDeviceName))
                     put("lastSeen", JSONObject().put("integerValue", System.currentTimeMillis().toString()))
                     put("hasInternet", JSONObject().put("booleanValue", true))
+                    put("capabilityScore", JSONObject().put("integerValue", capabilityScore.toString()))
+                    put("batteryLevel", JSONObject().put("integerValue", p2pManager.networkStats.batteryLevel.toString()))
                 })
             }
             val url = "https://firestore.googleapis.com/v1/projects/$projectId/databases/(default)/documents/$PRESENCE_COLLECTION/$docId?key=$apiKey"
@@ -303,8 +357,13 @@ class InternetGatewayManager(
                 val lastSeen = fields.optJSONObject("lastSeen")?.optString("integerValue")?.toLongOrNull() ?: continue
                 if (now - lastSeen <= PRESENCE_TTL_MS) {
                     result.add(peerId)
+                    // Cache the peer's capability score for cloud-prefer decisions
+                    val score = fields.optJSONObject("capabilityScore")?.optString("integerValue")?.toIntOrNull()
+                    if (score != null) peerCapabilityScores[peerId] = score
                 }
             }
+            // Remove scores for peers that are no longer online
+            peerCapabilityScores.keys.retainAll(result)
             _cloudPeers.value = result
         } catch (e: Exception) {
             p2pManager.log("PRESENCE_POLL_ERROR: ${e.message}", LogLevel.DEBUG)

@@ -35,8 +35,8 @@ android {
         applicationId = "com.fyp.resilientp2p"
         minSdk = 24
         targetSdk = 36
-        versionCode = 2
-        versionName = "1.1"
+        versionCode = 3
+        versionName = "1.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("boolean", "TEST_MODE", isTestMode.toString())

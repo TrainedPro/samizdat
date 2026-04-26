@@ -2027,19 +2027,30 @@ class P2PManager(
                     gateway?.hasInternet?.value == true
 
             if (shouldRelayViaCloud) {
-                scope.launch {
-                    val relayed = gateway?.relayToCloud(packet.destId, packet.sourceId, newPacket.payload, packet.id) == true
-                    if (relayed) {
-                        log(
-                            "PACKET_RELAYED_CLOUD id=${packet.id.take(8)} dest='${packet.destId}' reason=INTERNET_PEER",
-                            com.fyp.resilientp2p.data.LogLevel.INFO
-                        )
-                    } else {
-                        log(
-                            "RELAY_FAILED_FALLBACK_SF id=${packet.id.take(8)} dest='${packet.destId}' reason=INTERNET_PEER",
-                            com.fyp.resilientp2p.data.LogLevel.INFO
-                        )
-                        queueForStoreForward(newPacket)
+                // Validate peer is still online before attempting relay
+                val peerScore = gateway?.getPeerCapabilityScore(packet.destId) ?: -1
+                val isStale = peerScore == -1 // No capability score means peer not seen recently
+
+                if (isStale) {
+                    log("RELAY_SKIPPED_STALE dest='${packet.destId}' reason=PEER_NOT_RECENTLY_SEEN",
+                        com.fyp.resilientp2p.data.LogLevel.WARN)
+                    // Fall back to store-and-forward for potentially stale peers
+                    queueForStoreForward(newPacket)
+                } else {
+                    scope.launch {
+                        val relayed = gateway?.relayToCloud(packet.destId, packet.sourceId, newPacket.payload, packet.id) == true
+                        if (relayed) {
+                            log(
+                                "PACKET_RELAYED_CLOUD id=${packet.id.take(8)} dest='${packet.destId}' reason=INTERNET_PEER",
+                                com.fyp.resilientp2p.data.LogLevel.INFO
+                            )
+                        } else {
+                            log(
+                                "RELAY_FAILED_FALLBACK_SF id=${packet.id.take(8)} dest='${packet.destId}' reason=INTERNET_PEER",
+                                com.fyp.resilientp2p.data.LogLevel.INFO
+                            )
+                            queueForStoreForward(newPacket)
+                        }
                     }
                 }
                 return

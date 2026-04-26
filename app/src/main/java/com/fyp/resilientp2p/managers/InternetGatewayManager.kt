@@ -321,6 +321,21 @@ class InternetGatewayManager(
             val localDeviceName = p2pManager.getLocalDeviceName()
             val docId = URLEncoder.encode(localDeviceName, StandardCharsets.UTF_8.name())
             val capabilityScore = computeLocalCapabilityScore()
+
+            // Calculate reachable peers (same logic as pollRelayMessages)
+            val localPeers = mutableSetOf(localDeviceName)
+            val state = p2pManager.state.value
+            localPeers.addAll(state.connectedEndpoints)
+            localPeers.addAll(state.knownPeers.keys)
+
+            // CRITICAL FIX: Filter out other gateways to prevent circular references
+            // Only include actual mesh peers, not other internet gateways
+            val currentCloudPeers = _cloudPeers.value
+            val reachablePeersFiltered = localPeers.filter { peer ->
+                // Include self and local mesh peers, but exclude other gateways
+                peer == localDeviceName || peer !in currentCloudPeers
+            }.take(50) // Limit to 50 peers to control document size
+
             val doc = JSONObject().apply {
                 put("fields", JSONObject().apply {
                     put("peerId", JSONObject().put(FIRESTORE_STRING_VALUE, localDeviceName))
@@ -328,11 +343,22 @@ class InternetGatewayManager(
                     put("hasInternet", JSONObject().put("booleanValue", true))
                     put("capabilityScore", JSONObject().put(FIRESTORE_INTEGER_VALUE, capabilityScore.toString()))
                     put("batteryLevel", JSONObject().put(FIRESTORE_INTEGER_VALUE, p2pManager.networkStats.batteryLevel.toString()))
+                    put("version", JSONObject().put(FIRESTORE_INTEGER_VALUE, "2")) // Version 2 = has reachablePeers
+                    // CROSS-MESH FIX: Include filtered reachable peers so other gateways can discover them
+                    put("reachablePeers", JSONObject().put("arrayValue", JSONObject().apply {
+                        put("values", org.json.JSONArray().apply {
+                            reachablePeersFiltered.forEach { peer ->
+                                put(JSONObject().put(FIRESTORE_STRING_VALUE, peer))
+                            }
+                        })
+                    }))
                 })
             }
             val url = "https://firestore.googleapis.com/v1/projects/$projectId/databases/(default)/documents/$PRESENCE_COLLECTION/$docId?key=$apiKey"
             val code = httpPatch(url, doc.toString())
-            if (code !in 200..299) {
+            if (code in 200..299) {
+                p2pManager.log("PRESENCE_PUBLISH peerId=$localDeviceName reachablePeers=${reachablePeersFiltered.size}", LogLevel.DEBUG)
+            } else {
                 p2pManager.log("PRESENCE_PUBLISH_FAILED status=$code", LogLevel.DEBUG)
             }
         } catch (e: Exception) {
@@ -365,6 +391,7 @@ class InternetGatewayManager(
         }
     }
 
+    @Suppress("NestedBlockDepth") // Complex presence processing requires nested structure
     private fun processPresenceDocument(
         fields: JSONObject,
         now: Long,
@@ -382,6 +409,29 @@ class InternetGatewayManager(
             // Cache the peer's capability score for cloud-prefer decisions
             val score = fields.optJSONObject("capabilityScore")?.optString(FIRESTORE_INTEGER_VALUE)?.toIntOrNull()
             if (score != null) peerCapabilityScores[peerId] = score
+
+            // CROSS-MESH FIX: Extract reachable peers from this gateway's presence
+            val version = fields.optJSONObject("version")?.optString(FIRESTORE_INTEGER_VALUE)?.toIntOrNull() ?: 1
+            if (version >= 2) {
+                val reachablePeers = fields.optJSONObject("reachablePeers")
+                    ?.optJSONObject("arrayValue")
+                    ?.optJSONArray("values")
+
+                reachablePeers?.let { array ->
+                    for (i in 0 until array.length()) {
+                        val peer = array.getJSONObject(i).optString(FIRESTORE_STRING_VALUE)
+                        // Validate peer name format and prevent circular references
+                        val isValidPeer = peer.isNotBlank() &&
+                            peer != localName &&
+                            peer != peerId &&
+                            peer.matches(Regex("^[a-zA-Z0-9_-]{1,50}$"))
+                        if (isValidPeer) {
+                            result.add(peer)
+                        }
+                    }
+                    p2pManager.log("PRESENCE_PROCESS gateway=$peerId reachablePeers=${array.length()}", LogLevel.DEBUG)
+                }
+            }
         }
     }
 

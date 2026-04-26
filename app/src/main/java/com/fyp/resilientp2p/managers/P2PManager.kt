@@ -11,6 +11,7 @@ import com.fyp.resilientp2p.data.RouteInfo
 import com.fyp.resilientp2p.transport.MessageCache
 import com.fyp.resilientp2p.transport.Packet
 import com.fyp.resilientp2p.transport.PacketType
+import com.fyp.resilientp2p.utils.FormatUtils
 import com.google.android.gms.nearby.Nearby
 import com.google.android.gms.nearby.connection.AdvertisingOptions
 import androidx.core.content.edit
@@ -281,10 +282,10 @@ class P2PManager(
                                     packet.type == PacketType.DATA ||
                                         packet.type == PacketType.STORE_FORWARD ||
                                         packet.type == PacketType.ACK
-                                if (security != null &&
-                                    requiresSecurePayload &&
-                                    packet.destId == localUsername &&
-                                    security.hasKeyForPeer(packet.sourceId)) {
+                                val isDestination = packet.destId == localUsername
+                                val hasSharedKey = security?.hasKeyForPeer(packet.sourceId) == true
+                                val shouldVerifyHmac = security != null && requiresSecurePayload && isDestination && hasSharedKey
+                                if (shouldVerifyHmac) {
                                     // Last HMAC_SIZE bytes are the HMAC
                                     if (packet.payload.size > com.fyp.resilientp2p.security.SecurityManager.HMAC_SIZE) {
                                         val dataBytes = packet.payload.copyOfRange(
@@ -538,29 +539,6 @@ class P2PManager(
                         return
                     }
 
-                    // Cloud-prefer optimisation: if both this device and the remote peer are
-                    // internet-capable with sufficient battery/stability, skip the Bluetooth
-                    // mesh connection entirely and communicate via cloud relay instead.
-                    // This frees up the limited 4-slot mesh for nodes that genuinely need it.
-                    val gateway = internetGatewayManager
-                    if (gateway != null && gateway.shouldPreferCloudFor(info.endpointName)) {
-                        val localScore = gateway.computeLocalCapabilityScore()
-                        val peerScore = gateway.getPeerCapabilityScore(info.endpointName)
-                        log(
-                            "CONNECTION_REJECTED endpoint=$endpointId name='${info.endpointName}' " +
-                            "reason=CLOUD_PREFERRED localScore=$localScore peerScore=$peerScore " +
-                            "threshold=${InternetGatewayManager.CLOUD_PREFER_THRESHOLD} " +
-                            "— both nodes are cloud-capable, using relay instead of BT mesh",
-                            com.fyp.resilientp2p.data.LogLevel.INFO,
-                            peerId = info.endpointName
-                        )
-                        connectionsClient.rejectConnection(endpointId)
-                        // Ensure the peer appears in internetPeers so the UI shows them
-                        // and sendData() routes through cloud relay automatically.
-                        updateInternetPeers(internetPeers + info.endpointName)
-                        return
-                    }
-
                     // duplicate check logic
                     // If we see a duplicate name, we assume the NEW one is the valid replacement
                     val existingId =
@@ -667,9 +645,10 @@ class P2PManager(
 
                         // Delay identity send to let transport settle (WiFi Direct/BLE handoff).
                         // Immediate sends frequently fail with TRANSFER_FAILED 0/241.
+                        // Increased from 500ms to 1500ms to allow transport upgrade to complete.
                         pendingKeyExchange.add(endpointId)
                         scope.launch {
-                            delay(500)
+                            delay(1500)
                             if (neighbors.containsKey(endpointId)) {
                                 sendIdentityPacket(endpointId)
                             } else {
@@ -699,7 +678,7 @@ class P2PManager(
                     val peerName = disconnectedPeer?.peerName ?: UNKNOWN_PEER
                     val connectedAtMs = connectionTimestamps.remove(endpointId)
                     val durationMs = if (connectedAtMs != null) System.currentTimeMillis() - connectedAtMs else -1L
-                    val durationStr = if (durationMs > 0) formatDuration(durationMs) else UNKNOWN_DURATION
+                    val durationStr = if (durationMs > 0) FormatUtils.formatDuration(durationMs) else UNKNOWN_DURATION
 
                     networkStats.recordPeerDisconnected(peerName)
 
@@ -977,8 +956,8 @@ class P2PManager(
 
                 try {
                     log(
-                            "Broadcasting Periodic Routing Update (Identity)...",
-                            com.fyp.resilientp2p.data.LogLevel.TRACE
+                            "Broadcasting Periodic Routing Update neighbors=${neighbors.size} routes=${routingTable.size}",
+                            com.fyp.resilientp2p.data.LogLevel.DEBUG
                     )
                     HashMap(neighbors).keys.forEach { endpointId -> sendIdentityPacket(endpointId) }
 
@@ -1306,7 +1285,7 @@ class P2PManager(
         log(
                 "STOP_ALL initiated neighbors=${neighbors.size} routes=${routingTable.size} " +
                 "totalPackets=↑${snap.totalPacketsSent}↓${snap.totalPacketsReceived} " +
-                "uptime=${formatDuration(snap.uptimeMs)}"
+                "uptime=${FormatUtils.formatDuration(snap.uptimeMs)}"
         )
         try {
             context.unregisterReceiver(batteryReceiver)
@@ -1753,11 +1732,17 @@ class P2PManager(
                 // Payload format: "destName1:score1,destName2:score2,..."
                 try {
                     val routeData = String(packet.payload, StandardCharsets.UTF_8)
+                    log("ROUTE_ANNOUNCE_RECEIVED from='${packet.sourceId}' via=$sourceEndpointId data='$routeData'",
+                        com.fyp.resilientp2p.data.LogLevel.DEBUG, peerId = packet.sourceId)
+
                     if (routeData.isBlank()) return
 
                     val entries = routeData.split(",")
                     val neighborNames = neighbors.values.map { it.peerName }.toSet()
                     var updated = false
+                    var routesAdded = 0
+                    var routesSkipped = 0
+
                     synchronized(routingLock) {
                         // Collect advertised destinations for implicit withdrawal
                         val advertisedDests = mutableSetOf<String>()
@@ -1771,13 +1756,22 @@ class P2PManager(
                             advertisedDests.add(destName)
 
                             // Don't add route to self
-                            if (destName == localUsername) continue
+                            if (destName == localUsername) {
+                                routesSkipped++
+                                continue
+                            }
                             // Don't add routes for direct neighbors (they're in neighbors map)
-                            if (destName in neighborNames) continue
+                            if (destName in neighborNames) {
+                                routesSkipped++
+                                continue
+                            }
 
                             // Score degrades by 100 per hop (indirect route penalty)
                             val adjustedScore = advertScore - 100
-                            if (adjustedScore <= 0) continue
+                            if (adjustedScore <= 0) {
+                                routesSkipped++
+                                continue
+                            }
 
                             val currentScore = routingScores[destName] ?: Int.MIN_VALUE
                             val currentNextHop = routingTable[destName]
@@ -1788,6 +1782,11 @@ class P2PManager(
                                 routingScores[destName] = adjustedScore
                                 routeLastSeen[destName] = System.currentTimeMillis()
                                 updated = true
+                                routesAdded++
+                                log("ROUTE_ADDED dest='$destName' via='${packet.sourceId}' score=$adjustedScore (was=$currentScore)",
+                                    com.fyp.resilientp2p.data.LogLevel.INFO)
+                            } else {
+                                routesSkipped++
                             }
                         }
 
@@ -1818,9 +1817,16 @@ class P2PManager(
                                     com.fyp.resilientp2p.data.LogLevel.DEBUG)
                         }
                     }
+
+                    log(
+                        "ROUTE_ANNOUNCE_PROCESSED from='${packet.sourceId}' " +
+                        "added=$routesAdded skipped=$routesSkipped totalRoutes=${routingTable.size}",
+                        com.fyp.resilientp2p.data.LogLevel.INFO,
+                        peerId = packet.sourceId
+                    )
+
                     if (updated) {
                         updateConnectedEndpoints()
-                        log("Route table updated from ${packet.sourceId} announcement", com.fyp.resilientp2p.data.LogLevel.DEBUG)
                     }
                 } catch (e: Exception) {
                     log("Error processing ROUTE_ANNOUNCE: ${e.message}", com.fyp.resilientp2p.data.LogLevel.ERROR)
@@ -2395,7 +2401,7 @@ class P2PManager(
         val peerName = peer?.peerName ?: UNKNOWN_PEER
         val connectedAtMs = connectionTimestamps.remove(endpointId)
         val durationMs = if (connectedAtMs != null) System.currentTimeMillis() - connectedAtMs else -1L
-        val durationStr = if (durationMs > 0) formatDuration(durationMs) else UNKNOWN_DURATION
+        val durationStr = if (durationMs > 0) FormatUtils.formatDuration(durationMs) else UNKNOWN_DURATION
 
         log(
                 "DISCONNECT_MANUAL endpoint=$endpointId peerName='$peerName' " +
@@ -2562,28 +2568,53 @@ class P2PManager(
         }
 
         neighborsSnapshot.keys.forEach { endpointId ->
-            var routeData = synchronized(routingLock) {
+            // Build route table: include self with max score so neighbors know we exist
+            val selfEntry = "$localUsername:${Packet.DEFAULT_TTL * 100}"
+
+            // CRITICAL FIX: Include direct neighbors in announcements so multi-hop works
+            // Build list of all reachable destinations: self + direct neighbors + routed peers
+            val allDestinations = mutableListOf<String>()
+
+            synchronized(routingLock) {
+                // Add all routed destinations (non-direct peers)
                 routingScores.entries
-                    .filter { it.key != localUsername } // Don't advertise self
-                    .joinToString(",") { (dest, score) ->
+                    .filter { it.key != localUsername } // Don't duplicate self
+                    .forEach { (dest, score) ->
                         val nextHop = routingTable[dest]
                         if (nextHop == endpointId) {
                             // Poison Reverse: advertise 0 score for routes learned from this neighbor
-                            "$dest:0"
+                            allDestinations.add("$dest:0")
                         } else {
-                            "$dest:$score"
+                            allDestinations.add("$dest:$score")
+                        }
+                    }
+
+                // Add direct neighbors (excluding the one we're sending to)
+                // Score = DEFAULT_TTL * 100 (same as self) since they're 1 hop away
+                neighborsSnapshot.entries
+                    .filter { it.key != endpointId } // Don't announce neighbor to itself
+                    .forEach { (neighborEndpoint, neighborInfo) ->
+                        val neighborName = neighborInfo.peerName
+                        if (neighborName != UNKNOWN_PEER &&
+                            neighborName != localUsername &&
+                            allDestinations.none { it.startsWith("$neighborName:") }) {
+                            // Only add if not already in routed destinations
+                            allDestinations.add("$neighborName:${Packet.DEFAULT_TTL * 100}")
                         }
                     }
             }
+
+            // Combine self + all destinations
+            var routeData = if (allDestinations.isEmpty()) {
+                selfEntry
+            } else {
+                "$selfEntry,${allDestinations.joinToString(",")}"
+            }
+
             // Append __GATEWAY__ flag if this device has internet access
             if (isGateway) {
-                routeData = if (routeData.isBlank()) {
-                    "${InternetGatewayManager.GATEWAY_FLAG}:1"
-                } else {
-                    "$routeData,${InternetGatewayManager.GATEWAY_FLAG}:1"
-                }
+                routeData = "$routeData,${InternetGatewayManager.GATEWAY_FLAG}:1"
             }
-            if (routeData.isBlank()) return@forEach
 
             // destId targets specific neighbor (not BROADCAST) to avoid false TTL_EXCEEDED
             val targetPeerName = neighborsSnapshot[endpointId]?.peerName ?: UNKNOWN_PEER
@@ -2598,8 +2629,13 @@ class P2PManager(
             )
             val bytes = packet.toBytes()
             connectionsClient.sendPayload(endpointId, Payload.fromBytes(bytes))
+                .addOnSuccessListener {
+                    log("ROUTE_ANNOUNCE_SENT to=$targetPeerName($endpointId) destinations=${allDestinations.size + 1}",
+                        com.fyp.resilientp2p.data.LogLevel.DEBUG)
+                }
                 .addOnFailureListener { e ->
-                    log("Failed to send ROUTE_ANNOUNCE to $endpointId: ${e.message}", com.fyp.resilientp2p.data.LogLevel.TRACE)
+                    log("ROUTE_ANNOUNCE_FAILED to=$endpointId error='${e.message}'",
+                        com.fyp.resilientp2p.data.LogLevel.WARN)
                 }
         }
     }
@@ -2632,21 +2668,12 @@ class P2PManager(
             .filterNot { it in knownPeersMap.keys }
             .associateWith { RouteInfo(INTERNET_RELAY_HOP, 0) }
         val snap = networkStats.snapshot(neighbors.size, routingTable.size)
-        // Collect capability scores from gateway manager for UI display
-        val gateway = internetGatewayManager
-        val capScores = if (gateway != null) {
-            internetPeers.associateWith { gateway.getPeerCapabilityScore(it) }
-                .filterValues { it >= 0 }
-        } else emptyMap()
-        val localScore = gateway?.computeLocalCapabilityScore() ?: -1
         updateState {
             it.copy(
                 connectedEndpoints = neighborList,
                 knownPeers = knownPeersMap + internetPeerRoutes,
                 internetPeers = internetPeerRoutes.keys,
-                stats = snap,
-                peerCapabilityScores = capScores,
-                localCapabilityScore = localScore
+                stats = snap
             )
         }
     }
@@ -2676,7 +2703,7 @@ class P2PManager(
                     else
                         "~${snap.estimatedRemainingMah().toInt()}mAh(est)"
                     log(
-                            "STATS_DUMP v=$appVersion uptime=${formatDuration(snap.uptimeMs)} " +
+                            "STATS_DUMP v=$appVersion uptime=${FormatUtils.formatDuration(snap.uptimeMs)} " +
                             "battery=${snap.batteryLevel}%(${snap.batteryTemperature}\u00B0C) ${mAhStr} ${snap.batteryVoltageMilliV}mV " +
                             "neighbors=${snap.currentNeighborCount}[$neighborList] " +
                             "routes=${snap.currentRouteCount}[$routeList] " +
@@ -2684,7 +2711,7 @@ class P2PManager(
                             "\u2193${snap.totalPacketsReceived}" +
                             "\u21BB${snap.totalPacketsForwarded}" +
                             "\u2717${snap.totalPacketsDropped} " +
-                            "bytes=\u2191${formatBytes(snap.totalBytesSent)}\u2193${formatBytes(snap.totalBytesReceived)} " +
+                            "bytes=\u2191${FormatUtils.formatBytes(snap.totalBytesSent)}\u2193${FormatUtils.formatBytes(snap.totalBytesReceived)} " +
                             "avgRtt=${snap.avgRttMs}ms " +
                             "storeForward=Q${snap.storeForwardQueued}D${snap.storeForwardDelivered} " +
                             "connections=\u2191${snap.totalConnectionsEstablished}\u2193${snap.totalConnectionsLost}",
@@ -2696,25 +2723,6 @@ class P2PManager(
                     log("STATS_DUMP_ERROR error='${e.message}'", com.fyp.resilientp2p.data.LogLevel.ERROR)
                 }
             }
-        }
-    }
-
-    private fun formatDuration(ms: Long): String {
-        val seconds = ms / 1000
-        val minutes = seconds / 60
-        val hours = minutes / 60
-        return when {
-            hours > 0 -> "${hours}h${minutes % 60}m${seconds % 60}s"
-            minutes > 0 -> "${minutes}m${seconds % 60}s"
-            else -> "${seconds}s"
-        }
-    }
-
-    private fun formatBytes(bytes: Long): String {
-        return when {
-            bytes >= 1_048_576 -> String.format(java.util.Locale.US, "%.1fMB", bytes / 1_048_576.0)
-            bytes >= 1024 -> String.format(java.util.Locale.US, "%.1fKB", bytes / 1024.0)
-            else -> "${bytes}B"
         }
     }
 

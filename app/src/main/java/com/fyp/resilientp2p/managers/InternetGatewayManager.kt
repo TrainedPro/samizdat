@@ -35,6 +35,7 @@ class InternetGatewayManager(
 ) {
     companion object {
         private const val FIRESTORE_STRING_VALUE = "stringValue"
+        private const val FIRESTORE_INTEGER_VALUE = "integerValue"
         const val GATEWAY_FLAG = "__GATEWAY__"
         private const val RELAY_COLLECTION = "mesh_relay"
         private const val PRESENCE_COLLECTION = "mesh_presence"
@@ -73,7 +74,7 @@ class InternetGatewayManager(
         val totalConns = stats.totalConnectionsEstablished.get()
         val disconnects = stats.totalConnectionsLost.get()
         val stability = if (totalConns > 0) {
-            (1.0 - (disconnects.toDouble() / totalConns)).coerceIn(0.0, 1.0)
+            (1.0 - disconnects.toDouble() / totalConns).coerceIn(0.0, 1.0)
         } else {
             1.0 // No history → assume stable
         }
@@ -200,8 +201,8 @@ class InternetGatewayManager(
                     put("destId", JSONObject().put(FIRESTORE_STRING_VALUE, destId))
                     put("payload", JSONObject().put(FIRESTORE_STRING_VALUE, payloadBase64))
                     put("payloadEncoding", JSONObject().put(FIRESTORE_STRING_VALUE, "base64"))
-                    put("timestamp", JSONObject().put("integerValue", System.currentTimeMillis().toString()))
-                    put("ttl", JSONObject().put("integerValue", MESSAGE_TTL_MS.toString()))
+                    put("timestamp", JSONObject().put(FIRESTORE_INTEGER_VALUE, System.currentTimeMillis().toString()))
+                    put("ttl", JSONObject().put(FIRESTORE_INTEGER_VALUE, MESSAGE_TTL_MS.toString()))
                     put("gatewayId", JSONObject().put(FIRESTORE_STRING_VALUE, p2pManager.getLocalDeviceName()))
                 })
             }
@@ -253,7 +254,7 @@ class InternetGatewayManager(
                 val sourceId = fields.getJSONObject("sourceId").getString(FIRESTORE_STRING_VALUE)
                 val payloadEncoded = fields.getJSONObject("payload").getString(FIRESTORE_STRING_VALUE)
                 val payloadEncoding = fields.optJSONObject("payloadEncoding")?.optString(FIRESTORE_STRING_VALUE, "plain") ?: "plain"
-                val timestamp = fields.getJSONObject("timestamp").getString("integerValue").toLong()
+                val timestamp = fields.getJSONObject("timestamp").getString(FIRESTORE_INTEGER_VALUE).toLong()
                 val packetId = fields.optJSONObject("packetId")?.optString(FIRESTORE_STRING_VALUE) ?: ""
 
                 // Check TTL
@@ -266,9 +267,10 @@ class InternetGatewayManager(
                 // This is the key fix: previously only checked connectedEndpoints (direct neighbors).
                 if (destId in localPeers) {
                     p2pManager.log("RELAY_INJECT dest=$destId from=$sourceId packetId=${packetId.take(8)}")
-                    val payloadBytes = when (payloadEncoding) {
-                        "base64" -> Base64.getDecoder().decode(payloadEncoded)
-                        else -> payloadEncoded.toByteArray(StandardCharsets.UTF_8)
+                    val payloadBytes = if (payloadEncoding == "base64") {
+                        Base64.getDecoder().decode(payloadEncoded)
+                    } else {
+                        payloadEncoded.toByteArray(StandardCharsets.UTF_8)
                     }
                     val relayPacket = com.fyp.resilientp2p.transport.Packet(
                         id = packetId.ifBlank { java.util.UUID.randomUUID().toString() },
@@ -322,10 +324,10 @@ class InternetGatewayManager(
             val doc = JSONObject().apply {
                 put("fields", JSONObject().apply {
                     put("peerId", JSONObject().put(FIRESTORE_STRING_VALUE, localDeviceName))
-                    put("lastSeen", JSONObject().put("integerValue", System.currentTimeMillis().toString()))
+                    put("lastSeen", JSONObject().put(FIRESTORE_INTEGER_VALUE, System.currentTimeMillis().toString()))
                     put("hasInternet", JSONObject().put("booleanValue", true))
-                    put("capabilityScore", JSONObject().put("integerValue", capabilityScore.toString()))
-                    put("batteryLevel", JSONObject().put("integerValue", p2pManager.networkStats.batteryLevel.toString()))
+                    put("capabilityScore", JSONObject().put(FIRESTORE_INTEGER_VALUE, capabilityScore.toString()))
+                    put("batteryLevel", JSONObject().put(FIRESTORE_INTEGER_VALUE, p2pManager.networkStats.batteryLevel.toString()))
                 })
             }
             val url = "https://firestore.googleapis.com/v1/projects/$projectId/databases/(default)/documents/$PRESENCE_COLLECTION/$docId?key=$apiKey"
@@ -341,7 +343,8 @@ class InternetGatewayManager(
     private suspend fun pollPresencePeers() {
         if (!_hasInternet.value || projectId.isBlank() || apiKey.isBlank()) return
         try {
-            val url = "https://firestore.googleapis.com/v1/projects/$projectId/databases/(default)/documents/$PRESENCE_COLLECTION?key=$apiKey&pageSize=200"
+            val url = "https://firestore.googleapis.com/v1/projects/$projectId" +
+                "/databases/(default)/documents/$PRESENCE_COLLECTION?key=$apiKey&pageSize=200"
             val (code, body) = httpGet(url)
             if (code !in 200..299 || body == null) return
 
@@ -352,21 +355,33 @@ class InternetGatewayManager(
 
             for (i in 0 until documents.length()) {
                 val fields = documents.getJSONObject(i).optJSONObject("fields") ?: continue
-                val peerId = fields.optJSONObject("peerId")?.optString(FIRESTORE_STRING_VALUE).orEmpty()
-                if (peerId.isBlank() || peerId == localName) continue
-                val lastSeen = fields.optJSONObject("lastSeen")?.optString("integerValue")?.toLongOrNull() ?: continue
-                if (now - lastSeen <= PRESENCE_TTL_MS) {
-                    result.add(peerId)
-                    // Cache the peer's capability score for cloud-prefer decisions
-                    val score = fields.optJSONObject("capabilityScore")?.optString("integerValue")?.toIntOrNull()
-                    if (score != null) peerCapabilityScores[peerId] = score
-                }
+                processPresenceDocument(fields, now, localName, result)
             }
             // Remove scores for peers that are no longer online
             peerCapabilityScores.keys.retainAll(result)
             _cloudPeers.value = result
         } catch (e: Exception) {
             p2pManager.log("PRESENCE_POLL_ERROR: ${e.message}", LogLevel.DEBUG)
+        }
+    }
+
+    private fun processPresenceDocument(
+        fields: JSONObject,
+        now: Long,
+        localName: String,
+        result: MutableSet<String>
+    ) {
+        val peerId = fields.optJSONObject("peerId")?.optString(FIRESTORE_STRING_VALUE).orEmpty()
+        if (peerId.isBlank() || peerId == localName) return
+
+        val lastSeen = fields.optJSONObject("lastSeen")?.optString(FIRESTORE_INTEGER_VALUE)?.toLongOrNull()
+        if (lastSeen == null) return
+
+        if (now - lastSeen <= PRESENCE_TTL_MS) {
+            result.add(peerId)
+            // Cache the peer's capability score for cloud-prefer decisions
+            val score = fields.optJSONObject("capabilityScore")?.optString(FIRESTORE_INTEGER_VALUE)?.toIntOrNull()
+            if (score != null) peerCapabilityScores[peerId] = score
         }
     }
 

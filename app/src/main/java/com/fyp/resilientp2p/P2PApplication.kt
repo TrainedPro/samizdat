@@ -184,10 +184,12 @@ class P2PApplication : Application() {
                     val payloadId = "${pkt.sourceId}:${pkt.id}"
                     if (seenPayloadIds.add(payloadId)) {
                         val text = String(pkt.payload, StandardCharsets.UTF_8)
-                        if (!text.startsWith("__TEST__") &&
-                        !text.startsWith("__ENDURANCE__") &&
-                        !text.startsWith(com.fyp.resilientp2p.managers.CloudLogManager.LOG_RELAY_PREFIX) &&
-                        !text.startsWith(com.fyp.resilientp2p.managers.InternetGatewayManager.PROXY_RELAY_PREFIX)) {
+                        val isTestMessage = text.startsWith("__TEST__")
+                        val isEnduranceMessage = text.startsWith("__ENDURANCE__")
+                        val isLogRelay = text.startsWith(com.fyp.resilientp2p.managers.CloudLogManager.LOG_RELAY_PREFIX)
+                        val isProxyRelay = text.startsWith(com.fyp.resilientp2p.managers.InternetGatewayManager.PROXY_RELAY_PREFIX)
+                        val shouldSaveToChat = !isTestMessage && !isEnduranceMessage && !isLogRelay && !isProxyRelay
+                        if (shouldSaveToChat) {
                             val isBroadcast = pkt.destId == "BROADCAST"
                             chatDao.insert(com.fyp.resilientp2p.data.ChatMessage(
                                 peerId = pkt.sourceId,

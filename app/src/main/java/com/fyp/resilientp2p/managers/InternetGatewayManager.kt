@@ -128,14 +128,33 @@ class InternetGatewayManager(
      * Start monitoring internet connectivity and polling for relay messages.
      */
     fun start() {
+        p2pManager.log("InternetGatewayManager starting...", LogLevel.INFO)
+
+        // Log Firebase configuration status (without exposing keys)
+        val projectConfigured = projectId.isNotBlank()
+        val apiKeyConfigured = apiKey.isNotBlank()
+        p2pManager.log("Firebase config: projectId=${if (projectConfigured) "✅ SET" else "❌ MISSING"} " +
+            "apiKey=${if (apiKeyConfigured) "✅ SET" else "❌ MISSING"}", LogLevel.INFO)
+
         registerNetworkCallback()
-        // Initial check
-        _hasInternet.value = checkInternetNow()
+
+        // Initial check with detailed logging
+        val initialInternet = checkInternetNow()
+        p2pManager.log("Initial internet check: $initialInternet", LogLevel.INFO)
+        _hasInternet.value = initialInternet
+
         updateGatewayState()
+
         if (_isGateway.value) {
+            p2pManager.log("Starting relay polling (gateway active)", LogLevel.INFO)
             startRelayPolling()
+        } else {
+            p2pManager.log("Gateway inactive: hasInternet=$initialInternet, enabled=${_gatewayEnabled.value}, " +
+                "firebaseConfigured=${projectConfigured && apiKeyConfigured}", LogLevel.WARN)
         }
-        p2pManager.log("InternetGatewayManager started. hasInternet=${_hasInternet.value}, gatewayEnabled=${_gatewayEnabled.value}")
+
+        p2pManager.log("InternetGatewayManager started. hasInternet=${_hasInternet.value}, " +
+            "gatewayEnabled=${_gatewayEnabled.value}, isGateway=${_isGateway.value}", LogLevel.INFO)
     }
 
     fun destroy() {
@@ -164,8 +183,16 @@ class InternetGatewayManager(
     /** Recompute [_isGateway] from [_hasInternet] and [_gatewayEnabled]. */
     private fun updateGatewayState() {
         val shouldBeGateway = _hasInternet.value && _gatewayEnabled.value
+        val wasGateway = _isGateway.value
         _isGateway.value = shouldBeGateway
-        if (shouldBeGateway) startRelayPolling() else stopRelayPolling()
+
+        if (shouldBeGateway && !wasGateway) {
+            p2pManager.log("Gateway ACTIVATED: hasInternet=${_hasInternet.value}, enabled=${_gatewayEnabled.value}", LogLevel.INFO)
+            startRelayPolling()
+        } else if (!shouldBeGateway && wasGateway) {
+            p2pManager.log("Gateway DEACTIVATED: hasInternet=${_hasInternet.value}, enabled=${_gatewayEnabled.value}", LogLevel.INFO)
+            stopRelayPolling()
+        }
     }
 
     /**
@@ -455,7 +482,7 @@ class InternetGatewayManager(
 
         val callback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
-                p2pManager.log("Internet available")
+                p2pManager.log("Network callback: onAvailable", LogLevel.INFO)
                 _hasInternet.value = true
                 updateGatewayState()
             }
@@ -463,14 +490,16 @@ class InternetGatewayManager(
             override fun onLost(network: Network) {
                 // Check if ANY network still has internet
                 val stillHasInternet = checkInternetNow()
-                p2pManager.log("Network lost. Still has internet: $stillHasInternet")
+                p2pManager.log("Network callback: onLost. Still has internet: $stillHasInternet", LogLevel.INFO)
                 _hasInternet.value = stillHasInternet
                 updateGatewayState()
             }
 
             override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
                 val validated = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
-                _hasInternet.value = validated
+                val hasInternet = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                p2pManager.log("Network callback: onCapabilitiesChanged. hasInternet=$hasInternet, validated=$validated", LogLevel.INFO)
+                _hasInternet.value = validated && hasInternet
                 updateGatewayState()
             }
         }
@@ -492,10 +521,24 @@ class InternetGatewayManager(
 
     private fun checkInternetNow(): Boolean {
         val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        val network = cm.activeNetwork ?: return false
-        val caps = cm.getNetworkCapabilities(network) ?: return false
-        return caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
-                && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+        val network = cm.activeNetwork
+        if (network == null) {
+            p2pManager.log("checkInternetNow: No active network", LogLevel.DEBUG)
+            return false
+        }
+
+        val caps = cm.getNetworkCapabilities(network)
+        if (caps == null) {
+            p2pManager.log("checkInternetNow: No network capabilities", LogLevel.DEBUG)
+            return false
+        }
+
+        val hasInternet = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        val isValidated = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+
+        p2pManager.log("checkInternetNow: hasInternet=$hasInternet, isValidated=$isValidated", LogLevel.DEBUG)
+
+        return hasInternet && isValidated
     }
 
     // --- Relay polling loop ---

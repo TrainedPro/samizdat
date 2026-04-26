@@ -1,0 +1,33 @@
+# Firebase Configuration for Cross-Mesh Communication
+# Copy this file to local.properties and fill in your Firebase details
+
+# Your Firebase Project ID (found in Firebase Console > Project Settings)
+FIREBASE_PROJECT_ID=your-project-id-here
+
+# Your Firebase Web API Key (found in Firebase Console > Project Settings > Web Apps)
+FIREBASE_API_KEY=your-web-api-key-here
+
+# Example:
+# FIREBASE_PROJECT_ID=my-mesh-network-12345
+# FIREBASE_API_KEY=AIzaSyBxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+# Instructions:
+# 1. Go to https://console.firebase.google.com/
+# 2. Create a new project or select existing project
+# 3. Go to Project Settings (gear icon)
+# 4. Copy the Project ID
+# 5. Scroll down to "Your apps" section
+# 6. If no web app exists, click "Add app" and select Web (</>) 
+# 7. Copy the API key from the config object
+# 8. Enable Firestore Database in Firebase Console
+# 9. Set Firestore rules to allow read/write (for testing):
+#    rules_version = '2';
+#    service cloud.firestore {
+#      match /databases/{database}/documents {
+#        match /{document=**} {
+#          allow read, write: if true;
+#        }
+#      }
+#    }
+
+# Note: local.properties is gitignored and never committed to version control

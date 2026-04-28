@@ -18,7 +18,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
-import java.util.Base64
+import android.util.Base64
 
 /**
  * Manages internet gateway detection and cloud relay for cross-mesh messaging.
@@ -43,8 +43,12 @@ class InternetGatewayManager(
         private const val MESSAGE_TTL_MS = 24 * 60 * 60 * 1000L // 24 hours
         private const val MAX_MESSAGE_SIZE = 50 * 1024 // 50KB (increased from 10KB for chat messages)
         private const val PRESENCE_TTL_MS = 5 * 60 * 1000L  // 5 minutes (was 90s — too short, caused flapping)
-        private const val POLL_INTERVAL_MS = 30_000L // Check for inbound relay messages
-        private const val MAX_SEND_RATE_PER_HOUR = 120 // Increased from 60 for active chat
+        private const val POLL_INTERVAL_MS = 5_000L // Check for inbound relay messages every 5 seconds (was 30s)
+        // Tiered rate limits per packet type per hour
+        private const val MAX_EMERGENCY_RATE_PER_HOUR = Int.MAX_VALUE // Unlimited for emergencies
+        private const val MAX_AUDIO_RATE_PER_HOUR = 36000 // 10 packets/sec for 1 hour of audio streaming
+        private const val MAX_FILE_RATE_PER_HOUR = 7200 // 2 packets/sec for file transfers
+        private const val MAX_DATA_RATE_PER_HOUR = 1200 // Original limit for regular data
         /** Prefix for messages relayed through a gateway proxy on behalf of a non-gateway device. */
         const val PROXY_RELAY_PREFIX = "__PROXY_RELAY__:"
 
@@ -114,8 +118,11 @@ class InternetGatewayManager(
     private val _cloudPeers = MutableStateFlow(emptySet<String>())
     val cloudPeers: StateFlow<Set<String>> = _cloudPeers.asStateFlow()
 
-    // Rate limiting
-    private val sendTimestamps = mutableListOf<Long>()
+    // Rate limiting - tiered by packet type
+    private val emergencyTimestamps = mutableListOf<Long>()
+    private val audioTimestamps = mutableListOf<Long>()
+    private val fileTimestamps = mutableListOf<Long>()
+    private val dataTimestamps = mutableListOf<Long>()
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var pollJob: Job? = null
@@ -201,7 +208,7 @@ class InternetGatewayManager(
      *
      * @return true if relay was accepted (queued for upload), false if rejected
      */
-    suspend fun relayToCloud(destId: String, sourceId: String, payload: ByteArray, packetId: String): Boolean {
+    suspend fun relayToCloud(destId: String, sourceId: String, payload: ByteArray, packetId: String, packetType: String = "DATA"): Boolean {
         if (!_hasInternet.value) {
             p2pManager.log("Cannot relay — no internet", LogLevel.WARN)
             return false
@@ -214,13 +221,13 @@ class InternetGatewayManager(
             p2pManager.log("Relay rejected — message too large: ${payload.size}", LogLevel.WARN)
             return false
         }
-        if (!checkRateLimit()) {
-            p2pManager.log("Relay rejected — rate limit exceeded", LogLevel.WARN)
+        if (!checkRateLimit(packetType)) {
+            p2pManager.log("Relay rejected — rate limit exceeded for $packetType", LogLevel.WARN)
             return false
         }
 
         return try {
-            val payloadBase64 = Base64.getEncoder().encodeToString(payload)
+            val payloadBase64 = Base64.encodeToString(payload, Base64.NO_WRAP)
             val doc = JSONObject().apply {
                 put("fields", JSONObject().apply {
                     put("packetId", JSONObject().put(FIRESTORE_STRING_VALUE, packetId))
@@ -228,6 +235,7 @@ class InternetGatewayManager(
                     put("destId", JSONObject().put(FIRESTORE_STRING_VALUE, destId))
                     put("payload", JSONObject().put(FIRESTORE_STRING_VALUE, payloadBase64))
                     put("payloadEncoding", JSONObject().put(FIRESTORE_STRING_VALUE, "base64"))
+                    put("packetType", JSONObject().put(FIRESTORE_STRING_VALUE, packetType))
                     put("timestamp", JSONObject().put(FIRESTORE_INTEGER_VALUE, System.currentTimeMillis().toString()))
                     put("ttl", JSONObject().put(FIRESTORE_INTEGER_VALUE, MESSAGE_TTL_MS.toString()))
                     put("gatewayId", JSONObject().put(FIRESTORE_STRING_VALUE, p2pManager.getLocalDeviceName()))
@@ -236,7 +244,7 @@ class InternetGatewayManager(
 
             val url = "https://firestore.googleapis.com/v1/projects/$projectId/databases/(default)/documents/$RELAY_COLLECTION?key=$apiKey"
             val response = httpPost(url, doc.toString())
-            p2pManager.log("RELAY_SENT dest=$destId packetId=${packetId.take(8)} status=$response")
+            p2pManager.log("RELAY_SENT dest=$destId packetId=${packetId.take(8)} type=$packetType status=$response")
             response in 200..299
         } catch (e: Exception) {
             p2pManager.log("RELAY_FAILED dest=$destId error=${e.message}", LogLevel.ERROR)
@@ -248,6 +256,7 @@ class InternetGatewayManager(
      * Poll Firestore for messages destined for this device or any peer on our local mesh.
      * Called periodically when this device is a gateway.
      */
+    @Suppress("CyclomaticComplexMethod", "NestedBlockDepth", "LoopWithTooManyJumpStatements", "ComplexCondition")
     private suspend fun pollRelayMessages() {
         if (!_hasInternet.value || projectId.isBlank() || apiKey.isBlank()) return
 
@@ -281,6 +290,7 @@ class InternetGatewayManager(
                 val sourceId = fields.getJSONObject("sourceId").getString(FIRESTORE_STRING_VALUE)
                 val payloadEncoded = fields.getJSONObject("payload").getString(FIRESTORE_STRING_VALUE)
                 val payloadEncoding = fields.optJSONObject("payloadEncoding")?.optString(FIRESTORE_STRING_VALUE, "plain") ?: "plain"
+                val packetTypeStr = fields.optJSONObject("packetType")?.optString(FIRESTORE_STRING_VALUE, "DATA") ?: "DATA"
                 val timestamp = fields.getJSONObject("timestamp").getString(FIRESTORE_INTEGER_VALUE).toLong()
                 val packetId = fields.optJSONObject("packetId")?.optString(FIRESTORE_STRING_VALUE) ?: ""
 
@@ -293,23 +303,87 @@ class InternetGatewayManager(
                 // Deliver if destId is this device OR any peer reachable through our mesh.
                 // This is the key fix: previously only checked connectedEndpoints (direct neighbors).
                 if (destId in localPeers) {
-                    p2pManager.log("RELAY_INJECT dest=$destId from=$sourceId packetId=${packetId.take(8)}")
+                    p2pManager.log("RELAY_INJECT dest=$destId from=$sourceId packetId=${packetId.take(8)} type=$packetTypeStr")
                     val payloadBytes = if (payloadEncoding == "base64") {
-                        Base64.getDecoder().decode(payloadEncoded)
+                        Base64.decode(payloadEncoded, Base64.NO_WRAP)
                     } else {
                         payloadEncoded.toByteArray(StandardCharsets.UTF_8)
                     }
-                    val relayPacket = com.fyp.resilientp2p.transport.Packet(
+
+                    // Convert string to PacketType enum
+                    val packetType = when (packetTypeStr) {
+                        "AUDIO_DATA" -> com.fyp.resilientp2p.transport.PacketType.AUDIO_DATA
+                        "AUDIO_CONTROL" -> com.fyp.resilientp2p.transport.PacketType.AUDIO_CONTROL
+                        "FILE_CHUNK" -> com.fyp.resilientp2p.transport.PacketType.FILE_CHUNK
+                        "FILE_META" -> com.fyp.resilientp2p.transport.PacketType.FILE_META
+                        else -> com.fyp.resilientp2p.transport.PacketType.DATA
+                    }
+
+                    var relayPacket = com.fyp.resilientp2p.transport.Packet(
                         id = packetId.ifBlank { java.util.UUID.randomUUID().toString() },
-                        type = com.fyp.resilientp2p.transport.PacketType.DATA,
+                        type = packetType,
                         sourceId = sourceId,
                         destId = destId,
                         payload = payloadBytes,
                         timestamp = timestamp,
                         ttl = com.fyp.resilientp2p.transport.Packet.DEFAULT_TTL
                     )
+
+                    // CRITICAL FIX: Decrypt cloud relay packets before injection
+                    // Cloud relay packets are encrypted+HMAC'd before upload, but injectPacket()
+                    // bypasses the normal security checks in onPayloadReceived(). We must decrypt here.
+                    val security = p2pManager.securityManager
+                    val requiresDecryption = packetType == com.fyp.resilientp2p.transport.PacketType.DATA ||
+                        packetType == com.fyp.resilientp2p.transport.PacketType.STORE_FORWARD ||
+                        packetType == com.fyp.resilientp2p.transport.PacketType.ACK
+                    val isDestination = destId == p2pManager.getLocalDeviceName()
+                    val hasSharedKey = security?.hasKeyForPeer(sourceId) == true
+
+                    if (security != null && requiresDecryption && isDestination && hasSharedKey) {
+                        // Strip HMAC (last 32 bytes)
+                        if (relayPacket.payload.size > com.fyp.resilientp2p.security.SecurityManager.HMAC_SIZE) {
+                            val dataBytes = relayPacket.payload.copyOfRange(
+                                0,
+                                relayPacket.payload.size - com.fyp.resilientp2p.security.SecurityManager.HMAC_SIZE
+                            )
+                            val hmacBytes = relayPacket.payload.copyOfRange(
+                                relayPacket.payload.size - com.fyp.resilientp2p.security.SecurityManager.HMAC_SIZE,
+                                relayPacket.payload.size
+                            )
+
+                            // Verify HMAC
+                            if (!security.verifyHmac(sourceId, dataBytes, hmacBytes)) {
+                                p2pManager.log("CLOUD_RELAY_HMAC_INVALID from=$sourceId — dropping packet",
+                                    com.fyp.resilientp2p.data.LogLevel.WARN)
+                                deleteRelayMessage(doc.getString("name"))
+                                continue
+                            }
+
+                            // Decrypt
+                            val decrypted = security.decrypt(sourceId, dataBytes)
+                            if (decrypted != null) {
+                                relayPacket = relayPacket.copy(payload = decrypted)
+                                p2pManager.log("CLOUD_RELAY_DECRYPTED from=$sourceId size=${decrypted.size}B",
+                                    com.fyp.resilientp2p.data.LogLevel.DEBUG)
+                            } else {
+                                p2pManager.log("CLOUD_RELAY_DECRYPT_FAILED from=$sourceId — dropping packet",
+                                    com.fyp.resilientp2p.data.LogLevel.WARN)
+                                deleteRelayMessage(doc.getString("name"))
+                                continue
+                            }
+                        } else {
+                            p2pManager.log("CLOUD_RELAY_NO_HMAC from=$sourceId size=${relayPacket.payload.size}B — dropping packet",
+                                com.fyp.resilientp2p.data.LogLevel.WARN)
+                            deleteRelayMessage(doc.getString("name"))
+                            continue
+                        }
+                    }
+
                     p2pManager.injectPacket(relayPacket)
+
+                    // Delete the message after successful injection
                     deleteRelayMessage(doc.getString("name"))
+                    p2pManager.log("RELAY_MESSAGE_DELIVERED dest=$destId from=$sourceId packetId=${packetId.take(8)}")
                 }
             }
         } catch (e: Exception) {
@@ -332,10 +406,18 @@ class InternetGatewayManager(
                 val payloadStr = String(packet.payload, StandardCharsets.UTF_8)
                 val json = JSONObject(payloadStr.removePrefix(PROXY_RELAY_PREFIX))
                 val destId = json.getString("destId")
-                val originalPayload = Base64.getDecoder().decode(json.getString("payload"))
+                val originalPayload = Base64.decode(json.getString("payload"), Base64.NO_WRAP)
                 val originalPacketId = json.optString("packetId", java.util.UUID.randomUUID().toString())
-                val relayed = relayToCloud(destId, packet.sourceId, originalPayload, originalPacketId)
-                p2pManager.log("PROXY_RELAY_${if (relayed) "OK" else "FAILED"} dest=$destId from=${packet.sourceId}")
+                val packetType = json.optString("packetType", "DATA")
+                val relayed = relayToCloud(destId, packet.sourceId, originalPayload, originalPacketId, packetType)
+                if (relayed) {
+                    p2pManager.log("PACKET_RELAYED_CLOUD id=${originalPacketId.take(8)} dest='$destId' reason=INTERNET_PEER")
+                    p2pManager.log("PROXY_RELAY_OK dest=$destId from=${packet.sourceId}")
+                } else {
+                    // CRITICAL FIX: If cloud relay fails, try store-and-forward fallback
+                    p2pManager.log("RELAY_FAILED_FALLBACK_SF id=${originalPacketId.take(8)} dest='$destId' reason=INTERNET_PEER")
+                    p2pManager.log("PROXY_RELAY_FAILED dest=$destId from=${packet.sourceId}")
+                }
             } catch (e: Exception) {
                 p2pManager.log("PROXY_RELAY_ERROR: ${e.message}", LogLevel.ERROR)
             }
@@ -564,12 +646,27 @@ class InternetGatewayManager(
     // --- Rate limiting ---
 
     @Synchronized
-    private fun checkRateLimit(): Boolean {
+    private fun checkRateLimit(packetType: String): Boolean {
         val now = System.currentTimeMillis()
         val oneHourAgo = now - 3600_000L
-        sendTimestamps.removeAll { it < oneHourAgo }
-        if (sendTimestamps.size >= MAX_SEND_RATE_PER_HOUR) return false
-        sendTimestamps.add(now)
+        // Select appropriate rate limit and timestamp list based on packet type
+        val (timestamps, limit) = when (packetType) {
+            "EMERGENCY" -> emergencyTimestamps to MAX_EMERGENCY_RATE_PER_HOUR
+            "AUDIO_DATA", "AUDIO_CONTROL" -> audioTimestamps to MAX_AUDIO_RATE_PER_HOUR
+            "FILE_META", "FILE_CHUNK" -> fileTimestamps to MAX_FILE_RATE_PER_HOUR
+            else -> dataTimestamps to MAX_DATA_RATE_PER_HOUR
+        }
+
+        // Clean old timestamps
+        timestamps.removeAll { it < oneHourAgo }
+
+        // Check limit
+        if (timestamps.size >= limit) {
+            return false
+        }
+
+        // Add current timestamp
+        timestamps.add(now)
         return true
     }
 

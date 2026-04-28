@@ -62,7 +62,7 @@ import com.fyp.resilientp2p.data.NetworkStats
  * @param logDao Optional Room DAO for persistent structured logging
  * @param packetDao Optional Room DAO for store-and-forward packet persistence
  */
-@Suppress("LargeClass")
+@Suppress("LargeClass", "TooManyFunctions") // Core networking engine requires comprehensive functionality
 class P2PManager(
     private val context: Context,
     private val logDao: LogDao? = null,
@@ -74,6 +74,7 @@ class P2PManager(
     @Volatile private var scope = CoroutineScope(Dispatchers.IO + supervisorJob)
     private var routingJob: kotlinx.coroutines.Job? = null
     private var statsDumpJob: kotlinx.coroutines.Job? = null
+    private var fileTransferCleanupJob: kotlinx.coroutines.Job? = null
 
     // Network Statistics (public for HeartbeatManager RTT access)
     val networkStats = NetworkStats()
@@ -202,9 +203,22 @@ class P2PManager(
     @Volatile private var internetPeers = emptySet<String>()
 
     // File transfer metadata: payloadId -> FileMetadata (set by FILE_META packet, consumed on transfer complete)
-    data class FileMetadata(val fileName: String, val mimeType: String, val fileSize: Long, val senderName: String)
+    data class FileMetadata(val fileName: String, val mimeType: String, val fileSize: Long, val senderName: String, val transferId: String = "")
     private val pendingFileMetadata = ConcurrentHashMap<Long, FileMetadata>()
-    // Pending FILE payloads (stored until transfer completes)
+
+    // Mesh file transfer state: transferId -> FileTransferState
+    @Suppress("DataClassShouldBeImmutable") // receivedChunks is mutated during transfer
+    data class FileTransferState(
+        val metadata: FileMetadata,
+        val chunks: MutableMap<Int, ByteArray> = mutableMapOf(),
+        val totalChunks: Int,
+        var receivedChunks: Int = 0,
+        val startTime: Long = System.currentTimeMillis()
+    )
+    @Suppress("UnusedPrivateProperty") // Will be used in mesh file transfer implementation
+    private val activeFileTransfers = ConcurrentHashMap<String, FileTransferState>()
+
+    // Pending FILE payloads (stored until transfer completes) - for legacy direct transfers
     private val pendingFilePayloads = ConcurrentHashMap<Long, Payload>()
 
     @Suppress("DataClassShouldBeImmutable") // attemptCount/lastAttemptTime are mutated during reconnection retries
@@ -1274,6 +1288,7 @@ class P2PManager(
         startRoutingUpdates()
         startStoreForwardLoop()
         startStatsDump()
+        startFileTransferCleanup()
     }
 
     fun stop() {
@@ -1301,6 +1316,7 @@ class P2PManager(
         //    re-launching after the new scope is created.
         routingJob = null
         statsDumpJob = null
+        fileTransferCleanupJob = null
         storeForwardJob = null
         reconnectionJob = null
 
@@ -1322,6 +1338,12 @@ class P2PManager(
         connectionTimestamps.clear()
         messageCache.clear()
         gatewayNeighbors.clear()
+
+        // Clear file transfer state
+        activeFileTransfers.clear()
+        pendingFileMetadata.clear()
+        pendingFilePayloads.clear()
+
         locationEstimator?.reset()
         securityManager?.destroy()
 
@@ -1511,7 +1533,9 @@ class P2PManager(
                 (packet.destId == localUsername || packet.destId == UNKNOWN_PEER)
 
         val isForLocalProcessing = packet.destId == localUsername ||
-                packet.destId == BROADCAST_DEST || isControlPacket || isDirectPingForUs
+                packet.destId == BROADCAST_DEST ||
+                isControlPacket ||
+                isDirectPingForUs
         if (isForLocalProcessing) {
             processPacket(packet, sourceEndpointId)
         }
@@ -1571,13 +1595,31 @@ class P2PManager(
         }
     }
 
-    @Suppress("CyclomaticComplexMethod", "LongMethod")
+    @Suppress("CyclomaticComplexMethod", "LongMethod", "NestedBlockDepth") // Complex packet routing logic
     private fun processPacket(packet: Packet, sourceEndpointId: String) {
         scope.launch { _payloadEvents.emit(PayloadEvent(sourceEndpointId, packet)) }
 
         when (packet.type) {
             PacketType.DATA -> {
-                val textContent = String(packet.payload, StandardCharsets.UTF_8)
+                // CRITICAL FIX: Validate payload is valid UTF-8 text before processing as chat message
+                // This prevents binary data (corrupted AUDIO_DATA packets) from being logged as garbled text
+                val textContent = try {
+                    val decoded = String(packet.payload, StandardCharsets.UTF_8)
+                    // Validate UTF-8: reject binary data that contains control characters
+                    val hasControlChars = decoded.any { char ->
+                        char.code < 32 && char != '\n' && char != '\r' && char != '\t'
+                    }
+                    if (hasControlChars) {
+                        log("DATA_PACKET_INVALID_UTF8 from='${packet.sourceId}' size=${packet.payload.size}B — dropping binary payload",
+                            com.fyp.resilientp2p.data.LogLevel.WARN, peerId = packet.sourceId)
+                        return
+                    }
+                    decoded
+                } catch (e: Exception) {
+                    log("DATA_PACKET_DECODE_ERROR from='${packet.sourceId}' error='${e.message}' — dropping malformed payload",
+                        com.fyp.resilientp2p.data.LogLevel.WARN, peerId = packet.sourceId)
+                    return
+                }
 
                 // Intercept log relay packets — gateways upload on behalf of offline peers
                 if (textContent.startsWith(CloudLogManager.LOG_RELAY_PREFIX)) {
@@ -1833,19 +1875,43 @@ class P2PManager(
                 }
             }
             PacketType.FILE_META -> {
-                // Store file metadata for correlating with incoming FILE payload
                 try {
                     val json = org.json.JSONObject(String(packet.payload, StandardCharsets.UTF_8))
-                    val payloadId = json.getLong("payloadId")
-                    val fileName = json.getString("fileName")
-                    val mimeType = json.getString("mimeType")
-                    val fileSize = json.optLong("fileSize", -1)
-                    pendingFileMetadata[payloadId] = FileMetadata(fileName, mimeType, fileSize, packet.sourceId)
-                    log(
-                        "FILE_META_RECEIVED from='${packet.sourceId}' payloadId=$payloadId name='$fileName' mime='$mimeType' size=$fileSize",
-                        com.fyp.resilientp2p.data.LogLevel.INFO,
-                        peerId = packet.sourceId
-                    )
+
+                    // Check if this is a mesh transfer (has transferId) or legacy direct transfer (has payloadId)
+                    if (json.has(TRANSFER_ID_FIELD)) {
+                        // Mesh file transfer metadata
+                        val transferId = json.getString(TRANSFER_ID_FIELD)
+                        val fileName = json.getString("fileName")
+                        val mimeType = json.getString("mimeType")
+                        val fileSize = json.getLong("fileSize")
+                        val totalChunks = json.getInt("totalChunks")
+
+                        val metadata = FileMetadata(fileName, mimeType, fileSize, packet.sourceId, transferId)
+                        val transferState = FileTransferState(metadata, mutableMapOf(), totalChunks)
+                        activeFileTransfers[transferId] = transferState
+
+                        log(
+                            "FILE_META_MESH_RECEIVED from='${packet.sourceId}' transferId=${transferId.take(8)} " +
+                            "name='$fileName' mime='$mimeType' size=$fileSize chunks=$totalChunks",
+                            com.fyp.resilientp2p.data.LogLevel.INFO,
+                            peerId = packet.sourceId
+                        )
+                    } else {
+                        // Legacy direct transfer metadata
+                        val payloadId = json.getLong("payloadId")
+                        val fileName = json.getString("fileName")
+                        val mimeType = json.getString("mimeType")
+                        val fileSize = json.optLong("fileSize", -1)
+                        pendingFileMetadata[payloadId] = FileMetadata(fileName, mimeType, fileSize, packet.sourceId)
+
+                        log(
+                            "FILE_META_DIRECT_RECEIVED from='${packet.sourceId}' payloadId=$payloadId " +
+                            "name='$fileName' mime='$mimeType' size=$fileSize",
+                            com.fyp.resilientp2p.data.LogLevel.INFO,
+                            peerId = packet.sourceId
+                        )
+                    }
                 } catch (e: Exception) {
                     log("FILE_META_PARSE_ERROR from='${packet.sourceId}' error='${e.message}'",
                         com.fyp.resilientp2p.data.LogLevel.ERROR, peerId = packet.sourceId)
@@ -1870,7 +1936,48 @@ class P2PManager(
                 fileShareManager?.handleFileRequest(packet)
             }
             PacketType.FILE_CHUNK -> {
-                fileShareManager?.handleFileChunk(packet)
+                // Handle both mesh file transfer chunks and content-addressed file sharing chunks
+                try {
+                    val json = org.json.JSONObject(String(packet.payload, StandardCharsets.UTF_8))
+
+                    if (json.has(TRANSFER_ID_FIELD)) {
+                        // Mesh file transfer chunk
+                        val transferId = json.getString(TRANSFER_ID_FIELD)
+                        val chunkIndex = json.getInt("chunkIndex")
+                        val totalChunks = json.getInt("totalChunks")
+                        val chunkData = android.util.Base64.decode(json.getString("data"), android.util.Base64.NO_WRAP)
+
+                        val transferState = activeFileTransfers[transferId]
+                        if (transferState != null) {
+                            transferState.chunks[chunkIndex] = chunkData
+                            transferState.receivedChunks++
+
+                            log(
+                                "FILE_CHUNK_RECEIVED from='${packet.sourceId}' transferId=${transferId.take(8)} " +
+                                "chunk=$chunkIndex/$totalChunks progress=${transferState.receivedChunks}/$totalChunks",
+                                com.fyp.resilientp2p.data.LogLevel.DEBUG,
+                                peerId = packet.sourceId
+                            )
+
+                            // Check if transfer is complete
+                            if (transferState.receivedChunks >= transferState.totalChunks) {
+                                scope.launch {
+                                    completeFileTransfer(transferId, transferState)
+                                }
+                            }
+                        } else {
+                            log("FILE_CHUNK_ORPHANED from='${packet.sourceId}' transferId=${transferId.take(8)} " +
+                                "chunk=$chunkIndex — no active transfer",
+                                com.fyp.resilientp2p.data.LogLevel.WARN, peerId = packet.sourceId)
+                        }
+                    } else {
+                        // Content-addressed file sharing chunk - delegate to FileShareManager
+                        fileShareManager?.handleFileChunk(packet)
+                    }
+                } catch (e: Exception) {
+                    log("FILE_CHUNK_PARSE_ERROR from='${packet.sourceId}' error='${e.message}'",
+                        com.fyp.resilientp2p.data.LogLevel.ERROR, peerId = packet.sourceId)
+                }
             }
             PacketType.ENCOUNTER_LOG -> {
                 // Log receipt of DTN encounter broadcast — informational
@@ -2117,7 +2224,7 @@ class P2PManager(
                                 // Format: __PROXY_RELAY__:{"destId":"...","payload":"<base64>","packetId":"..."}
                                 val proxyJson = org.json.JSONObject().apply {
                                     put("destId", newPacket.destId)
-                                    put("payload", java.util.Base64.getEncoder().encodeToString(newPacket.payload))
+                                    put("payload", android.util.Base64.encodeToString(newPacket.payload, android.util.Base64.NO_WRAP))
                                     put("packetId", newPacket.id)
                                 }
                                 val proxyPayload = (InternetGatewayManager.PROXY_RELAY_PREFIX + proxyJson.toString())
@@ -2262,10 +2369,35 @@ class P2PManager(
     }
 
     fun sendFile(peerName: String, uri: android.net.Uri) {
-        // Resolve peer name to endpoint ID
-        val endpointId = neighbors.entries.find { it.value.peerName == peerName }?.key
-        if (endpointId == null) {
-            log("FILE_SEND_ERROR peer='$peerName' reason=NO_ENDPOINT", com.fyp.resilientp2p.data.LogLevel.ERROR)
+        scope.launch {
+            try {
+                sendFileAsync(peerName, uri)
+            } catch (e: Exception) {
+                log("FILE_SEND_ERROR peer='$peerName' error='${e.message}'",
+                    com.fyp.resilientp2p.data.LogLevel.ERROR, peerId = peerName)
+            }
+        }
+    }
+
+    private suspend fun sendFileAsync(peerName: String, uri: android.net.Uri) {
+        // CRITICAL FIX: Improved peer connectivity validation
+        // Check multiple connection types: direct, routed, and internet
+        val state = state.value
+        val hasDirectConnection = neighbors.values.any { it.peerName == peerName }
+        val hasRouteConnection = state.knownPeers.containsKey(peerName)
+        val hasInternetConnection = state.internetPeers.contains(peerName)
+
+        // ADDITIONAL FIX: Check if peer is reachable via gateway
+        val hasGatewayRoute = internetGatewayManager?.let { gateway ->
+            gateway.hasInternet.value && gateway.cloudPeers.value.contains(peerName)
+        } ?: false
+
+        @Suppress("ComplexCondition") // Multiple connectivity checks are necessary for comprehensive validation
+        if (!hasDirectConnection && !hasRouteConnection && !hasInternetConnection && !hasGatewayRoute) {
+            log("FILE_SEND_ERROR peer='$peerName' reason=NO_ENDPOINT " +
+                "direct=$hasDirectConnection routed=$hasRouteConnection " +
+                "internet=$hasInternetConnection gateway=$hasGatewayRoute",
+                com.fyp.resilientp2p.data.LogLevel.ERROR, peerId = peerName)
             return
         }
 
@@ -2281,28 +2413,50 @@ class P2PManager(
                 null
             }
         } ?: Pair(null, -1L)
+
         val resolvedFileName = fileName ?: uri.lastPathSegment ?: "file"
         val mimeType = context.contentResolver.getType(uri) ?: "application/octet-stream"
 
-        // Nearby Connections API takes ownership of PFD for FILE payloads
+        if (fileSize > MAX_FILE_SIZE) {
+            log("FILE_SEND_ERROR peer='$peerName' reason=FILE_TOO_LARGE size=$fileSize max=$MAX_FILE_SIZE",
+                com.fyp.resilientp2p.data.LogLevel.ERROR, peerId = peerName)
+            return
+        }
+
+        // Check if this is a direct neighbor (use legacy FILE payload method)
+        val endpointId = neighbors.entries.find { it.value.peerName == peerName }?.key
+        if (endpointId != null) {
+            // Direct neighbor - use legacy Nearby Connections FILE payload for efficiency
+            sendFileDirect(peerName, endpointId, uri, resolvedFileName, mimeType, fileSize)
+            return
+        }
+
+        // Not a direct neighbor - use mesh-compatible chunked transfer
+        sendFileMesh(peerName, uri, resolvedFileName, mimeType, fileSize)
+    }
+
+    private fun sendFileDirect(peerName: String, endpointId: String, uri: android.net.Uri,
+                              fileName: String, mimeType: String, fileSize: Long) {
+        // Legacy direct transfer using Nearby Connections FILE payload
         val pfd = context.contentResolver.openFileDescriptor(uri, "r")
         if (pfd == null) {
             log("FILE_SEND_ERROR peer='$peerName' reason=NULL_PFD", com.fyp.resilientp2p.data.LogLevel.ERROR)
             return
         }
+
         val payload = try {
             Payload.fromFile(pfd)
         } catch (e: Exception) {
-            pfd.close()  // Safe - payload creation failed, API never got it
+            pfd.close()
             log("FILE_SEND_ERROR peer='$peerName' error='${e.message}'", com.fyp.resilientp2p.data.LogLevel.ERROR)
             return
         }
 
-        // Send metadata first so receiver knows the filename
+        // Send metadata first
         val payloadId = payload.id
         val metaJson = org.json.JSONObject().apply {
             put("payloadId", payloadId)
-            put("fileName", resolvedFileName)
+            put("fileName", fileName)
             put("mimeType", mimeType)
             put("fileSize", fileSize)
         }.toString()
@@ -2311,25 +2465,201 @@ class P2PManager(
             sourceId = localUsername,
             destId = peerName,
             payload = metaJson.toByteArray(),
-            ttl = 0  // Direct only — FILE payloads can't be routed
+            ttl = 0  // Direct only
         )
         connectionsClient.sendPayload(endpointId, Payload.fromBytes(metaPacket.toBytes()))
             .addOnSuccessListener {
-                // Chain file send AFTER metadata is dispatched to ensure ordering
                 connectionsClient.sendPayload(endpointId, payload)
                     .addOnSuccessListener {
-                        log("FILE_SENT peer='$peerName' name='$resolvedFileName' mime='$mimeType' payloadId=$payloadId",
+                        log("FILE_SENT_DIRECT peer='$peerName' name='$fileName' mime='$mimeType' payloadId=$payloadId",
                             com.fyp.resilientp2p.data.LogLevel.INFO, peerId = peerName)
                     }
                     .addOnFailureListener { e ->
-                        log("FILE_SEND_FAILED peer='$peerName' name='$resolvedFileName' error='${e.message}'",
+                        log("FILE_SEND_FAILED peer='$peerName' name='$fileName' error='${e.message}'",
                             com.fyp.resilientp2p.data.LogLevel.ERROR, peerId = peerName)
                     }
             }
             .addOnFailureListener { e ->
-                log("FILE_META_SEND_FAILED peer='$peerName' name='$resolvedFileName' error='${e.message}'",
+                log("FILE_META_SEND_FAILED peer='$peerName' name='$fileName' error='${e.message}'",
                     com.fyp.resilientp2p.data.LogLevel.ERROR, peerId = peerName)
             }
+    }
+
+    private suspend fun sendFileMesh(peerName: String, uri: android.net.Uri,
+                                   fileName: String, mimeType: String, fileSize: Long) {
+        // Mesh-compatible chunked transfer
+        val transferId = java.util.UUID.randomUUID().toString()
+        val totalChunks = ((fileSize + FILE_CHUNK_SIZE - 1) / FILE_CHUNK_SIZE).toInt()
+
+        log("FILE_SEND_MESH_START peer='$peerName' name='$fileName' size=$fileSize chunks=$totalChunks transferId=${transferId.take(8)}",
+            com.fyp.resilientp2p.data.LogLevel.INFO, peerId = peerName)
+
+        // Send metadata first
+        val metaJson = org.json.JSONObject().apply {
+            put(TRANSFER_ID_FIELD, transferId)
+            put("fileName", fileName)
+            put("mimeType", mimeType)
+            put("fileSize", fileSize)
+            put("totalChunks", totalChunks)
+            put("chunkSize", FILE_CHUNK_SIZE)
+        }.toString()
+
+        val metaPacket = com.fyp.resilientp2p.transport.Packet(
+            type = com.fyp.resilientp2p.transport.PacketType.FILE_META,
+            sourceId = localUsername,
+            destId = peerName,
+            payload = metaJson.toByteArray(),
+            ttl = Packet.DEFAULT_TTL  // Allow routing
+        )
+        forwardPacket(metaPacket)
+
+        // Read file and send chunks
+        context.contentResolver.openInputStream(uri)?.use { inputStream ->
+            val buffer = ByteArray(FILE_CHUNK_SIZE)
+            var chunkIndex = 0
+
+            while (chunkIndex < totalChunks) {
+                val bytesRead = inputStream.read(buffer)
+                if (bytesRead <= 0) break
+
+                val chunkData = if (bytesRead == FILE_CHUNK_SIZE) buffer else buffer.copyOf(bytesRead)
+
+                // Create chunk packet
+                val chunkJson = org.json.JSONObject().apply {
+                    put(TRANSFER_ID_FIELD, transferId)
+                    put("chunkIndex", chunkIndex)
+                    put("totalChunks", totalChunks)
+                    put("data", android.util.Base64.encodeToString(chunkData, android.util.Base64.NO_WRAP))
+                }.toString()
+
+                val chunkPacket = com.fyp.resilientp2p.transport.Packet(
+                    type = com.fyp.resilientp2p.transport.PacketType.FILE_CHUNK,
+                    sourceId = localUsername,
+                    destId = peerName,
+                    payload = chunkJson.toByteArray(),
+                    ttl = Packet.DEFAULT_TTL
+                )
+
+                forwardPacket(chunkPacket)
+                chunkIndex++
+
+                // Small delay to avoid overwhelming the mesh
+                kotlinx.coroutines.delay(10)
+            }
+
+            log("FILE_SEND_MESH_COMPLETE peer='$peerName' name='$fileName' chunks=$chunkIndex transferId=${transferId.take(8)}",
+                com.fyp.resilientp2p.data.LogLevel.INFO, peerId = peerName)
+        }
+    }
+
+    /**
+     * Complete a mesh file transfer by reassembling chunks into the final file.
+     * Called when all chunks have been received for a transfer.
+     */
+    private suspend fun completeFileTransfer(transferId: String, transferState: FileTransferState) {
+        try {
+            val metadata = transferState.metadata
+            val chunks = transferState.chunks
+
+            // Verify all chunks are present
+            val missingChunks = (0 until transferState.totalChunks).filter { !chunks.containsKey(it) }
+            if (missingChunks.isNotEmpty()) {
+                log("FILE_TRANSFER_INCOMPLETE transferId=${transferId.take(8)} " +
+                    "missing=${missingChunks.size} chunks=$missingChunks",
+                    com.fyp.resilientp2p.data.LogLevel.ERROR, peerId = metadata.senderName)
+                activeFileTransfers.remove(transferId)
+                return
+            }
+
+            // Create received files directory
+            val receivedDir = java.io.File(context.filesDir, "received_files")
+            receivedDir.mkdirs()
+
+            // Generate unique filename to avoid conflicts
+            val targetFile = java.io.File(receivedDir, metadata.fileName)
+            var finalFile = targetFile
+            var counter = 1
+            while (finalFile.exists()) {
+                val nameWithoutExt = metadata.fileName.substringBeforeLast(".")
+                val extension = if (metadata.fileName.contains("."))
+                    ".${metadata.fileName.substringAfterLast(".")}" else ""
+                finalFile = java.io.File(receivedDir, "${nameWithoutExt}_$counter$extension")
+                counter++
+            }
+
+            // Reassemble file from chunks
+            finalFile.outputStream().use { output ->
+                for (i in 0 until transferState.totalChunks) {
+                    val chunkData = chunks[i] ?: error("Missing chunk $i")
+                    output.write(chunkData)
+                }
+            }
+
+            val transferDurationMs = System.currentTimeMillis() - transferState.startTime
+            val totalBytes = finalFile.length()
+
+            log(
+                "FILE_TRANSFER_COMPLETE from='${metadata.senderName}' " +
+                "name='${finalFile.name}' mime='${metadata.mimeType}' " +
+                "size=$totalBytes chunks=${transferState.totalChunks} " +
+                "duration=${FormatUtils.formatDuration(transferDurationMs)} " +
+                "transferId=${transferId.take(8)}",
+                com.fyp.resilientp2p.data.LogLevel.INFO,
+                peerId = metadata.senderName
+            )
+
+            // Clean up transfer state
+            activeFileTransfers.remove(transferId)
+
+            // Emit file received event
+            _receivedFileEvents.emit(
+                ReceivedFileEvent(metadata.senderName, finalFile.name, metadata.mimeType, finalFile)
+            )
+
+        } catch (e: Exception) {
+            log("FILE_TRANSFER_ASSEMBLY_ERROR transferId=${transferId.take(8)} error='${e.message}'",
+                com.fyp.resilientp2p.data.LogLevel.ERROR, peerId = transferState.metadata.senderName)
+            activeFileTransfers.remove(transferId)
+        }
+    }
+
+    /**
+     * Start the file transfer cleanup job that handles timeouts and orphaned transfers.
+     */
+    private fun startFileTransferCleanup() {
+        if (fileTransferCleanupJob?.isActive == true) return
+        fileTransferCleanupJob = scope.launch {
+            while (isActive) {
+                delay(30_000L) // Check every 30 seconds
+
+                try {
+                    val now = System.currentTimeMillis()
+                    val timedOutTransfers = activeFileTransfers.entries.filter { (_, state) ->
+                        now - state.startTime > FILE_TRANSFER_TIMEOUT_MS
+                    }
+
+                    timedOutTransfers.forEach { (transferId, state) ->
+                        log(
+                            "FILE_TRANSFER_TIMEOUT transferId=${transferId.take(8)} " +
+                            "from='${state.metadata.senderName}' name='${state.metadata.fileName}' " +
+                            "received=${state.receivedChunks}/${state.totalChunks} " +
+                            "elapsed=${FormatUtils.formatDuration(now - state.startTime)}",
+                            com.fyp.resilientp2p.data.LogLevel.WARN,
+                            peerId = state.metadata.senderName
+                        )
+                        activeFileTransfers.remove(transferId)
+                    }
+
+                    if (timedOutTransfers.isNotEmpty()) {
+                        log("FILE_TRANSFER_CLEANUP removed ${timedOutTransfers.size} timed-out transfers",
+                            com.fyp.resilientp2p.data.LogLevel.DEBUG)
+                    }
+                } catch (e: Exception) {
+                    log("FILE_TRANSFER_CLEANUP_ERROR error='${e.message}'",
+                        com.fyp.resilientp2p.data.LogLevel.ERROR)
+                }
+            }
+        }
     }
 
     fun startAudioStreaming(peerName: String) {
@@ -2797,5 +3127,15 @@ class P2PManager(
         const val BROADCAST_DEST = "BROADCAST"
         /** Synthetic next hop label used for internet-relayed peers in the UI. */
         private const val INTERNET_RELAY_HOP = "Internet Relay"
+
+        // File transfer constants
+        /** Maximum size of each file chunk in bytes (64KB - safe for mesh routing) */
+        const val FILE_CHUNK_SIZE = 64 * 1024
+        /** Maximum file size for mesh transfer (10MB) */
+        const val MAX_FILE_SIZE = 10 * 1024 * 1024
+        /** File transfer timeout in milliseconds (5 minutes) */
+        const val FILE_TRANSFER_TIMEOUT_MS = 5 * 60 * 1000L
+        /** Transfer ID field name for JSON packets */
+        private const val TRANSFER_ID_FIELD = "transferId"
     }
 }

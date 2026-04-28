@@ -253,6 +253,12 @@ class MeshAudioManager(
 
         when (command) {
             CTRL_START -> {
+                // FIX: Prevent audio loopback - don't play audio from ourselves
+                if (packet.sourceId == localUsername) {
+                    log("[$TAG] Ignoring audio from self (preventing loopback) session=$sessionId", LogLevel.DEBUG)
+                    return
+                }
+
                 // Stop any previous session
                 stopPlayback()
 

@@ -143,27 +143,44 @@ fun ResilientP2PApp(
                 }
         }
 
+        // Ping response (PONG) notifications with RTT
+        val pongReceived by p2pManager.pongReceivedEvents.collectAsState(initial = null)
+        LaunchedEffect(pongReceived) {
+                pongReceived?.let { event ->
+                        android.widget.Toast.makeText(
+                                context,
+                                "🏓 Pong from ${event.peerName}: ${event.rttMs}ms",
+                                android.widget.Toast.LENGTH_SHORT
+                        ).show()
+                }
+        }
+
         // Incoming text message notification (only when chat is not open for that peer)
         LaunchedEffect(latestPayload) {
                 latestPayload?.let { event ->
                         val pkt = event.packet
-                        if (pkt.type == com.fyp.resilientp2p.transport.PacketType.DATA &&
-                                pkt.sourceId != state.localDeviceName
-                        ) {
+                        val isDataPacket = pkt.type == com.fyp.resilientp2p.transport.PacketType.DATA
+                        val isFromOtherPeer = pkt.sourceId != state.localDeviceName
+                        if (isDataPacket && isFromOtherPeer) {
                                 val text = String(pkt.payload, java.nio.charset.StandardCharsets.UTF_8)
-                                if (!text.startsWith("__TEST__") && !text.startsWith("__ENDURANCE__")) {
+                                val isSystemMessage = text.startsWith("__TEST__") ||
+                                    text.startsWith("__ENDURANCE__") ||
+                                    text.startsWith("__LOG_RELAY__") ||
+                                    text.startsWith("__PROXY_RELAY__")
+                                if (!isSystemMessage) {
                                         val isBroadcast = pkt.destId == "BROADCAST"
-                                        val chatIsOpen =
-                                                showChatDialog && chatTargetId == pkt.sourceId
+                                        val chatIsOpen = showChatDialog &&
+                                                (chatTargetId == pkt.sourceId || isBroadcast && chatTargetId == "BROADCAST")
                                         if (!chatIsOpen) {
-                                                val preview = text.take(40).let {
-                                                        if (text.length > 40) "$it..." else it
+                                                val preview = text.take(50).let {
+                                                        if (text.length > 50) "$it..." else it
                                                 }
-                                                val label = if (isBroadcast) "[Broadcast]" else pkt.sourceId
+                                                val icon = if (isBroadcast) "📢" else "💬"
+                                                val label = if (isBroadcast) "Broadcast from ${pkt.sourceId}" else pkt.sourceId
                                                 android.widget.Toast.makeText(
                                                         context,
-                                                        "$label: $preview",
-                                                        android.widget.Toast.LENGTH_SHORT
+                                                        "$icon $label: $preview",
+                                                        android.widget.Toast.LENGTH_LONG
                                                 ).show()
                                         }
                                 }
@@ -677,6 +694,13 @@ fun ResilientP2PApp(
                                 val buffer = java.nio.ByteBuffer.allocate(8)
                                 buffer.putLong(timestamp)
                                 p2pManager.sendPing(targetId, buffer.array())
+
+                                // Show UI feedback for ping
+                                android.widget.Toast.makeText(
+                                        context,
+                                        "🏓 Ping sent to $targetId",
+                                        android.widget.Toast.LENGTH_SHORT
+                                ).show()
                         },
                         onStartAudio = { p2pManager.startAudioStreaming(targetId) },
                         onStopAudio = { p2pManager.stopAudioStreaming() },
@@ -1015,7 +1039,7 @@ fun MeshContactsSection(
         ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                         Text(
-                                text = "Mesh Contacts",
+                                text = "Connected Peers",
                                 style = MaterialTheme.typography.titleMedium,
                                 color = colorScheme.onSurface,
                                 fontWeight = FontWeight.Bold
@@ -1094,12 +1118,12 @@ fun MeshContactsSection(
                                                                 fontWeight = FontWeight.Bold,
                                                                 color = colorScheme.onSurface
                                                         )
-                                                        // Connection type
+                                                        // Connection type with clearer labels
                                                         val status =
-                                                                if (isDirect) "Direct Connection"
-                                                                else if (isInternetPeer) "Via Internet Relay"
+                                                                if (isDirect) "🔗 Direct Mesh Connection"
+                                                                else if (isInternetPeer) "☁️ Cloud Relay (Internet)"
                                                                 else
-                                                                        "Via ${route?.nextHop} (${route?.hopCount} hops)"
+                                                                        "🔀 Mesh Route via ${route?.nextHop} (${route?.hopCount} hops)"
                                                         Text(
                                                                 text = status,
                                                                 style =

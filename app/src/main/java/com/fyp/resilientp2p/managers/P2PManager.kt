@@ -131,6 +131,11 @@ class P2PManager(
     private val _receivedFileEvents = MutableSharedFlow<ReceivedFileEvent>()
     val receivedFileEvents: SharedFlow<ReceivedFileEvent> = _receivedFileEvents.asSharedFlow()
 
+    // Ping response events (emitted when PONG is received with RTT)
+    data class PongReceivedEvent(val peerName: String, val rttMs: Long)
+    private val _pongReceivedEvents = MutableSharedFlow<PongReceivedEvent>()
+    val pongReceivedEvents: SharedFlow<PongReceivedEvent> = _pongReceivedEvents.asSharedFlow()
+
     // Mesh Data
     private val neighbors = ConcurrentHashMap<String, Neighbor>() // endpointId -> Neighbor
     private val routingTable = ConcurrentHashMap<String, String>() // destId -> nextHopEndpointId
@@ -1762,6 +1767,10 @@ class P2PManager(
                                 peerId = packet.sourceId,
                                 latencyMs = rtt
                         )
+                        // Emit event for UI notification
+                        scope.launch {
+                            _pongReceivedEvents.emit(PongReceivedEvent(packet.sourceId, rtt))
+                        }
                     } else {
                         log("PONG_RECEIVED from='${packet.sourceId}'", com.fyp.resilientp2p.data.LogLevel.DEBUG, peerId = packet.sourceId)
                     }

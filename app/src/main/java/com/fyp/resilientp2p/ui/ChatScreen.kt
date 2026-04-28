@@ -191,7 +191,8 @@ fun ChatScreen(
                 onStopAudio = onStopAudio,
                 isBroadcast = isBroadcast
             )
-        }
+        },
+        modifier = Modifier.imePadding() // This handles keyboard padding properly
     ) { padding ->
         val listState = rememberLazyListState()
 

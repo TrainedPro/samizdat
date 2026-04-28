@@ -1039,7 +1039,7 @@ fun MeshContactsSection(
         ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                         Text(
-                                text = "Connected Peers",
+                                text = "Mesh Contacts",
                                 style = MaterialTheme.typography.titleMedium,
                                 color = colorScheme.onSurface,
                                 fontWeight = FontWeight.Bold
@@ -1118,12 +1118,12 @@ fun MeshContactsSection(
                                                                 fontWeight = FontWeight.Bold,
                                                                 color = colorScheme.onSurface
                                                         )
-                                                        // Connection type with clearer labels
+                                                        // Connection type
                                                         val status =
-                                                                if (isDirect) "🔗 Direct Mesh Connection"
-                                                                else if (isInternetPeer) "☁️ Cloud Relay (Internet)"
+                                                                if (isDirect) "Direct Connection"
+                                                                else if (isInternetPeer) "Via Internet Relay"
                                                                 else
-                                                                        "🔀 Mesh Route via ${route?.nextHop} (${route?.hopCount} hops)"
+                                                                        "Via ${route?.nextHop} (${route?.hopCount} hops)"
                                                         Text(
                                                                 text = status,
                                                                 style =

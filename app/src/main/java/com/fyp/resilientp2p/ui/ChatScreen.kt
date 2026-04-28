@@ -194,7 +194,9 @@ fun ChatScreen(
                 isInternetPeer = isInternetPeer
             )
         },
-        modifier = Modifier.fillMaxSize().imePadding()
+        modifier = Modifier
+            .fillMaxSize()
+            .imePadding()
     ) { padding ->
         val listState = rememberLazyListState()
 
@@ -230,8 +232,7 @@ fun ChatScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(padding)
-                    .padding(horizontal = 8.dp)
-                    .imePadding(), // Add imePadding to LazyColumn so messages scroll up with keyboard
+                    .padding(horizontal = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
                 contentPadding = PaddingValues(vertical = 8.dp)
             ) {

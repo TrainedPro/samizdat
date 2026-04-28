@@ -1039,7 +1039,7 @@ fun MeshContactsSection(
         ) {
                 Column(modifier = Modifier.padding(16.dp)) {
                         Text(
-                                text = "Mesh Contacts",
+                                text = "Connected Peers",
                                 style = MaterialTheme.typography.titleMedium,
                                 color = colorScheme.onSurface,
                                 fontWeight = FontWeight.Bold

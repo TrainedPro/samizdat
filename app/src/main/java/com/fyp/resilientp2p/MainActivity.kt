@@ -116,6 +116,9 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        // Enable edge-to-edge for proper keyboard handling
+        androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
+
         // Get Managers from Application
         val app = application as P2PApplication
         p2pManager = app.p2pManager

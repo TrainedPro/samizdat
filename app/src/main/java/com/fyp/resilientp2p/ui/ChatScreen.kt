@@ -194,9 +194,7 @@ fun ChatScreen(
                 isInternetPeer = isInternetPeer
             )
         },
-        modifier = Modifier
-            .fillMaxSize()
-            .imePadding()
+        modifier = Modifier.fillMaxSize()
     ) { padding ->
         val listState = rememberLazyListState()
 
@@ -216,7 +214,8 @@ fun ChatScreen(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(padding),
+                    .padding(padding)
+                    .consumeWindowInsets(padding),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
@@ -231,10 +230,10 @@ fun ChatScreen(
                 state = listState,
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(padding)
-                    .padding(horizontal = 8.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-                contentPadding = PaddingValues(vertical = 8.dp)
+                    .consumeWindowInsets(padding)
+                    .imePadding(),
+                contentPadding = padding,
+                verticalArrangement = Arrangement.spacedBy(4.dp)
             ) {
                 items(messages, key = { it.id }) { message ->
                     ChatBubble(message)

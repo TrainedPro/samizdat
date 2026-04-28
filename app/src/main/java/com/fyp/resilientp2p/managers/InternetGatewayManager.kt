@@ -384,6 +384,9 @@ class InternetGatewayManager(
                     // Delete the message after successful injection
                     deleteRelayMessage(doc.getString("name"))
                     p2pManager.log("RELAY_MESSAGE_DELIVERED dest=$destId from=$sourceId packetId=${packetId.take(8)}")
+                } else {
+                    // Message not for us or our peers - log for debugging
+                    p2pManager.log("RELAY_SKIP dest=$destId from=$sourceId packetId=${packetId.take(8)} reason=NOT_IN_LOCAL_PEERS localDevice=${p2pManager.getLocalDeviceName()}", com.fyp.resilientp2p.data.LogLevel.DEBUG)
                 }
             }
         } catch (e: Exception) {

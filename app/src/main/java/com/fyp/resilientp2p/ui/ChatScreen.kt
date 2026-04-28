@@ -57,7 +57,8 @@ fun ChatScreen(
     onStartAudio: () -> Unit,
     onStopAudio: () -> Unit,
     onSendFile: (Uri) -> Unit,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    isInternetPeer: Boolean = false
 ) {
     val context = LocalContext.current
     val isBroadcast = peerId == "BROADCAST"
@@ -189,10 +190,11 @@ fun ChatScreen(
                     }
                 },
                 onStopAudio = onStopAudio,
-                isBroadcast = isBroadcast
+                isBroadcast = isBroadcast,
+                isInternetPeer = isInternetPeer
             )
         },
-        modifier = Modifier.imePadding() // This handles keyboard padding properly
+        modifier = Modifier.fillMaxSize()
     ) { padding ->
         val listState = rememberLazyListState()
 
@@ -228,7 +230,8 @@ fun ChatScreen(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(padding)
-                    .padding(horizontal = 8.dp),
+                    .padding(horizontal = 8.dp)
+                    .imePadding(), // Move imePadding here so messages move up with keyboard
                 verticalArrangement = Arrangement.spacedBy(4.dp),
                 contentPadding = PaddingValues(vertical = 8.dp)
             ) {
@@ -400,51 +403,54 @@ private fun ChatInputBar(
     onPickFile: () -> Unit,
     onStartAudio: () -> Unit,
     onStopAudio: () -> Unit,
-    isBroadcast: Boolean
+    isBroadcast: Boolean,
+    isInternetPeer: Boolean
 ) {
     Surface(
         tonalElevation = 3.dp,
         shadowElevation = 4.dp
     ) {
         Column(modifier = Modifier.fillMaxWidth().padding(8.dp)) {
-            // PTT (push-to-talk) row — always visible, works for both direct and broadcast
-            val interactionSource = remember { MutableInteractionSource() }
-            val isPressed by interactionSource.collectIsPressedAsState()
-            var wasEverPressed by remember { mutableStateOf(false) }
-            DisposableEffect(isPressed) {
-                if (isPressed) {
-                    wasEverPressed = true
-                    onStartAudio()
-                } else if (wasEverPressed) {
-                    onStopAudio()
-                }
-                onDispose {
+            // PTT (push-to-talk) row — only for direct mesh peers (not internet relay)
+            if (!isInternetPeer) {
+                val interactionSource = remember { MutableInteractionSource() }
+                val isPressed by interactionSource.collectIsPressedAsState()
+                var wasEverPressed by remember { mutableStateOf(false) }
+                DisposableEffect(isPressed) {
                     if (isPressed) {
+                        wasEverPressed = true
+                        onStartAudio()
+                    } else if (wasEverPressed) {
                         onStopAudio()
                     }
+                    onDispose {
+                        if (isPressed) {
+                            onStopAudio()
+                        }
+                    }
                 }
-            }
-            Button(
-                onClick = {},
-                interactionSource = interactionSource,
-                modifier = Modifier.fillMaxWidth().height(44.dp),
-                contentPadding = PaddingValues(horizontal = 16.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isPressed) Color.Red
-                                     else MaterialTheme.colorScheme.tertiary
-                )
-            ) {
-                Icon(Icons.Default.Mic, contentDescription = null, modifier = Modifier.size(20.dp))
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(
-                    if (isPressed) "Recording... Release to stop"
-                    else "Hold to Talk${if (isBroadcast) " (All Peers)" else ""}",
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold
-                )
-            }
+                Button(
+                    onClick = {},
+                    interactionSource = interactionSource,
+                    modifier = Modifier.fillMaxWidth().height(44.dp),
+                    contentPadding = PaddingValues(horizontal = 16.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (isPressed) Color.Red
+                                         else MaterialTheme.colorScheme.tertiary
+                    )
+                ) {
+                    Icon(Icons.Default.Mic, contentDescription = null, modifier = Modifier.size(20.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        if (isPressed) "Recording... Release to stop"
+                        else "Hold to Talk${if (isBroadcast) " (All Peers)" else ""}",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
 
-            Spacer(modifier = Modifier.height(6.dp))
+                Spacer(modifier = Modifier.height(6.dp))
+            }
 
             // Attachment row
             Row(

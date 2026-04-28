@@ -638,11 +638,11 @@ fun ResilientP2PApp(
 
         // Back handler for overlay navigation — system back closes the topmost overlay
         BackHandler(
-                enabled = showTestMode || showChatDialog
+                enabled = showTestMode || showChatDialog || showHealthDashboard
         ) {
                 when {
                         showTestMode -> showTestMode = false
-                         showHealthDashboard -> showHealthDashboard = false  // Phase 4
+                        showHealthDashboard -> showHealthDashboard = false
                         showChatDialog -> showChatDialog = false
                 }
         }
@@ -666,6 +666,8 @@ fun ResilientP2PApp(
                 // Received file persistence now handled globally in P2PApplication
 
                 val targetId = chatTargetId ?: return@ResilientP2PApp
+                val isInternetOnly = state.internetPeers.contains(targetId) && 
+                                     !state.connectedEndpoints.contains(targetId)
 
                 ChatScreen(
                         peerId = targetId,
@@ -732,7 +734,8 @@ fun ResilientP2PApp(
                                         }
                                 }
                         },
-                        onBack = { showChatDialog = false }
+                        onBack = { showChatDialog = false },
+                        isInternetPeer = isInternetOnly
                 )
         }
 

@@ -248,14 +248,14 @@ object GatewayDiagnostics {
 
         return buildString {
             appendLine("=== GATEWAY QUICK CHECK ===")
-            appendLine("Firebase Project ID: ${if (projectId.isBlank()) "❌ NOT SET" else "✅ ${projectId.take(10)}..."}")
+            appendLine("Firebase Project ID: ${if (projectId.isBlank()) "NOT SET" else "${projectId.take(10)}..."}")
             @Suppress("MaxLineLength") // Log formatting
-            appendLine("Firebase API Key: ${if (apiKey.isBlank()) "❌ NOT SET" else "✅ ${apiKey.take(10)}..."}")
-            appendLine("Active Network: ${if (network == null) "❌ NONE" else "✅ CONNECTED"}")
+            appendLine("Firebase API Key: ${if (apiKey.isBlank()) "NOT SET" else "${apiKey.take(10)}..."}")
+            appendLine("Active Network: ${if (network == null) "NONE" else "CONNECTED"}")
             @Suppress("MaxLineLength") // Log formatting
-            appendLine("Internet Capability: ${if (caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true) "✅ YES" else "❌ NO"}")
+            appendLine("Internet Capability: ${if (caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true) "YES" else "NO"}")
             @Suppress("MaxLineLength") // Log formatting
-            appendLine("Internet Validated: ${if (caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true) "✅ YES" else "❌ NO (may take 30-60s)"}")
+            appendLine("Internet Validated: ${if (caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true) "YES" else "NO (may take 30-60s)"}")
             appendLine("===============================")
         }
     }
@@ -270,10 +270,10 @@ data class DiagnosticResult(
         appendLine("Overall Status: $status")
         appendLine()
         checks.forEach { check ->
-            val icon = if (check.passed) "✅" else when (check.severity) {
-                DiagnosticSeverity.CRITICAL -> "❌"
-                DiagnosticSeverity.WARNING -> "⚠️"
-                DiagnosticSeverity.INFO -> "ℹ️"
+            val icon = if (check.passed) "[PASS]" else when (check.severity) {
+                DiagnosticSeverity.CRITICAL -> "[FAIL]"
+                DiagnosticSeverity.WARNING -> "[WARN]"
+                DiagnosticSeverity.INFO -> "[INFO]"
             }
             appendLine("$icon ${check.name}: ${check.message}")
             if (check.solution != null) {

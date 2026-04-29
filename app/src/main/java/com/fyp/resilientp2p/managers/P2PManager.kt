@@ -2077,7 +2077,9 @@ class P2PManager(
 
     @Suppress("CyclomaticComplexMethod", "NestedBlockDepth")
     private fun forwardPacket(packet: Packet, excludeEndpointId: String? = null) {
-        val nextHop = synchronized(routingLock) { routingTable[packet.destId] }
+        // Check if destination is a direct neighbor first (they're not in routing table)
+        val directNeighborEndpoint = neighbors.entries.find { it.value.peerName == packet.destId }?.key
+        val nextHop = directNeighborEndpoint ?: synchronized(routingLock) { routingTable[packet.destId] }
         var newPacket = packet.copy(ttl = packet.ttl - 1)
 
         // End-to-end security for locally-originated unicast packets:

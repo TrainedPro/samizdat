@@ -147,11 +147,8 @@ fun ResilientP2PApp(
         val pongReceived by p2pManager.pongReceivedEvents.collectAsState(initial = null)
         LaunchedEffect(pongReceived) {
                 pongReceived?.let { event ->
-                        android.widget.Toast.makeText(
-                                context,
-                                "🏓 Pong from ${event.peerName}: ${event.rttMs}ms",
-                                android.widget.Toast.LENGTH_SHORT
-                        ).show()
+                // Pong received - don't show toast (too frequent from heartbeats)
+                // User can see RTT in peer list instead
                 }
         }
 
@@ -172,16 +169,19 @@ fun ResilientP2PApp(
                                         val chatIsOpen = showChatDialog &&
                                                 (chatTargetId == pkt.sourceId || isBroadcast && chatTargetId == "BROADCAST")
                                         if (!chatIsOpen) {
-                                                val preview = text.take(50).let {
-                                                        if (text.length > 50) "$it..." else it
+                                                val preview = text.take(100).let {
+                                                        if (text.length > 100) "$it..." else it
                                                 }
-                                                val icon = if (isBroadcast) "📢" else "💬"
-                                                val label = if (isBroadcast) "Broadcast from ${pkt.sourceId}" else pkt.sourceId
-                                                android.widget.Toast.makeText(
-                                                        context,
-                                                        "$icon $label: $preview",
-                                                        android.widget.Toast.LENGTH_LONG
-                                                ).show()
+                                                val label = if (isBroadcast) "Broadcast from ${pkt.sourceId}" else "Message from ${pkt.sourceId}"
+                                                
+                                                // Show toast from main thread (works even in background)
+                                                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                                                        android.widget.Toast.makeText(
+                                                                context,
+                                                                "$label: $preview",
+                                                                android.widget.Toast.LENGTH_LONG
+                                                        ).show()
+                                                }
                                         }
                                 }
                         }
@@ -641,25 +641,33 @@ fun ResilientP2PApp(
                 enabled = showTestMode || showChatDialog || showHealthDashboard
         ) {
                 when {
-                        showTestMode -> showTestMode = false
-                        showHealthDashboard -> showHealthDashboard = false
-                        showChatDialog -> showChatDialog = false
+                        showTestMode -> {
+                                showTestMode = false
+                        }
+                        showHealthDashboard -> {
+                                showHealthDashboard = false
+                        }
+                        showChatDialog -> {
+                                chatTargetId = null
+                                showChatDialog = false
+                        }
                 }
         }
 
         if (showChatDialog && chatTargetId != null) {
-                val scope = rememberCoroutineScope()
-                val isBroadcast = chatTargetId == "BROADCAST"
+                key(chatTargetId) {
+                        val scope = rememberCoroutineScope()
+                        val isBroadcast = chatTargetId == "BROADCAST"
 
-                // Collect chat messages from Room
-                val chatMessages by remember(chatTargetId) {
-                        if (chatDao != null) {
-                                if (isBroadcast) chatDao.getBroadcastMessages()
-                                else chatDao.getMessagesForPeer(chatTargetId!!)
-                        } else {
-                                kotlinx.coroutines.flow.flowOf(emptyList<ChatMessage>())
-                        }
-                }.collectAsState(initial = emptyList())
+                        // Collect chat messages from Room
+                        val chatMessages by remember(chatTargetId) {
+                                if (chatDao != null) {
+                                        if (isBroadcast) chatDao.getBroadcastMessages()
+                                        else chatDao.getMessagesForPeer(chatTargetId!!)
+                                } else {
+                                        kotlinx.coroutines.flow.flowOf(emptyList<ChatMessage>())
+                                }
+                        }.collectAsState(initial = emptyList())
 
                 // Track processed payloads (incoming persistence now handled globally in P2PApplication)
 
@@ -696,13 +704,7 @@ fun ResilientP2PApp(
                                 val buffer = java.nio.ByteBuffer.allocate(8)
                                 buffer.putLong(timestamp)
                                 p2pManager.sendPing(targetId, buffer.array())
-
-                                // Show UI feedback for ping
-                                android.widget.Toast.makeText(
-                                        context,
-                                        "🏓 Ping sent to $targetId",
-                                        android.widget.Toast.LENGTH_SHORT
-                                ).show()
+                                // Don't show toast - pong response will be visible in peer list RTT
                         },
                         onStartAudio = { p2pManager.startAudioStreaming(targetId) },
                         onStopAudio = { p2pManager.stopAudioStreaming() },
@@ -734,9 +736,13 @@ fun ResilientP2PApp(
                                         }
                                 }
                         },
-                        onBack = { showChatDialog = false },
+                        onBack = {
+                                chatTargetId = null
+                                showChatDialog = false
+                        },
                         isInternetPeer = isInternetOnly
                 )
+                }
         }
 
         if (showAdvancedOptions) {

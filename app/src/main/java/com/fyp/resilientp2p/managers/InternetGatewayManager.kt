@@ -43,7 +43,7 @@ class InternetGatewayManager(
         private const val MESSAGE_TTL_MS = 24 * 60 * 60 * 1000L // 24 hours
         private const val MAX_MESSAGE_SIZE = 50 * 1024 // 50KB (increased from 10KB for chat messages)
         private const val PRESENCE_TTL_MS = 5 * 60 * 1000L  // 5 minutes (was 90s — too short, caused flapping)
-        private const val POLL_INTERVAL_MS = 5_000L // Check for inbound relay messages every 5 seconds (was 30s)
+        private const val POLL_INTERVAL_MS = 30_000L // Check for inbound relay messages every 30 seconds (Firebase rate limit)
         // Tiered rate limits per packet type per hour
         private const val MAX_EMERGENCY_RATE_PER_HOUR = Int.MAX_VALUE // Unlimited for emergencies
         private const val MAX_AUDIO_RATE_PER_HOUR = 36000 // 10 packets/sec for 1 hour of audio streaming
@@ -140,8 +140,8 @@ class InternetGatewayManager(
         // Log Firebase configuration status (without exposing keys)
         val projectConfigured = projectId.isNotBlank()
         val apiKeyConfigured = apiKey.isNotBlank()
-        p2pManager.log("Firebase config: projectId=${if (projectConfigured) "✅ SET" else "❌ MISSING"} " +
-            "apiKey=${if (apiKeyConfigured) "✅ SET" else "❌ MISSING"}", LogLevel.INFO)
+        p2pManager.log("Firebase config: projectId=${if (projectConfigured) "SET" else "MISSING"} " +
+            "apiKey=${if (apiKeyConfigured) "SET" else "MISSING"}", LogLevel.INFO)
 
         registerNetworkCallback()
 
@@ -479,12 +479,18 @@ class InternetGatewayManager(
     }
 
     private suspend fun pollPresencePeers() {
-        if (!_hasInternet.value || projectId.isBlank() || apiKey.isBlank()) return
+        if (!_hasInternet.value || projectId.isBlank() || apiKey.isBlank()) {
+            p2pManager.log("PRESENCE_POLL_SKIP hasInternet=${_hasInternet.value} projectId=${projectId.isNotBlank()} apiKey=${apiKey.isNotBlank()}", LogLevel.DEBUG)
+            return
+        }
         try {
             val url = "https://firestore.googleapis.com/v1/projects/$projectId" +
                 "/databases/(default)/documents/$PRESENCE_COLLECTION?key=$apiKey&pageSize=200"
             val (code, body) = httpGet(url)
-            if (code !in 200..299 || body == null) return
+            if (code !in 200..299 || body == null) {
+                p2pManager.log("PRESENCE_POLL_FAILED status=$code", LogLevel.WARN)
+                return
+            }
 
             val now = System.currentTimeMillis()
             val localName = p2pManager.getLocalDeviceName()
@@ -498,8 +504,9 @@ class InternetGatewayManager(
             // Remove scores for peers that are no longer online
             peerCapabilityScores.keys.retainAll(result)
             _cloudPeers.value = result
+            p2pManager.log("PRESENCE_POLL_SUCCESS found=${result.size} peers: ${result.joinToString()}", LogLevel.INFO)
         } catch (e: Exception) {
-            p2pManager.log("PRESENCE_POLL_ERROR: ${e.message}", LogLevel.DEBUG)
+            p2pManager.log("PRESENCE_POLL_ERROR: ${e.message}", LogLevel.ERROR)
         }
     }
 

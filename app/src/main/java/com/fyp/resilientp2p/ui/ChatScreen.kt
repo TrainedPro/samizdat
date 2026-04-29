@@ -117,6 +117,7 @@ fun ChatScreen(
     }
 
     Scaffold(
+        modifier = Modifier.fillMaxSize(),
         topBar = {
             TopAppBar(
                 title = {
@@ -149,64 +150,64 @@ fun ChatScreen(
             )
         },
         bottomBar = {
-            ChatInputBar(
-                messageText = messageText,
-                onMessageChange = { messageText = it },
-                onSend = {
-                    if (messageText.isNotBlank()) {
-                        onSendText(messageText)
-                        messageText = ""
-                    }
-                },
-                onPickImage = {
-                    // Launch camera: check permission first
-                    if (ContextCompat.checkSelfPermission(
-                            context, Manifest.permission.CAMERA
-                        ) == PackageManager.PERMISSION_GRANTED
-                    ) {
-                        val photoFile = File(
-                            context.cacheDir, "camera_photos"
-                        ).apply { mkdirs() }.let {
-                            File(it, "IMG_${System.currentTimeMillis()}.jpg")
+            Surface(
+                tonalElevation = 3.dp,
+                shadowElevation = 4.dp,
+                modifier = Modifier.imePadding()
+            ) {
+                ChatInputBar(
+                    messageText = messageText,
+                    onMessageChange = { messageText = it },
+                    onSend = {
+                        if (messageText.isNotBlank()) {
+                            onSendText(messageText)
+                            messageText = ""
                         }
-                        val uri = FileProvider.getUriForFile(
-                            context, "${context.packageName}.fileprovider", photoFile
-                        )
-                        cameraPhotoUri = uri
-                        cameraLauncher.launch(uri)
-                    } else {
-                        cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
-                    }
-                },
-                onPickFile = { filePickerLauncher.launch("*/*") },
-                onStartAudio = {
-                    if (ContextCompat.checkSelfPermission(context,
-                            android.Manifest.permission.RECORD_AUDIO) ==
-                        android.content.pm.PackageManager.PERMISSION_GRANTED
-                    ) {
-                        onStartAudio()
-                    } else {
-                        permissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
-                    }
-                },
-                onStopAudio = onStopAudio,
-                isBroadcast = isBroadcast,
-                isInternetPeer = isInternetPeer
-            )
-        },
-        modifier = Modifier.fillMaxSize()
+                    },
+                    onPickImage = {
+                        // Launch camera: check permission first
+                        if (ContextCompat.checkSelfPermission(
+                                context, Manifest.permission.CAMERA
+                            ) == PackageManager.PERMISSION_GRANTED
+                        ) {
+                            val photoFile = File(
+                                context.cacheDir, "camera_photos"
+                            ).apply { mkdirs() }.let {
+                                File(it, "IMG_${System.currentTimeMillis()}.jpg")
+                            }
+                            val uri = FileProvider.getUriForFile(
+                                context, "${context.packageName}.fileprovider", photoFile
+                            )
+                            cameraPhotoUri = uri
+                            cameraLauncher.launch(uri)
+                        } else {
+                            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                        }
+                    },
+                    onPickFile = { filePickerLauncher.launch("*/*") },
+                    onStartAudio = {
+                        if (ContextCompat.checkSelfPermission(context,
+                                android.Manifest.permission.RECORD_AUDIO) ==
+                            android.content.pm.PackageManager.PERMISSION_GRANTED
+                        ) {
+                            onStartAudio()
+                        } else {
+                            permissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+                        }
+                    },
+                    onStopAudio = onStopAudio,
+                    isBroadcast = isBroadcast,
+                    isInternetPeer = isInternetPeer
+                )
+            }
+        }
     ) { padding ->
         val listState = rememberLazyListState()
 
-        // Auto-scroll to bottom when new messages arrive, only if user is near the bottom
+        // Auto-scroll to show new messages (index 0 = newest in reversed layout)
         LaunchedEffect(messages.size) {
             if (messages.isNotEmpty()) {
-                val lastVisibleItem = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-                val totalItems = listState.layoutInfo.totalItemsCount
-                // Only auto-scroll if user is within 3 items of the bottom (or list just started)
-                if (totalItems <= 1 || lastVisibleItem >= totalItems - 3) {
-                    listState.animateScrollToItem(messages.size - 1)
-                }
+                listState.animateScrollToItem(0)
             }
         }
 
@@ -214,8 +215,7 @@ fun ChatScreen(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(padding)
-                    .consumeWindowInsets(padding),
+                    .padding(padding),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
@@ -228,14 +228,12 @@ fun ChatScreen(
         } else {
             LazyColumn(
                 state = listState,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .consumeWindowInsets(padding)
-                    .imePadding(),
+                modifier = Modifier.fillMaxSize(),
                 contentPadding = padding,
-                verticalArrangement = Arrangement.spacedBy(4.dp)
+                reverseLayout = true,
+                verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.Bottom)
             ) {
-                items(messages, key = { it.id }) { message ->
+                items(messages.reversed(), key = { it.id }) { message ->
                     ChatBubble(message)
                 }
             }
@@ -406,13 +404,9 @@ private fun ChatInputBar(
     isBroadcast: Boolean,
     isInternetPeer: Boolean
 ) {
-    Surface(
-        tonalElevation = 3.dp,
-        shadowElevation = 4.dp
-    ) {
-        Column(modifier = Modifier.fillMaxWidth().padding(8.dp)) {
-            // PTT (push-to-talk) row — only for direct mesh peers (not internet relay)
-            if (!isInternetPeer) {
+    Column(modifier = Modifier.fillMaxWidth().padding(8.dp)) {
+        // PTT (push-to-talk) row — only for direct mesh peers (not internet relay)
+        if (!isInternetPeer) {
                 val interactionSource = remember { MutableInteractionSource() }
                 val isPressed by interactionSource.collectIsPressedAsState()
                 var wasEverPressed by remember { mutableStateOf(false) }
@@ -450,10 +444,10 @@ private fun ChatInputBar(
                 }
 
                 Spacer(modifier = Modifier.height(6.dp))
-            }
+        }
 
-            // Attachment row
-            Row(
+        // Attachment row
+        Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(4.dp)
             ) {
@@ -466,37 +460,36 @@ private fun ChatInputBar(
                 }
             }
 
-            Spacer(modifier = Modifier.height(4.dp))
+        Spacer(modifier = Modifier.height(4.dp))
 
-            // Message input row
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                OutlinedTextField(
-                    value = messageText,
-                    onValueChange = onMessageChange,
-                    placeholder = {
-                        Text(if (isBroadcast) "Broadcast message..." else "Message...")
-                    },
-                    modifier = Modifier.weight(1f),
-                    maxLines = 3,
-                    shape = RoundedCornerShape(24.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = MaterialTheme.colorScheme.outline
-                    )
+        // Message input row
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            OutlinedTextField(
+                value = messageText,
+                onValueChange = onMessageChange,
+                placeholder = {
+                    Text(if (isBroadcast) "Broadcast message..." else "Message...")
+                },
+                modifier = Modifier.weight(1f),
+                maxLines = 3,
+                shape = RoundedCornerShape(24.dp),
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = MaterialTheme.colorScheme.primary,
+                    unfocusedBorderColor = MaterialTheme.colorScheme.outline
                 )
-                Button(
-                    onClick = onSend,
-                    enabled = messageText.isNotBlank(),
-                    modifier = Modifier.size(48.dp),
-                    shape = CircleShape,
-                    contentPadding = PaddingValues(0.dp)
-                ) {
-                    Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send", modifier = Modifier.size(20.dp))
-                }
+            )
+            Button(
+                onClick = onSend,
+                enabled = messageText.isNotBlank(),
+                modifier = Modifier.size(48.dp),
+                shape = CircleShape,
+                contentPadding = PaddingValues(0.dp)
+            ) {
+                Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send", modifier = Modifier.size(20.dp))
             }
         }
     }
